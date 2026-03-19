@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.1.2",
+    "@nktkas/hyperliquid": "^0.32.1",
     "@t3-oss/env-core": "^0.13.8",
     "drizzle-orm": "^0.44.5",
     "neverthrow": "^8.2.0",

@@ -1,5 +1,3 @@
-import { defineConfig } from "vite-plus";
-
 const toolIgnorePatterns = [
   "artifacts/**",
   "coverage/**",
@@ -10,7 +8,7 @@ const toolIgnorePatterns = [
   "tmp-*/**",
 ];
 
-export default defineConfig({
+const config = {
   lint: {
     env: {
       node: true,
@@ -137,4 +135,6 @@ export default defineConfig({
     },
     ignorePatterns: toolIgnorePatterns,
   },
-});
+};
+
+export default config;
