@@ -1,19 +1,17 @@
-const toolIgnorePatterns = [
-  "artifacts/**",
-  "coverage/**",
-  "data/**",
-  "dist/**",
-  ".agents/memory/**",
-  "node_modules/**",
-  "tmp-*/**",
-];
-
-const config = {
+export default {
   lint: {
     env: {
       node: true,
     },
-    ignorePatterns: toolIgnorePatterns,
+    ignorePatterns: [
+      "artifacts/**",
+      "coverage/**",
+      "data/**",
+      "dist/**",
+      ".agents/memory/**",
+      "node_modules/**",
+      "tmp-*/**",
+    ],
     options: {
       denyWarnings: true,
       reportUnusedDisableDirectives: "error",
@@ -133,8 +131,14 @@ const config = {
       useTabs: false,
       semi: true,
     },
-    ignorePatterns: toolIgnorePatterns,
+    ignorePatterns: [
+      "artifacts/**",
+      "coverage/**",
+      "data/**",
+      "dist/**",
+      ".agents/memory/**",
+      "node_modules/**",
+      "tmp-*/**",
+    ],
   },
 };
-
-export default config;
