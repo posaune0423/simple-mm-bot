@@ -1,0 +1,39 @@
+import type { Position } from "./entities/Position.ts";
+import type { Quote } from "./entities/Quote.ts";
+import type { MarketSnapshot } from "./ports/IMarketFeed.ts";
+import type { IQuotingStrategy } from "./strategy/IQuotingStrategy.ts";
+import type { FairPriceCalculator } from "./FairPriceCalculator.ts";
+import type { VolatilityEstimator } from "./VolatilityEstimator.ts";
+
+export interface QuoteEngineConfig {
+  inventoryScale: number;
+  timeHorizonSec: number;
+  slideMarginThreshold: number;
+}
+
+export class QuoteEngine {
+  constructor(
+    private readonly strategy: IQuotingStrategy,
+    private readonly fairCalc: FairPriceCalculator,
+    private readonly volEst: VolatilityEstimator,
+    private readonly config: QuoteEngineConfig,
+  ) {}
+
+  compute(snapshot: MarketSnapshot, position: Position): Quote {
+    // The quote engine is the composition point:
+    // 1. derive a fair price from market signals
+    // 2. update short-horizon volatility
+    // 3. let the strategy convert state into executable bid/ask levels
+    const fairPrice = this.fairCalc.compute(snapshot);
+    const sigma = this.volEst.update(snapshot.markPrice);
+    return this.strategy.computeQuote({
+      fairPrice,
+      sigma,
+      positionQty: position.qty,
+      inventoryScale: this.config.inventoryScale,
+      timeHorizonSec: this.config.timeHorizonSec,
+      slideMarginThreshold: this.config.slideMarginThreshold,
+      marginRatio: snapshot.marginRatio,
+    });
+  }
+}

@@ -1,8 +1,12 @@
 # simple-mm-bot
 
-This repository stays as a Bun TypeScript project.
+Hyperliquid-first market making bot built with Bun and TypeScript.
 
-Tooling is configured through Vite+ in `vite.config.ts`, so linting, formatting, and static checks are centralized without adding a frontend app.
+The repository follows the steering docs in `docs/`:
+
+- `docs/PRD.md`
+- `docs/TECH.md`
+- `docs/STRUCTURE.md`
 
 ## Install dependencies
 
@@ -13,9 +17,10 @@ bun install
 ## Available checks
 
 ```bash
-bun run lint
+bun run lint # oxlint via vite-plus + DDD dependency graph checks
 bun run format:check
 bun run check
+bun run test
 ```
 
 ## Autofix
@@ -25,8 +30,15 @@ bun run lint:fix
 bun run check:fix
 ```
 
-## Run the Bun entrypoint
+## Run
 
 ```bash
-bun run index.ts
+bun run src/main.ts run --mode=paper
+bun run dev:backtest
+```
+
+## Strategy loop
+
+```bash
+bun run loop:backtest-paper --config config/config.paper.yml --from 2024-01-01 --to 2024-01-07
 ```

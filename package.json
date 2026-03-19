@@ -3,15 +3,36 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:paper": "MODE=paper bun run src/main.ts",
+    "dev:backtest": "MODE=backtest bun run src/main.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "check": "vp check",
     "check:fix": "vp check --fix",
-    "lint": "vp lint",
+    "lint": "bun run lint:code",
+    "lint:code": "vp lint",
     "lint:fix": "vp lint --fix",
     "format": "vp fmt",
-    "format:check": "vp fmt --check"
+    "format:check": "vp fmt --check",
+    "loop:backtest-paper": "bun run scripts/backtestPaperLoop.ts",
+    "test": "bun run test:unit && bun run test:integration",
+    "test:unit": "bun test tests/domain tests/application",
+    "test:integration": "bun test tests/infrastructure",
+    "test:e2e:paper": "bun test tests/e2e"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.2",
+    "@t3-oss/env-core": "^0.13.8",
+    "drizzle-orm": "^0.44.5",
+    "neverthrow": "^8.2.0",
+    "postgres": "^3.4.7",
+    "viem": "^2.38.6",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "drizzle-kit": "^0.31.4",
     "typescript": "^5.9.3",
     "vite-plus": "^0.1.12"
   }

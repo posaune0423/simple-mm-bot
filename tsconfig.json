@@ -19,5 +19,11 @@
     "noPropertyAccessFromIndexSignature": false,
     "types": ["bun"]
   },
-  "include": ["index.ts", "vite.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.ts",
+    "drizzle.config.ts",
+    "vite.config.ts"
+  ]
 }

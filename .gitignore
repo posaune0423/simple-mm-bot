@@ -2,7 +2,16 @@ node_modules/
 dist/
 .agents/memory/
 .DS_Store
-.env*
+
+.env
+.env.local
+.env.development
+.env.production
+
+
 .dev.vars
 .prod.vars
 .env.keys
+coverage/
+artifacts/
+data/

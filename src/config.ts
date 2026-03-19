@@ -1,0 +1,117 @@
+import type { ResultAsync } from "neverthrow";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+
+import { env } from "./env.ts";
+import type { AppError } from "./utils/errors.ts";
+import { createAppError } from "./utils/errors.ts";
+import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";
+
+const timeInForceSchema = z.enum(["ALO", "GTC", "IOC"]);
+
+const strategySchema = z.object({
+  type: z.literal("avellaneda-stoikov"),
+  params: z.object({
+    gamma: z.number().min(0).max(0.5),
+    kappa: z.number().positive(),
+    kInv: z.number().min(0).max(2),
+    baseSize: z.number().positive(),
+  }),
+});
+
+export const appConfigSchema = z.object({
+  mode: z.enum(["live", "paper", "backtest"]),
+  venue: z.literal("hyperliquid"),
+  connections: z.object({
+    hyperliquid: z.object({
+      wsUrl: z.string().url(),
+      httpUrl: z.string().url(),
+      market: z.string().min(1),
+      secretKey: z.string().optional(),
+      accountAddress: z.string().optional(),
+    }),
+  }),
+  quoteEngine: z.object({
+    markWeight: z.number().min(0).max(1),
+    inventoryScale: z.number().positive(),
+    timeHorizonSec: z.number().positive(),
+    slideMarginThreshold: z.number().min(0).max(1),
+    defaultTimeInForce: timeInForceSchema.default("ALO"),
+    strategy: strategySchema,
+  }),
+  risk: z.object({
+    imrBuffer: z.number().min(0).max(1),
+    mmrBuffer: z.number().min(0).max(1),
+    maxPositionQty: z.number().positive(),
+  }),
+  bot: z.object({
+    intervalMs: z.number().int().positive(),
+  }),
+  paper: z
+    .object({
+      touchFillRatio: z.number().min(0).max(1).default(0.5),
+    })
+    .default({ touchFillRatio: 0.5 }),
+  backtest: z.object({
+    market: z.string().min(1),
+    timeframe: z.string().min(1),
+    from: z.string().min(1),
+    to: z.string().min(1),
+  }),
+});
+
+export type AppConfig = z.infer<typeof appConfigSchema>;
+export type AppMode = AppConfig["mode"];
+export type OrderTimeInForce = z.infer<typeof timeInForceSchema>;
+
+export interface LoadConfigOptions {
+  configPath?: string;
+}
+
+function interpolateEnv(text: string): string {
+  return text.replaceAll(
+    /\$\{([A-Z0-9_]+)\}/g,
+    (_match, key) => (env as Record<string, string | undefined>)[key] ?? "",
+  );
+}
+
+function applyEnvOverrides(config: AppConfig): AppConfig {
+  return {
+    ...config,
+    mode: env.MODE ?? config.mode,
+    connections: {
+      hyperliquid: {
+        ...config.connections.hyperliquid,
+        wsUrl: env.HL_WS_URL ?? config.connections.hyperliquid.wsUrl,
+        httpUrl: env.HL_HTTP_URL ?? config.connections.hyperliquid.httpUrl,
+        secretKey: env.HL_SECRET_KEY ?? config.connections.hyperliquid.secretKey,
+        accountAddress: env.HL_ACCOUNT_ADDRESS ?? config.connections.hyperliquid.accountAddress,
+      },
+    },
+  };
+}
+
+export function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, AppError> {
+  const configPath = options.configPath ?? env.CONFIG_PATH;
+
+  return tryCatchAsync(Bun.file(configPath).text(), (error) =>
+    createAppError("config.read_failed", `Failed to read config: ${configPath}`, error),
+  ).andThen((text) =>
+    fromResult(
+      tryCatch(
+        () => applyEnvOverrides(appConfigSchema.parse(parseYaml(interpolateEnv(text)))),
+        (error) => createAppError("config.invalid", "Config validation failed", error),
+      ),
+    ),
+  );
+}
+
+export class ConfigLoader {
+  static async load(options: LoadConfigOptions = {}): Promise<AppConfig> {
+    const result = await loadConfig(options);
+    if (result.isErr()) {
+      throw result.error;
+    }
+    return result.value;
+  }
+}
