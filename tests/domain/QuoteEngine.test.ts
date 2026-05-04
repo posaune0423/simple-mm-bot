@@ -11,13 +11,14 @@ describe("QuoteEngine", () => {
       gamma: 0.02,
       kappa: 1.5,
       kInv: 0.3,
-      baseSize: 0.01,
     });
     const createEngine = () =>
       new QuoteEngine(strategy, new FairPriceCalculator(0.6), new VolatilityEstimator(), {
         inventoryScale: 0.05,
         timeHorizonSec: 30,
         slideMarginThreshold: 0.12,
+        positionSize: 0.01,
+        budgetUsd: 100,
       });
     const snapshot = {
       market: "ETH",
@@ -52,7 +53,6 @@ describe("QuoteEngine", () => {
       gamma: 0.02,
       kappa: 1.5,
       kInv: 0.3,
-      baseSize: 0.01,
     });
     const engine = new QuoteEngine(
       strategy,
@@ -62,6 +62,8 @@ describe("QuoteEngine", () => {
         inventoryScale: 0.05,
         timeHorizonSec: 30,
         slideMarginThreshold: 0.12,
+        positionSize: 0.01,
+        budgetUsd: 100,
       },
     );
 
@@ -91,5 +93,41 @@ describe("QuoteEngine", () => {
     );
 
     expect(volatile.ask - volatile.bid).toBeGreaterThan(base.ask - base.bid);
+  });
+
+  test("caps quote size by configured budget", () => {
+    const strategy = new AvellanedaStoikovStrategy({
+      gamma: 0.02,
+      kappa: 1.5,
+      kInv: 0.3,
+    });
+    const engine = new QuoteEngine(
+      strategy,
+      new FairPriceCalculator(0.6),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.05,
+        timeHorizonSec: 30,
+        slideMarginThreshold: 0.12,
+        positionSize: 0.1,
+        budgetUsd: 10,
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "ETH",
+        bestBid: 249,
+        bestAsk: 251,
+        microPrice: 250,
+        markPrice: 250,
+        timestamp: 1,
+        marginRatio: 0.2,
+      },
+      { qty: 0, avgEntry: 0, unrealizedPnl: 0 },
+    );
+
+    expect(quote.bidSize).toBe(0.04);
+    expect(quote.askSize).toBe(0.04);
   });
 });

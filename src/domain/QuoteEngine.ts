@@ -9,6 +9,8 @@ export interface QuoteEngineConfig {
   inventoryScale: number;
   timeHorizonSec: number;
   slideMarginThreshold: number;
+  positionSize: number;
+  budgetUsd?: number;
 }
 
 export class QuoteEngine {
@@ -26,14 +28,24 @@ export class QuoteEngine {
     // 3. let the strategy convert state into executable bid/ask levels
     const fairPrice = this.fairCalc.compute(snapshot);
     const sigma = this.volEst.update(snapshot.markPrice);
+    const quoteSize = this.computeQuoteSize(fairPrice);
     return this.strategy.computeQuote({
       fairPrice,
       sigma,
+      quoteSize,
       positionQty: position.qty,
       inventoryScale: this.config.inventoryScale,
       timeHorizonSec: this.config.timeHorizonSec,
       slideMarginThreshold: this.config.slideMarginThreshold,
       marginRatio: snapshot.marginRatio,
     });
+  }
+
+  private computeQuoteSize(fairPrice: number): number {
+    if (this.config.budgetUsd === undefined || fairPrice <= 0) {
+      return this.config.positionSize;
+    }
+
+    return Math.min(this.config.positionSize, this.config.budgetUsd / fairPrice);
   }
 }

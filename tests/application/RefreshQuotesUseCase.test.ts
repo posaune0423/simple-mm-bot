@@ -61,10 +61,16 @@ describe("RefreshQuotesUseCase", () => {
       async set() {},
     };
     const quoteEngine = new QuoteEngine(
-      new AvellanedaStoikovStrategy({ gamma: 0.02, kappa: 1.5, kInv: 0.3, baseSize: 0.01 }),
+      new AvellanedaStoikovStrategy({ gamma: 0.02, kappa: 1.5, kInv: 0.3 }),
       new FairPriceCalculator(0.6),
       new VolatilityEstimator(),
-      { inventoryScale: 0.05, timeHorizonSec: 30, slideMarginThreshold: 0.12 },
+      {
+        inventoryScale: 0.05,
+        timeHorizonSec: 30,
+        slideMarginThreshold: 0.12,
+        positionSize: 0.01,
+        budgetUsd: 100,
+      },
     );
 
     await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();

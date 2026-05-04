@@ -2,21 +2,21 @@ import type { ResultAsync } from "neverthrow";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
+import { avellanedaStoikovParamsSchema } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
 import { env } from "./env.ts";
 import type { AppError } from "./utils/errors.ts";
 import { createAppError } from "./utils/errors.ts";
 import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";
 
 const timeInForceSchema = z.enum(["ALO", "GTC", "IOC"]);
+const quoteSizingSchema = z.object({
+  positionSize: z.number().positive(),
+  budgetUsd: z.number().positive().optional(),
+});
 
 const strategySchema = z.object({
   type: z.literal("avellaneda-stoikov"),
-  params: z.object({
-    gamma: z.number().min(0).max(0.5),
-    kappa: z.number().positive(),
-    kInv: z.number().min(0).max(2),
-    baseSize: z.number().positive(),
-  }),
+  params: avellanedaStoikovParamsSchema,
 });
 
 export const appConfigSchema = z.object({
@@ -37,6 +37,7 @@ export const appConfigSchema = z.object({
     timeHorizonSec: z.number().positive(),
     slideMarginThreshold: z.number().min(0).max(1),
     defaultTimeInForce: timeInForceSchema.default("ALO"),
+    sizing: quoteSizingSchema,
     strategy: strategySchema,
   }),
   risk: z.object({

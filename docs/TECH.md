@@ -84,14 +84,15 @@ strategy の抽象は `IQuotingStrategy` で統一する。
 
 主要パラメータ:
 
-| パラメータ | 意味                  | 想定範囲                       | 推奨値 |
-| ---------- | --------------------- | ------------------------------ | ------ |
-| `gamma`    | リスク回避係数        | `0.001-0.5`、ただし `0` を許容 | `0.02` |
-| `kappa`    | fill intensity 推定値 | `> 0`                          | `1.5`  |
-| `kInv`     | inventory skew 係数   | `0-2`                          | `0.3`  |
-| `baseSize` | 基本発注サイズ        | `> 0`                          | `0.01` |
+| パラメータ     | 意味                  | 想定範囲                       | 推奨値 |
+| -------------- | --------------------- | ------------------------------ | ------ |
+| `gamma`        | リスク回避係数        | `0.001-0.5`、ただし `0` を許容 | `0.02` |
+| `kappa`        | fill intensity 推定値 | `> 0`                          | `1.5`  |
+| `kInv`         | inventory skew 係数   | `0-2`                          | `0.3`  |
+| `positionSize` | 基本発注サイズ        | `> 0`                          | `0.01` |
+| `budgetUsd`    | 発注あたり予算上限    | `> 0`                          | `100`  |
 
-これらは Zod schema で定義し、config 読み込み時と runtime で同一ルールを使う。
+strategy params は Zod schema で定義し、config 読み込み時と runtime で同一ルールを使う。実効発注サイズは `QuoteEngine` が `positionSize` と `budgetUsd / fairPrice` の小さい方で決定する。
 
 ### Fair Price と Volatility
 

@@ -22,8 +22,8 @@ export class AvellanedaStoikovStrategy implements IQuotingStrategy {
     return {
       bid: Math.max(0, reservationPrice - spread / 2),
       ask: Math.max(0, reservationPrice + spread / 2),
-      bidSize: this.params.baseSize,
-      askSize: this.params.baseSize,
+      bidSize: context.quoteSize,
+      askSize: context.quoteSize,
       policy,
       fairPrice: context.fairPrice,
       sigma: context.sigma,

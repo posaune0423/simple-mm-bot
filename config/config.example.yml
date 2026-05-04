@@ -15,13 +15,15 @@ quoteEngine:
   timeHorizonSec: 30
   slideMarginThreshold: 0.12
   defaultTimeInForce: ALO
+  sizing:
+    positionSize: 0.01
+    budgetUsd: 100
   strategy:
     type: avellaneda-stoikov
     params:
       gamma: 0.02
       kappa: 1.5
       kInv: 0.3
-      baseSize: 0.01
 
 risk:
   imrBuffer: 0.15

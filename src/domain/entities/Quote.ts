@@ -14,6 +14,7 @@ export interface Quote {
 export interface QuoteContext {
   fairPrice: number;
   sigma: number;
+  quoteSize: number;
   positionQty: number;
   inventoryScale: number;
   timeHorizonSec: number;

@@ -229,7 +229,6 @@ interface IQuotingStrategy {
 | `gamma`    | number (0.001-0.5) | リスク回避係数。大きいほどスプレッド広め。0 で Fixed Spread | 0.02   |
 | `kappa`    | number (> 0)       | Fill intensity 推定値。注文の埋まりやすさ                   | 1.5    |
 | `kInv`     | number (0-2)       | Inventory skew 係数                                         | 0.3    |
-| `baseSize` | number (> 0)       | 基本注文サイズ (ETH 単位)                                   | 0.01   |
 
 params は `AvellanedaStoikovParams.ts` 内の zod schema で定義・バリデーションする。config.yml から読み込む際も同 schema を通す。
 
@@ -438,13 +437,15 @@ quoteEngine:
   inventoryScale: 0.05 # tanh 正規化のスケール
   timeHorizonSec: 30 # A-S の T
   slideMarginThreshold: 0.12 # margin 近傍で PostOnlySlide に切替
+  sizing:
+    positionSize: 0.01 # 1注文あたりの基本サイズ
+    budgetUsd: 100 # 1注文あたりの予算上限。size は budget/fairPrice でも上限を掛ける
   strategy:
     type: avellaneda-stoikov
     params:
       gamma: 0.02
       kappa: 1.5
       kInv: 0.3
-      baseSize: 0.01
 
 risk:
   imrBuffer: 0.15 # IMR 近傍で quoting 停止

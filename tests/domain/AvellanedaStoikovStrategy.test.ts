@@ -8,12 +8,12 @@ describe("AvellanedaStoikovStrategy", () => {
       gamma: 0,
       kappa: 2,
       kInv: 0.3,
-      baseSize: 0.01,
     });
 
     const quote = strategy.computeQuote({
       fairPrice: 100,
       sigma: 0.5,
+      quoteSize: 0.01,
       positionQty: 0,
       inventoryScale: 0.05,
       timeHorizonSec: 30,
@@ -29,12 +29,12 @@ describe("AvellanedaStoikovStrategy", () => {
       gamma: 0.02,
       kappa: 1.5,
       kInv: 0,
-      baseSize: 0.01,
     });
 
     const quote = strategy.computeQuote({
       fairPrice: 200,
       sigma: 0.2,
+      quoteSize: 0.01,
       positionQty: 3,
       inventoryScale: 0.05,
       timeHorizonSec: 30,

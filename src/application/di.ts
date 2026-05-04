@@ -89,6 +89,8 @@ export class DIContainer {
         inventoryScale: this.config.quoteEngine.inventoryScale,
         timeHorizonSec: this.config.quoteEngine.timeHorizonSec,
         slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
+        positionSize: this.config.quoteEngine.sizing.positionSize,
+        budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
       },
     );
   }
