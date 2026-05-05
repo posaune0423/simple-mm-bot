@@ -1,20 +1,20 @@
 mode: paper
-venue: hyperliquid
+venue: bulk
 
 connections:
-  hyperliquid:
-    wsUrl: ${HL_WS_URL}
-    httpUrl: ${HL_HTTP_URL}
-    market: ETH
-    secretKey: ${HL_SECRET_KEY}
-    accountAddress: ${HL_ACCOUNT_ADDRESS}
+  bulk:
+    wsUrl: wss://exchange-ws1.bulk.trade
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    market: ETH-USD
+    nlevels: 20
+    privateKey: ${BULK_PRIVATE_KEY}
 
 quoteEngine:
   markWeight: 0.6
   inventoryScale: 0.05
   timeHorizonSec: 30
   slideMarginThreshold: 0.12
-  defaultTimeInForce: ALO
+  defaultTimeInForce: GTC
   sizing:
     positionSize: 0.01
     budgetUsd: 100

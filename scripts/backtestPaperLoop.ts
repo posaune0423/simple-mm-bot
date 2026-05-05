@@ -48,7 +48,9 @@ function buildBot(
 function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
   const outputDir = options["output-dir"] ?? join("artifacts", "strategy-runs", `${Date.now()}`);
-  const configPath = options.config ?? "config/config.paper.yml";
+  const backtestConfigPath =
+    options["backtest-config"] ?? options.config ?? "config/config.backtest.yml";
+  const paperConfigPath = options["paper-config"] ?? options.config ?? "config/config.paper.yml";
   const from = options.from ?? "2024-01-01";
   const to = options.to ?? "2024-01-07";
   const paperDurationMin = Number(options["paper-duration-min"] ?? "1");
@@ -58,14 +60,14 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
   return ResultAsync.fromPromise(ensureDirectory(outputDir), (error) =>
     createAppError("loop.prepare_failed", "Failed to prepare output directory", error),
   )
-    .andThen(() => buildBot(configPath, "backtest", dbPath, { from, to }))
+    .andThen(() => buildBot(backtestConfigPath, "backtest", dbPath, { from, to }))
     .andThen((bot) =>
       ResultAsync.fromPromise(bot.start(), (error) =>
         createAppError("loop.backtest_failed", "Backtest execution failed", error),
       ),
     )
     .andThen((backtestReport) =>
-      buildBot(configPath, "paper", dbPath).andThen((bot) =>
+      buildBot(paperConfigPath, "paper", dbPath).andThen((bot) =>
         ResultAsync.fromPromise(bot.start(paperTicks), (error) =>
           createAppError("loop.paper_failed", "Paper execution failed", error),
         ).map((paperReport) => ({ backtestReport, paperReport })),

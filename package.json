@@ -16,7 +16,7 @@
     "format:check": "vp fmt --check",
     "loop:backtest-paper": "bun run scripts/backtestPaperLoop.ts",
     "test": "bun run test:unit && bun run test:integration",
-    "test:unit": "bun test tests/domain tests/application",
+    "test:unit": "bun test tests/domain tests/application tests/adapters tests/config.test.ts",
     "test:integration": "bun test tests/infrastructure",
     "test:e2e:paper": "bun test tests/e2e"
   },
@@ -24,6 +24,7 @@
     "@msgpack/msgpack": "^3.1.2",
     "@nktkas/hyperliquid": "^0.32.1",
     "@t3-oss/env-core": "^0.13.8",
+    "bulk-ts-sdk": "^0.0.5",
     "drizzle-orm": "^0.44.5",
     "neverthrow": "^8.2.0",
     "postgres": "^3.4.7",

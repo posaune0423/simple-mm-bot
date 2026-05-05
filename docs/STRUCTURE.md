@@ -1,250 +1,184 @@
 # STRUCTURE
 
-## 目的
+この文書は `simple-mm-bot` の現在の構成と、各ディレクトリの責務を定義する。
 
-この文書は `simple-mm-bot` のリポジトリ構成と各ディレクトリの責務を定義する。
-現時点のリポジトリはまだ bootstrap 段階のため、この文書は「現状の実装一覧」ではなく「これから実装を進めるための目標構成」を示す。
+現在の主対象 venue は Bulk Trade。Bullet は対応対象に含めない。
+Bulk Trade には公式 TypeScript SDK がないため、repo owner が API を wrap して実装した `bulk-ts-sdk` を adapter 層から利用する。
 
-## 現状
-
-現在のトップレベルは最小構成であり、以下のみが存在する。
-
-- Bun TypeScript プロジェクト
-- `index.ts` エントリポイント
-- `vite.config.ts` による tooling
-- `docs/` と task memory
-
-まだ `src/`、`config/`、`tests/` は作られていない。
-そのため、この文書で定義する構成を今後の実装の正とする。
-
-## 目標ディレクトリ構成
+## ディレクトリ構成
 
 ```text
 simple-mm-bot/
 ├── src/
+│   ├── main.ts
+│   ├── env.ts
+│   ├── config.ts
+│   ├── application/
+│   │   ├── Bot.ts
+│   │   ├── di.ts
+│   │   └── usecases/
 │   ├── domain/
 │   │   ├── entities/
-│   │   │   ├── Quote.ts
-│   │   │   ├── Position.ts
-│   │   │   ├── Fill.ts
-│   │   │   └── Report.ts
 │   │   ├── ports/
-│   │   │   ├── IMarketFeed.ts
-│   │   │   ├── IOrderGateway.ts
-│   │   │   ├── IPositionRepository.ts
-│   │   │   ├── ITradeRepository.ts
-│   │   │   ├── IReportRepository.ts
-│   │   │   └── IOhlcvRepository.ts
 │   │   ├── strategy/
-│   │   │   ├── IQuotingStrategy.ts
-│   │   │   └── avellaneda-stoikov/
-│   │   │       ├── AvellanedaStoikovStrategy.ts
-│   │   │       └── AvellanedaStoikovParams.ts
-│   │   ├── QuoteEngine.ts
 │   │   ├── Analytics.ts
 │   │   ├── FairPriceCalculator.ts
+│   │   ├── QuoteEngine.ts
 │   │   └── VolatilityEstimator.ts
-│   ├── application/
-│   │   ├── usecases/
-│   │   │   ├── RefreshQuotesUseCase.ts
-│   │   │   ├── RecordFillUseCase.ts
-│   │   │   ├── GuardRiskUseCase.ts
-│   │   │   ├── ReduceInventoryUseCase.ts
-│   │   │   └── BuildReportUseCase.ts
-│   │   ├── Bot.ts
-│   │   └── di.ts
 │   ├── adapters/
-│   │   ├── bullet/
-│   │   │   ├── BulletMarketFeed.ts
-│   │   │   ├── BulletOrderGateway.ts
-│   │   │   └── BulletOhlcvFetcher.ts
+│   │   ├── bulk/
+│   │   │   ├── BulkMarketFeed.ts
+│   │   │   └── BulkOrderGateway.ts
 │   │   ├── hyperliquid/
 │   │   │   ├── HyperliquidMarketFeed.ts
-│   │   │   ├── HyperliquidOrderGateway.ts
-│   │   │   └── HyperliquidOhlcvFetcher.ts
+│   │   │   ├── HyperliquidOhlcvFetcher.ts
+│   │   │   └── HyperliquidOrderGateway.ts
 │   │   └── paper/
-│   │       ├── PaperOrderGateway.ts
-│   │       └── HistoricalMarketFeed.ts
+│   │       ├── HistoricalMarketFeed.ts
+│   │       └── PaperOrderGateway.ts
 │   ├── infrastructure/
 │   │   └── db/
-│   │       ├── sqlite/
-│   │       │   ├── client.ts
-│   │       │   ├── schema.ts
-│   │       │   ├── migrations/
-│   │       │   └── repository/
-│   │       └── postgres/
-│   │           ├── client.ts
-│   │           ├── schema.ts
-│   │           ├── migrations/
-│   │           └── repository/
-│   └── main.ts
+│   │       ├── postgres/
+│   │       └── sqlite/
+│   └── lib/
+│       └── hyperliquid/
 ├── config/
 │   ├── config.yml
+│   ├── config.bulk.yml
 │   ├── config.paper.yml
-│   ├── config.replay.yml
+│   ├── config.backtest.yml
 │   └── config.example.yml
-├── data/
-│   └── mmbot.db
 ├── tests/
-│   ├── domain/
+│   ├── adapters/
 │   ├── application/
+│   ├── domain/
+│   ├── e2e/
 │   └── infrastructure/
+├── scripts/
 ├── docs/
 │   ├── PRD.md
 │   ├── TECH.md
 │   ├── STRUCTURE.md
 │   └── specs/
-│       └── init.md
-├── drizzle.config.ts
-├── Dockerfile
-├── package.json
-└── tsconfig.json
+└── package.json
 ```
 
-## レイヤーごとの責務
+## レイヤー責務
 
 ### `src/domain/`
 
-純粋なビジネスロジックを置く。
+純粋な market making logic を置く。
 
 - venue SDK を import しない
 - DB 実装を import しない
 - env を直接読まない
-- infrastructure に依存しない
+- adapter payload を entity に持ち込まない
 
-この層は entity、port、strategy、quote 計算、analytics を持つ。
+`QuoteEngine` は strategy、fair price、volatility、risk sizing を組み合わせて quote を生成する。
+Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
 ### `src/application/`
 
-use case と bot runtime の実行順を担う。
+bot runtime と use case orchestration を置く。
 
+- tick loop を管理する
 - domain service を組み合わせる
-- tick loop を持つ
-- `di.ts` を通じて依存解決を司る
-- venue protocol や SQL を書かない
+- `di.ts` で mode / venue / repository を解決する
+- venue protocol や SQL を直接書かない
+
+`di.ts` が具体実装を知る唯一の application 境界。
 
 ### `src/adapters/`
 
-venue / mode ごとの具体実装を置く。
+外部 venue と domain ports の変換層。
 
-- 外部 payload を domain model に変換する
-- venue ごとの order semantics を吸収する
-- paper / replay 実装を持つ
+#### `src/adapters/bulk/`
 
-Bullet と Hyperliquid の違いをここに閉じ込める。
+Bulk Trade の primary adapter。
+
+- `BulkMarketFeed.ts`
+  - `bulk-ts-sdk` で ticker / L2 を取得する
+  - HTTP snapshot を seed し、WS ticker / L2 snapshot で更新する
+  - Bulk timestamp は ns から ms に正規化する
+  - top book から mid / microprice を計算する
+  - account id が利用できる場合のみ margin ratio を取得する
+- `BulkOrderGateway.ts`
+  - domain order を `placeLimitOrder` / `placeMarketOrder` に変換する
+  - cancel / cancelAll を SDK に委譲する
+  - `response.data.statuses` から order id と reject reason を読む
+  - `account.fills(accountId)` を poll し、fills を domain `Fill` に正規化する
+
+#### `src/adapters/hyperliquid/`
+
+既存の Hyperliquid adapter。
+当面は historical backtest / legacy validation path として維持する。
+Bulk main 運用に必要な新規機能はここへ追加しない。
+
+#### `src/adapters/paper/`
+
+venue 非依存の paper execution。
+Bulk paper mode では `BulkMarketFeed` と `PaperOrderGateway` を組み合わせる。
 
 ### `src/infrastructure/`
 
-DB など外部システムの詳細を置く。
+DB など外部 storage の詳細を置く。
 
-- DB client
-- schema
-- migrations
-- repository 実装
+- SQLite は local / lightweight operation 用
+- Postgres は production 用
+- repository は domain ports を実装し、schema 都合を domain に漏らさない
 
-storage 都合を domain に漏らさないことを前提にする。
+## Config
 
-## ディレクトリ規約
+`config/` には commit 可能な設定だけを置く。
 
-### `entities/`
+- `config/config.bulk.yml`
+  - Bulk Trade primary config
+- `config/config.paper.yml`
+  - Bulk Trade paper config
+- `config/config.yml`
+  - default local config
+- `config/config.backtest.yml`
+  - temporary Hyperliquid historical backtest config
+- `config/config.example.yml`
+  - safe template with `${BULK_PRIVATE_KEY}`
 
-entity は小さく、serializable で、adapter の生 payload を直接持ち込まない。
+デフォルトの `CONFIG_PATH` は `config/config.bulk.yml`。
 
-### `ports/`
+Bulk の HTTP URL、WS URL、market、L2 depth は YAML に置く。
+secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
 
-差し替え可能性がある責務は、まず port に切ることを検討する。
-venue、mode、DB の違いを吸収する境界は基本的にここに置く。
+## DI Matrix
 
-### `strategy/`
-
-strategy ごとに独立したディレクトリを切る。
-初期戦略は `avellaneda-stoikov/` とする。
-
-### `usecases/`
-
-1 use case = 1 operational responsibility を原則にする。
-quoting、risk、fills、reporting を 1 クラスに混ぜない。
-
-## エントリポイントと依存解決
-
-- `src/main.ts`
-  - 起動専用に保つ
-- `src/application/di.ts`
-  - 具体実装の組み立てを一元化する
-- config / env parsing
-  - 起動時に済ませ、typed config として下流へ渡す
-
-## 設定ファイル構成
-
-`config/` には commit 可能な設定ファイルだけを置く。
-
-- `config.yml`
-  - 基本設定
-- `config.paper.yml`
-  - paper 向け既定値
-- `config.replay.yml`
-  - replay 向け既定値
-- `config.example.yml`
-  - 安全なテンプレート
-
-secret は config に直書きせず、環境変数で注入する。
-
-## DB 構成
-
-2 つの backend を同じ責務分割で持つ。
-
-- `sqlite/`
-  - local / 軽量運用向け
-- `postgres/`
-  - production 向け
-
-各 backend 配下には以下を揃える。
-
-- `client.ts`
-- `schema.ts`
-- `migrations/`
-- `repository/`
-
-repository 名は backend と port 名に対応させる。
-例: `SqliteTradeRepository`, `PostgresReportRepository`
-
-## テスト構成
-
-### `tests/domain/`
-
-strategy、quote engine、analytics の pure unit test を置く。
-
-### `tests/application/`
-
-port を mock した use case test を置く。
-副作用の順序と分岐を検証する層とする。
-
-### `tests/infrastructure/`
-
-SQLite など実ストレージを使う integration test を置く。
-
-paper E2E は必要になった段階で専用ディレクトリを追加してよい。
+| venue         | mode       | MarketFeed              | OrderGateway              | status               |
+| ------------- | ---------- | ----------------------- | ------------------------- | -------------------- |
+| `bulk`        | `paper`    | `BulkMarketFeed`        | `PaperOrderGateway`       | primary              |
+| `bulk`        | `live`     | `BulkMarketFeed`        | `BulkOrderGateway`        | primary              |
+| `bulk`        | `backtest` | unsupported             | unsupported               | explicit error       |
+| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | temporary            |
+| `hyperliquid` | `paper`    | `HyperliquidMarketFeed` | `PaperOrderGateway`       | legacy compatibility |
+| `hyperliquid` | `live`     | `HyperliquidMarketFeed` | `HyperliquidOrderGateway` | legacy compatibility |
 
 ## 依存ルール
 
-以下を構造上の制約とする。
-
 - domain は application / adapters / infrastructure を import しない
-- application は domain のみを import する
-- adapters は domain ports と共通型を import する
-- infrastructure は domain ports と storage library を import する
-- 具体実装の全体像を知ってよいのは `main.ts` と `di.ts` のみ
+- application は domain と DI 対象の具体実装だけを組み合わせる
+- Bulk SDK import は `src/adapters/bulk/` に閉じる
+- Hyperliquid SDK import は `src/lib/hyperliquid/` と `src/adapters/hyperliquid/` に閉じる
+- infrastructure は domain ports と storage library に依存する
+- secret env は `src/env.ts` と config expansion 以外で直接読まない
 
-## 実装順の推奨
+## テスト構成
 
-実装は以下の順で進める。
+- `tests/domain/`
+  - strategy、quote engine、analytics の pure unit test
+- `tests/application/`
+  - DI、bot loop、use case の orchestration test
+- `tests/adapters/`
+  - Bulk adapter と venue payload normalization の unit test
+- `tests/infrastructure/`
+  - SQLite/Postgres repository integration test
+- `tests/e2e/`
+  - public feed を使う smoke test
 
-1. `domain/`
-2. `application/usecases/`
-3. `adapters/paper/` と最小の in-memory repository
-4. `infrastructure/db/sqlite/`
-5. `adapters/bullet/`
-6. replay 経路
-7. `adapters/hyperliquid/`
-
-この順序により、外部接続に入る前に core logic を test で固められる。
+Bulk main path を変更した場合は、少なくとも `bun run lint` と `bun run test` を実行する。
+public feed 依存の確認が必要な場合だけ `bun run test:e2e:paper` を追加する。

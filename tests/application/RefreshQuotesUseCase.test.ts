@@ -68,6 +68,7 @@ describe("RefreshQuotesUseCase", () => {
         inventoryScale: 0.05,
         timeHorizonSec: 30,
         slideMarginThreshold: 0.12,
+        defaultTimeInForce: "ALO",
         positionSize: 0.01,
         budgetUsd: 100,
       },

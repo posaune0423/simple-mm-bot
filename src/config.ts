@@ -19,18 +19,8 @@ const strategySchema = z.object({
   params: avellanedaStoikovParamsSchema,
 });
 
-export const appConfigSchema = z.object({
+const commonConfigSchema = z.object({
   mode: z.enum(["live", "paper", "backtest"]),
-  venue: z.literal("hyperliquid"),
-  connections: z.object({
-    hyperliquid: z.object({
-      wsUrl: z.string().url(),
-      httpUrl: z.string().url(),
-      market: z.string().min(1),
-      secretKey: z.string().optional(),
-      accountAddress: z.string().optional(),
-    }),
-  }),
   quoteEngine: z.object({
     markWeight: z.number().min(0).max(1),
     inventoryScale: z.number().positive(),
@@ -61,6 +51,33 @@ export const appConfigSchema = z.object({
   }),
 });
 
+export const appConfigSchema = z.discriminatedUnion("venue", [
+  commonConfigSchema.extend({
+    venue: z.literal("hyperliquid"),
+    connections: z.object({
+      hyperliquid: z.object({
+        wsUrl: z.string().url(),
+        httpUrl: z.string().url(),
+        market: z.string().min(1),
+        secretKey: z.string().optional(),
+        accountAddress: z.string().optional(),
+      }),
+    }),
+  }),
+  commonConfigSchema.extend({
+    venue: z.literal("bulk"),
+    connections: z.object({
+      bulk: z.object({
+        wsUrl: z.string().url(),
+        httpUrl: z.string().url(),
+        market: z.string().min(1),
+        nlevels: z.number().int().positive().optional(),
+        privateKey: z.string().optional(),
+      }),
+    }),
+  }),
+]);
+
 export type AppConfig = z.infer<typeof appConfigSchema>;
 export type AppMode = AppConfig["mode"];
 export type OrderTimeInForce = z.infer<typeof timeInForceSchema>;
@@ -77,6 +94,19 @@ function interpolateEnv(text: string): string {
 }
 
 function applyEnvOverrides(config: AppConfig): AppConfig {
+  if (config.venue === "bulk") {
+    return {
+      ...config,
+      mode: env.MODE ?? config.mode,
+      connections: {
+        bulk: {
+          ...config.connections.bulk,
+          privateKey: env.BULK_PRIVATE_KEY ?? config.connections.bulk.privateKey,
+        },
+      },
+    };
+  }
+
   return {
     ...config,
     mode: env.MODE ?? config.mode,

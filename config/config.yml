@@ -1,18 +1,19 @@
 mode: paper
-venue: hyperliquid
+venue: bulk
 
 connections:
-  hyperliquid:
-    wsUrl: wss://api.hyperliquid.xyz/ws
-    httpUrl: https://api.hyperliquid.xyz
-    market: ETH
+  bulk:
+    wsUrl: wss://exchange-ws1.bulk.trade
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    market: ETH-USD
+    nlevels: 20
 
 quoteEngine:
   markWeight: 0.6
   inventoryScale: 0.05
   timeHorizonSec: 30
   slideMarginThreshold: 0.12
-  defaultTimeInForce: ALO
+  defaultTimeInForce: GTC
   sizing:
     positionSize: 0.01
     budgetUsd: 100

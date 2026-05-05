@@ -39,7 +39,7 @@ describe("backtest and paper smoke", () => {
       const bot = await new DIContainer(config).buildBot();
       const report = await bot.start(2);
 
-      expect(report.venue).toBe("hyperliquid");
+      expect(report.venue).toBe("bulk");
       expect(report.metrics.fillRate).toBeGreaterThanOrEqual(0);
     } finally {
       Bun.env.DB_PATH = previousDbPath;
