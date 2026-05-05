@@ -87,21 +87,22 @@ export interface LoadConfigOptions {
 }
 
 function interpolateEnv(text: string): string {
-  return text.replaceAll(
-    /\$\{([A-Z0-9_]+)\}/g,
-    (_match, key) => (env as Record<string, string | undefined>)[key] ?? "",
-  );
+  return text.replaceAll(/\$\{([A-Z0-9_]+)\}/g, (_match, key) => envValue(key) ?? "");
+}
+
+function envValue(key: string): string | undefined {
+  return Bun.env[key] ?? (env as Record<string, string | undefined>)[key];
 }
 
 function applyEnvOverrides(config: AppConfig): AppConfig {
   if (config.venue === "bulk") {
     return {
       ...config,
-      mode: env.MODE ?? config.mode,
+      mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
       connections: {
         bulk: {
           ...config.connections.bulk,
-          privateKey: env.BULK_PRIVATE_KEY ?? config.connections.bulk.privateKey,
+          privateKey: envValue("BULK_PRIVATE_KEY") ?? config.connections.bulk.privateKey,
         },
       },
     };
@@ -109,14 +110,15 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
 
   return {
     ...config,
-    mode: env.MODE ?? config.mode,
+    mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
     connections: {
       hyperliquid: {
         ...config.connections.hyperliquid,
-        wsUrl: env.HL_WS_URL ?? config.connections.hyperliquid.wsUrl,
-        httpUrl: env.HL_HTTP_URL ?? config.connections.hyperliquid.httpUrl,
-        secretKey: env.HL_SECRET_KEY ?? config.connections.hyperliquid.secretKey,
-        accountAddress: env.HL_ACCOUNT_ADDRESS ?? config.connections.hyperliquid.accountAddress,
+        wsUrl: envValue("HL_WS_URL") ?? config.connections.hyperliquid.wsUrl,
+        httpUrl: envValue("HL_HTTP_URL") ?? config.connections.hyperliquid.httpUrl,
+        secretKey: envValue("HL_SECRET_KEY") ?? config.connections.hyperliquid.secretKey,
+        accountAddress:
+          envValue("HL_ACCOUNT_ADDRESS") ?? config.connections.hyperliquid.accountAddress,
       },
     },
   };
