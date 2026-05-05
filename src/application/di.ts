@@ -177,9 +177,7 @@ export class DIContainer {
       wsUrl: bulk.wsUrl,
       privateKey: bulk.privateKey,
     });
-    const accountId =
-      (client as unknown as { accountId?: string; accountPublicKey?: string }).accountId ??
-      (client as unknown as { accountPublicKey?: string }).accountPublicKey;
+    const accountId = client.accountId ?? client.accountPublicKey;
 
     if (mode === "backtest") {
       throw new Error("Bulk venue does not support backtest mode");

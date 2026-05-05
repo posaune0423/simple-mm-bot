@@ -7,6 +7,7 @@ import type {
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
+import { logger } from "../../utils/logger.ts";
 
 type BulkStatus = Record<string, Record<string, unknown> | undefined>;
 type BulkOrderResponse = {
@@ -115,7 +116,9 @@ export class BulkOrderGateway implements IOrderGateway {
   ) {
     if (params.pollIntervalMs !== undefined) {
       this.fillTimer = setInterval(() => {
-        void this.pollFillsOnce().catch(() => undefined);
+        void this.pollFillsOnce().catch((error) => {
+          logger.error(`BulkOrderGateway.pollFillsOnce failed: ${String(error)}`);
+        });
       }, params.pollIntervalMs);
     }
   }

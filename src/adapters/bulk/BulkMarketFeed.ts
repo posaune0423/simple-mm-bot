@@ -3,6 +3,7 @@ import type {
   MarketSnapshot,
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
+import { logger } from "../../utils/logger.ts";
 
 type BulkLevel = { price?: number; px?: number; size?: number; sz?: number };
 type BulkBook = { levels?: BulkLevel[][]; timestamp?: number };
@@ -92,9 +93,14 @@ export class BulkMarketFeed implements IMarketFeed {
   }
 
   async disconnect(): Promise<void> {
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
     );
+    for (const result of results) {
+      if (result.status === "rejected") {
+        logger.warn(`BulkMarketFeed.disconnect unsubscribe failed: ${String(result.reason)}`);
+      }
+    }
     await this.client.ws.close();
   }
 
