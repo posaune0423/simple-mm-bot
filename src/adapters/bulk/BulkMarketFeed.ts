@@ -92,9 +92,9 @@ export class BulkMarketFeed implements IMarketFeed {
   }
 
   async disconnect(): Promise<void> {
-    for (const unsubscribe of this.unsubscribers.splice(0)) {
-      await unsubscribe();
-    }
+    await Promise.allSettled(
+      this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
+    );
     await this.client.ws.close();
   }
 

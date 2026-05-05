@@ -58,8 +58,14 @@ describe("DIContainer Bulk venue", () => {
   });
 
   test("rejects bulk backtest explicitly", async () => {
-    expect(new DIContainer(config("backtest")).buildBot()).rejects.toThrow(
-      "Bulk venue does not support backtest mode",
+    await new DIContainer(config("backtest")).buildBot().then(
+      () => {
+        throw new Error("Expected Bulk backtest to reject");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("Bulk venue does not support backtest mode");
+      },
     );
   });
 });
