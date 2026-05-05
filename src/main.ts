@@ -10,11 +10,18 @@ function isAppError(error: unknown): error is AppError {
   return typeof error === "object" && error !== null && "code" in error && "message" in error;
 }
 
+function marketName(config: Awaited<ReturnType<typeof ConfigLoader.load>>): string {
+  return config.venue === "bulk"
+    ? config.connections.bulk.market
+    : config.connections.hyperliquid.market;
+}
+
 try {
   // Startup stays intentionally thin: load config, build the bot, then run it.
   const config = await ConfigLoader.load();
-  const mode: AppMode = env.MODE ?? "live";
+  const mode: AppMode = env.MODE ?? config.mode;
   config.mode = mode;
+  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${marketName(config)}`);
 
   const bot = await new DIContainer(config).buildBot();
 
