@@ -24,4 +24,5 @@ export interface IOrderGateway {
   cancel(id: string): Promise<void>;
   cancelAll(): Promise<void>;
   subscribeFills(listener: FillListener): () => void;
+  dispose?(): void | Promise<void>;
 }

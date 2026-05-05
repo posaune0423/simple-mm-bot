@@ -56,17 +56,30 @@ describe("BulkOrderGateway", () => {
       reduceOnly: true,
       timeInForce: "IOC",
     });
+    const limitIoc = await gateway.place({
+      market: "ETH-USD",
+      side: "sell",
+      price: 102,
+      qty: 0.03,
+      reduceOnly: false,
+      timeInForce: "IOC",
+    });
     await gateway.cancel("limit-1");
     await gateway.cancelAll();
 
     expect(limit).toMatchObject({ id: "limit-1", status: "open" });
     expect(market).toMatchObject({ id: "market-1", status: "filled" });
+    expect(limitIoc).toMatchObject({ id: "limit-1", status: "open" });
     expect(calls).toEqual([
       [
         "limit",
         { symbol: "ETH-USD", side: "buy", price: 100, size: 0.01, tif: "GTC", reduceOnly: false },
       ],
       ["market", { symbol: "ETH-USD", side: "sell", size: 0.02, reduceOnly: true }],
+      [
+        "limit",
+        { symbol: "ETH-USD", side: "sell", price: 102, size: 0.03, tif: "IOC", reduceOnly: false },
+      ],
       ["cancel", { symbol: "ETH-USD", orderId: "limit-1" }],
       ["cancelAll", { symbols: ["ETH-USD"] }],
     ]);

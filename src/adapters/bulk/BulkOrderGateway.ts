@@ -125,7 +125,7 @@ export class BulkOrderGateway implements IOrderGateway {
 
   async place(order: OrderRequest): Promise<PlacedOrder> {
     const response =
-      order.price === undefined || order.timeInForce === "IOC"
+      order.price === undefined
         ? await this.client.trade.placeMarketOrder?.({
             symbol: order.market,
             side: order.side,

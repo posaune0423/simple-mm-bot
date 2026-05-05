@@ -129,4 +129,41 @@ describe("BulkMarketFeed", () => {
     expect(snapshot.bestAsk).toBe(101);
     expect(snapshot.timestamp).toBe(1_700_000_000_000);
   });
+
+  test("fails closed when account margin lookup fails with an account id", async () => {
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("account unavailable");
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "ETH-USD", accountId: "account" });
+
+    await feed.connect().then(
+      () => {
+        throw new Error("Expected margin lookup to reject");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("account unavailable");
+      },
+    );
+  });
 });

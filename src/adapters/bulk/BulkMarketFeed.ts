@@ -232,17 +232,13 @@ export class BulkMarketFeed implements IMarketFeed {
     if (!this.params.accountId) {
       return null;
     }
-    try {
-      const account = await this.client.account.fullAccount(this.params.accountId);
-      const totalBalance = account.margin?.totalBalance;
-      const marginUsed = account.margin?.marginUsed;
-      if (totalBalance === undefined || totalBalance <= 0 || marginUsed === undefined) {
-        return null;
-      }
-      return Math.max(0, (totalBalance - marginUsed) / totalBalance);
-    } catch {
-      return null;
+    const account = await this.client.account.fullAccount(this.params.accountId);
+    const totalBalance = account.margin?.totalBalance;
+    const marginUsed = account.margin?.marginUsed;
+    if (totalBalance === undefined || totalBalance <= 0 || marginUsed === undefined) {
+      throw new Error(`No Bulk margin data for ${this.params.accountId}`);
     }
+    return Math.max(0, (totalBalance - marginUsed) / totalBalance);
   }
 
   private publish(snapshot: MarketSnapshot): void {
