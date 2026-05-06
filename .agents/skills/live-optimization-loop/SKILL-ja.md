@@ -17,6 +17,7 @@ telemetryはmode非依存で保存し、将来のBulk mainnet後に`paper`/`back
 - **Markout (5s)**: **> +0.5 bps**
 - **Adverse Selection Rate**: **< 30%**
 - **Fill Rate**: Net PnLとPnL per notionalが正になるまでは診断指標。低fill rateだけではtuning目標にしない。
+- **Maker fee tier / 14d volume**: 14日volumeが**150M USD以上でmaker fee 0 bps**、**500M USD以上でmaker fee -1 bps**になるため、fee/rebate込みのedgeとtier到達可能性を指標に入れる。
 
 ## 主要コマンド / Primary Commands
 
@@ -39,23 +40,38 @@ bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json
 
 ## ワークフロー / Workflow
 
-1. **Start**
+0. **Start**
    - `MODE=live`でBulk betaを動かす。
    - telemetry runが`capitalMode: beta_mock`になっていることを確認する。
 
-2. **Telemetry確認**
+1. **Fact Check**
    - `telemetry:evaluate`を実行する。
-   - markout coverageやdata healthが不足している場合はtuningしない。
-
-3. **Evaluate**
    - `telemetry:report`でreportを生成する。
-   - data health、PnL、markout、order quality、inventory、runtime healthを見る。
+   - markout coverageやdata healthが不足している場合はtuningしない。
+   - run id、mode、venue、capitalMode、git sha/dirty、config snapshot、fills/orders/markoutsのcoverageを確認する。
+   - PnL、fee/rebate、maker/taker比率、14日volume推定、maker fee tier到達状況を確認する。
 
-4. **Tuning or Issue**
+2. **要因分析**
+   - data health、PnL、markout、order quality、inventory、runtime healthを見る。
+   - negative PnLの要因を、fee負け、negative markout、adverse selection、fill不足、inventory偏り、reject/cancel/close失敗、stale feed、高latencyに分解する。
+   - maker fee tierが0 bpsまたは-1 bpsに近い場合は、現在のnet edgeとtier到達後のfee-adjusted edgeを分けて評価する。
+
+3. **Market状況確認**
+   - top book spread、mid/micro/mark、top depth、imbalance、volatility、stalenessを確認する。
+   - spread/volatility regime別に、fill、markout、spread capture、adverse selectionを比較する。
+   - 市場が薄い、spreadが狭すぎる、feedが古い、または一時的にtoxic flowが強いだけではないかを確認する。
+
+4. **修正案のPlan**
+   - YML tuningで閉じる変更と、code/SDK/design issueにする変更を分ける。
+   - 変更前に、どのmetricを改善するための変更か、次runで何を合格条件にするかを書く。
+   - maker fee tier到達を狙うvolume増加は、Net PnL、PnL per notional、markout、runtime healthが許容範囲にある場合だけplanに入れる。
+
+5. **Params調整 or Issue作成**
    - YMLで直す:
      - Net PnLが負、またはPnL per notionalが非正: fill volumeを増やさず、markoutが負でなければ`kappa`を下げてflowを広げる。
      - negative markout/adverse高: `gamma`を上げる。spread wideningが必要なら`kappa`を下げる。
      - fill不足かつmarkout良好: Net PnLとPnL per notionalが正のときだけ`kappa`を上げる。
+     - fee/rebate込みでedgeが正、かつmaker fee tier到達が現実的: まずrisk上限を維持し、quote qualityを落とさずにfill改善できる最小`kappa`調整だけを検討する。
      - inventory偏り: `kInv`を上げる。
      - drawdown/close cost高: `positionSize`または`budgetUsd`を下げる。
    - issue化する:
@@ -65,7 +81,7 @@ bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json
      - Bulk paper/backtest用の市場履歴・execution simulation不足。
      - strategy式、fair price、volatility model自体の改善。
 
-5. **Next Run**
+6. **Next Run**
    - 最小YAML変更、またはissue作成後に次のlive runを行う。
 
 ## 安全策 / Safety Guardrails
