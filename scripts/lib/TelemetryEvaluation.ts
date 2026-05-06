@@ -1,5 +1,5 @@
-import type { Fill } from "../domain/entities/Fill.ts";
-import type { TelemetryEvent } from "../telemetry/Telemetry.ts";
+import type { Fill } from "../../src/domain/entities/Fill.ts";
+import type { TelemetryEvent } from "../../src/infrastructure/Telemetry.ts";
 
 export interface EvaluationInput {
   fills: Fill[];

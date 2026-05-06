@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parse, stringify } from "yaml";
 
-import { tuneBulkConfigDocument } from "../../src/ops/BulkConfigTuning.ts";
+import { tuneBulkConfigDocument } from "../../scripts/lib/BulkConfigTuning.ts";
 
 const baseConfig = `
 mode: live

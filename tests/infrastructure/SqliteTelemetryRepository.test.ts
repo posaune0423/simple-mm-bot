@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { TelemetryEvent } from "../../src/telemetry/Telemetry.ts";
+import type { TelemetryEvent } from "../../src/infrastructure/Telemetry.ts";
 import { createSqliteClient } from "../../src/infrastructure/db/sqlite/client.ts";
 import { SqliteTelemetryRepository } from "../../src/infrastructure/db/sqlite/repository/SqliteTelemetryRepository.ts";
 

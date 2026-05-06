@@ -5,7 +5,7 @@ import { ResultAsync } from "neverthrow";
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
 import { SqliteTelemetryRepository } from "../src/infrastructure/db/sqlite/repository/SqliteTelemetryRepository.ts";
 import { SqliteTradeRepository } from "../src/infrastructure/db/sqlite/repository/SqliteTradeRepository.ts";
-import { evaluateTelemetryRun } from "../src/ops/TelemetryEvaluation.ts";
+import { evaluateTelemetryRun } from "./lib/TelemetryEvaluation.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";

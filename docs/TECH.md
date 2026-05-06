@@ -22,16 +22,15 @@ bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と 
 ## アーキテクチャ方針
 
 Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
-telemetry contract と ops logic は core market making domain から分離する。
+telemetry contract と agent/operator tool logic は core market making domain から分離する。
 
-| 層             | 責務                                                   | 依存可能先                               |
-| -------------- | ------------------------------------------------------ | ---------------------------------------- |
-| Domain         | 純粋なビジネスロジック、entity、port、strategy         | 外部依存なし                             |
-| Application    | use case の実行順序、bot ループ、DI 構成               | domain                                   |
-| Adapters       | venue / mode ごとの port 実装                          | domain ports + venue SDK                 |
-| Telemetry      | run/event contract、telemetry repository port          | domain entity type                       |
-| Ops            | 保存済み telemetry の評価、YAML tuning、issue planning | domain entities + telemetry              |
-| Infrastructure | DB client、schema、repository 実装                     | domain/telemetry ports + storage library |
+| 層             | 責務                                                   | 依存可能先                             |
+| -------------- | ------------------------------------------------------ | -------------------------------------- |
+| Domain         | 純粋なビジネスロジック、entity、port、strategy         | 外部依存なし                           |
+| Application    | use case の実行順序、bot ループ、DI 構成               | domain                                 |
+| Adapters       | venue / mode ごとの port 実装                          | domain ports + venue SDK               |
+| Infrastructure | telemetry contract、DB client、schema、repository 実装 | domain ports + storage library         |
+| Scripts        | 保存済み telemetry の評価、YAML tuning、issue planning | domain entities + infrastructure types |
 
 ## ランタイム全体像
 
@@ -238,7 +237,7 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 | Domain unit                | strategy、quote engine、analytics | 外部依存なし              |
 | Application unit           | use case、DI                      | ports を mock             |
 | Adapter unit               | Bulk feed/order mapping           | SDK shape を test double  |
-| Ops unit                   | telemetry evaluation / tuning     | 保存済み入力を fixture 化 |
+| Scripts unit               | telemetry evaluation / tuning     | 保存済み入力を fixture 化 |
 | Infrastructure integration | repository                        | 実 SQLite を使用          |
 | Paper E2E                  | bot 全体                          | live feed + sim execution |
 

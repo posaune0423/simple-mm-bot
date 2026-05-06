@@ -118,10 +118,9 @@ Repository split:
 - `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
 - `src/adapters/hyperliquid`: temporary public-data backtest support
 - `src/adapters/paper`: paper execution and historical feed helpers
-- `src/telemetry`: mode-independent telemetry contracts and repository port
-- `src/ops`: external evaluation, Bulk YAML tuning, and issue planning helpers
-- `src/infrastructure`: SQLite/Postgres repositories
-- `tests`: domain, ops, application, adapter, infrastructure, and e2e smoke coverage
+- `src/infrastructure`: telemetry contracts plus SQLite/Postgres repositories
+- `scripts/lib`: external evaluation, Bulk YAML tuning, and issue planning helpers
+- `tests`: domain, scripts, application, adapter, infrastructure, and e2e smoke coverage
 
 ## Configuration Notes
 

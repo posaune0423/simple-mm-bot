@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { evaluateTelemetryRun } from "../../src/ops/TelemetryEvaluation.ts";
-import type { TelemetryEvent } from "../../src/telemetry/Telemetry.ts";
+import { evaluateTelemetryRun } from "../../scripts/lib/TelemetryEvaluation.ts";
+import type { TelemetryEvent } from "../../src/infrastructure/Telemetry.ts";
 
 function event(
   type: TelemetryEvent["type"],

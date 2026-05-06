@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { planDesignIssues } from "../../src/ops/DesignIssuePlanner.ts";
+import { planDesignIssues } from "../../scripts/lib/DesignIssuePlanner.ts";
 
 describe("planDesignIssues", () => {
   test("creates issues only for code, SDK, or design signals", () => {

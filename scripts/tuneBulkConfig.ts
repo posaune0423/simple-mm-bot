@@ -1,7 +1,7 @@
 import { ResultAsync } from "neverthrow";
 
-import { tuneBulkConfigDocument } from "../src/ops/BulkConfigTuning.ts";
-import type { TelemetryEvaluation } from "../src/ops/TelemetryEvaluation.ts";
+import { tuneBulkConfigDocument } from "./lib/BulkConfigTuning.ts";
+import type { TelemetryEvaluation } from "./lib/TelemetryEvaluation.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";

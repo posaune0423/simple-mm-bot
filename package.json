@@ -22,7 +22,7 @@
     "telemetry:report": "bun run scripts/generateTelemetryReport.ts",
     "report:generate": "bun run scripts/generateReport.ts",
     "test": "bun run test:unit && bun run test:integration",
-    "test:unit": "bun test tests/domain tests/ops tests/application tests/adapters tests/reporting tests/config.test.ts tests/package.test.ts",
+    "test:unit": "bun test tests/domain tests/scripts tests/application tests/adapters tests/reporting tests/config.test.ts tests/package.test.ts",
     "test:integration": "bun test tests/infrastructure",
     "test:e2e:paper": "bun test tests/e2e"
   },

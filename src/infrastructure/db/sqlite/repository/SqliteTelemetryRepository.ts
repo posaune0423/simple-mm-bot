@@ -1,11 +1,8 @@
 import { and, between, eq, inArray } from "drizzle-orm";
 
 import type { AppMode } from "../../../../config.ts";
-import type { CapitalMode, TelemetryEvent, TelemetryRun } from "../../../../telemetry/Telemetry.ts";
-import type {
-  ITelemetryRepository,
-  TelemetryEventQuery,
-} from "../../../../telemetry/ITelemetryRepository.ts";
+import type { CapitalMode, TelemetryEvent, TelemetryRun } from "../../../Telemetry.ts";
+import type { ITelemetryRepository, TelemetryEventQuery } from "../../../TelemetryRepository.ts";
 import { telemetryEventsTable, telemetryRunsTable } from "../schema.ts";
 
 type SqliteDb = ReturnType<typeof import("../client.ts").createSqliteClient>["db"];

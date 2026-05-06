@@ -8,9 +8,9 @@ import type {
   OrderTelemetry,
   TelemetryEvent,
   TelemetryRun,
-} from "../telemetry/Telemetry.ts";
+} from "../infrastructure/Telemetry.ts";
 import type { MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
-import type { ITelemetryRepository } from "../telemetry/ITelemetryRepository.ts";
+import type { ITelemetryRepository } from "../infrastructure/TelemetryRepository.ts";
 import type { AppMode } from "../config.ts";
 import { logger } from "../utils/logger.ts";
 

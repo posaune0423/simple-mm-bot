@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
 
-import type { TelemetryRun } from "../src/telemetry/Telemetry.ts";
-import type { TelemetryEvaluation } from "../src/ops/TelemetryEvaluation.ts";
+import type { TelemetryEvaluation } from "./lib/TelemetryEvaluation.ts";
+import type { TelemetryRun } from "../src/infrastructure/Telemetry.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";

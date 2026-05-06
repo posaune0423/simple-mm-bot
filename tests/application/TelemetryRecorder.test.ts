@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { TelemetryRecorder } from "../../src/application/TelemetryRecorder.ts";
 import type { Fill } from "../../src/domain/entities/Fill.ts";
-import type { TelemetryEvent, TelemetryRun } from "../../src/telemetry/Telemetry.ts";
+import type { TelemetryEvent, TelemetryRun } from "../../src/infrastructure/Telemetry.ts";
 import type {
   ITelemetryRepository,
   TelemetryEventQuery,
-} from "../../src/telemetry/ITelemetryRepository.ts";
+} from "../../src/infrastructure/TelemetryRepository.ts";
 
 class MemoryTelemetryRepository implements ITelemetryRepository {
   runs = new Map<string, TelemetryRun>();

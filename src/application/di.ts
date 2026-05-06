@@ -15,7 +15,7 @@ import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IReportRepository } from "../domain/ports/IReportRepository.ts";
-import type { ITelemetryRepository } from "../telemetry/ITelemetryRepository.ts";
+import type { ITelemetryRepository } from "../infrastructure/TelemetryRepository.ts";
 import type { ITradeRepository } from "../domain/ports/ITradeRepository.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
 import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
