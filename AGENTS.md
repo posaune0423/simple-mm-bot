@@ -37,8 +37,8 @@ Do not edit local clones of those repositories from this bot task unless explici
 
 ## Core Principles
 
+- **Root cause over workarounds**: diagnose the actual failure; fix the owning code (this repo, `bulk-ts-sdk`, or `bulk-keychain`, as documented below)—not symptoms. Avoid compensating logic, opaque retries-as-policy, or config that only hides bugs. Do not stop at the first plausible patch until the fix is verified against the real failure mode. When several fixes are valid, choose the **simplest** one that fully resolves the issue.
 - Simplicity First: make every change as simple as possible. Minimize impact, follow YAGNI/KISS/DRY, and avoid compatibility shims unless they are effectively free.
-- No Laziness: find root causes and avoid temporary fixes.
 - Minimal Impact: touch only what is necessary and avoid unrelated changes.
 - Video Is Canon: when a reference video exists, the implementation should match it.
 

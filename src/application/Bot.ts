@@ -77,6 +77,7 @@ export class Bot {
   private async connectAndSubscribe(): Promise<void> {
     await this.marketFeed.connect();
     logger.info("bot.market_feed_connected");
+    await this.orderGateway.syncFills?.();
     this.unsubscribers.push(
       this.marketFeed.subscribe((snapshot) => {
         this.enqueueEventTask(async () => this.recordOhlcv(snapshot));

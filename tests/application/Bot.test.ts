@@ -209,6 +209,79 @@ describe("Bot", () => {
     ]);
   });
 
+  test("syncs existing fills before subscribing to live fill events", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
+        refreshQuotes: { execute: async () => {} },
+        recordFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+        buildReport: {
+          execute: async () => ({
+            id: "r1",
+            mode: "live" as const,
+            venue: "bulk",
+            periodStart: 0,
+            periodEnd: 1,
+            metrics: {
+              netPnl: 0,
+              tradePnl: 0,
+              markout5s: 0,
+              markout30s: 0,
+              maxDrawdown: 0,
+              sharpe: 0,
+              fillRate: 0,
+            },
+            equityCurve: [],
+            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
+          }),
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          calls.push("subscribeFills");
+          return () => {};
+        },
+        async syncFills() {
+          calls.push("syncFills");
+        },
+      },
+      1,
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["connect", "syncFills", "subscribeFills"]);
+  });
+
   test("does not sleep after stop is requested during a tick", async () => {
     const sleep = spyOn(Bun, "sleep").mockImplementation(async () => {});
     let stopBot = () => {};

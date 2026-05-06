@@ -124,6 +124,81 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("aligns Bulk limit orders to exchange price and size increments before submission", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [
+              {
+                symbol: "BTC-USD",
+                pricePrecision: 3,
+                sizePrecision: 6,
+                tickSize: 0.001,
+                lotSize: 0.000001,
+                timeInForces: ["GTC", "IOC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeLimitOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ resting: { oid: "limit-1" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const bid = await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "GTC",
+    });
+    const ask = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "GTC",
+    });
+
+    expect(bid.request).toMatchObject({ price: 81_532.123, qty: 0.003066 });
+    expect(ask.request).toMatchObject({ price: 81_532.124, qty: 0.003066 });
+    expect(calls).toEqual([
+      {
+        symbol: "BTC-USD",
+        side: "buy",
+        price: 81_532.123,
+        size: 0.003066,
+        tif: "GTC",
+        reduceOnly: false,
+      },
+      {
+        symbol: "BTC-USD",
+        side: "sell",
+        price: 81_532.124,
+        size: 0.003066,
+        tif: "GTC",
+        reduceOnly: false,
+      },
+    ]);
+  });
+
   test("logs order submission, cancellations, and new fills", async () => {
     const logs = captureLogs();
     const client = {

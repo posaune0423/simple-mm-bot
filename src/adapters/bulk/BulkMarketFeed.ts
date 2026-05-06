@@ -74,6 +74,18 @@ function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: 
   return (bestAsk * bidSize + bestBid * askSize) / denominator;
 }
 
+function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
+  return {
+    market: snapshot.market,
+    bestBid: snapshot.bestBid,
+    bestAsk: snapshot.bestAsk,
+    microPrice: snapshot.microPrice,
+    markPrice: snapshot.markPrice,
+    timestamp: snapshot.timestamp,
+    marginRatio: snapshot.marginRatio,
+  };
+}
+
 function dataOf(message: unknown): Record<string, unknown> {
   if (typeof message !== "object" || message === null) {
     return {};
@@ -227,7 +239,7 @@ export class BulkMarketFeed implements IMarketFeed {
       return;
     }
     this.snapshot = {
-      ...this.snapshot,
+      ...quoteSnapshot(this.snapshot),
       markPrice,
       timestamp: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
     };
@@ -253,7 +265,7 @@ export class BulkMarketFeed implements IMarketFeed {
       return;
     }
     this.snapshot = {
-      ...this.snapshot,
+      ...quoteSnapshot(this.snapshot),
       bestBid,
       bestAsk,
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),

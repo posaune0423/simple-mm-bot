@@ -175,12 +175,13 @@ export class TelemetryRecorder {
     const basisPrice = snapshot.markPrice;
     const fillBasis = fill.markPriceAtFill ?? fill.price;
     const signedMove = fill.side === "buy" ? basisPrice - fillBasis : fillBasis - basisPrice;
+    const spreadCapture = fill.side === "buy" ? fillBasis - fill.price : fill.price - fillBasis;
     const payload: MarkoutTelemetry = {
       fillId: fill.id,
       basis: "mark",
       horizonSec,
       markoutBps: fillBasis > 0 ? (signedMove / fillBasis) * 10_000 : 0,
-      spreadCaptureBps: fillBasis > 0 ? ((fill.price - fillBasis) / fillBasis) * 10_000 : 0,
+      spreadCaptureBps: fillBasis > 0 ? (spreadCapture / fillBasis) * 10_000 : 0,
       adverse: signedMove < 0,
     };
     await this.record({

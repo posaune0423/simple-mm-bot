@@ -213,6 +213,75 @@ describe("BulkMarketFeed", () => {
     });
   });
 
+  test("does not carry candle OHLCV fields into ticker and book snapshots", async () => {
+    const handlers: Array<(message: unknown) => void> = [];
+    const snapshots: Array<{ timestamp: number; open?: number; volume?: number }> = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe(_subscription: unknown, handler: (message: unknown) => void) {
+          handlers.push(handler);
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "BTC-USD", nlevels: 20 });
+    feed.subscribe((snapshot) => {
+      snapshots.push({
+        timestamp: snapshot.timestamp,
+        open: snapshot.open,
+        volume: snapshot.volume,
+      });
+    });
+
+    await feed.connect();
+    handlers[2]?.({
+      data: {
+        candles: [
+          {
+            t: 1_700_000_000_000,
+            T: 1_700_000_059_999,
+            o: 100,
+            h: 110,
+            l: 95,
+            c: 105,
+            v: 12.5,
+          },
+        ],
+      },
+    });
+    handlers[0]?.({ data: { markPrice: 106, timestamp: 1_700_000_010_000 * 1_000_000 } });
+    handlers[1]?.({
+      data: {
+        levels: [[{ price: 104, size: 1 }], [{ price: 108, size: 1 }]],
+        timestamp: 1_700_000_020_000 * 1_000_000,
+      },
+    });
+
+    expect(snapshots.at(-3)).toMatchObject({
+      timestamp: 1_700_000_000_000,
+      open: 100,
+      volume: 12.5,
+    });
+    expect(snapshots.at(-2)).toEqual({ timestamp: 1_700_000_010_000 });
+    expect(snapshots.at(-1)).toEqual({ timestamp: 1_700_000_020_000 });
+  });
+
   test("keeps websocket historical candle batches bounded to the latest candles", async () => {
     const handlers: Array<(message: unknown) => void> = [];
     const snapshots: Array<{ timestamp: number; volume?: number }> = [];

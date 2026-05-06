@@ -100,4 +100,45 @@ describe("TelemetryRecorder", () => {
       adverse: false,
     });
   });
+
+  test("records positive spread capture for buy fills below the fill basis", async () => {
+    const repository = new MemoryTelemetryRepository();
+    const recorder = new TelemetryRecorder(repository, {
+      runId: "run-spread",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+      horizonsSec: [5],
+    });
+    const fill: Fill = {
+      id: "buy-below-basis",
+      venue: "bulk",
+      market: "BTC-USD",
+      side: "buy",
+      price: 99,
+      qty: 1,
+      fee: 0.01,
+      tradePnl: 0,
+      filledAt: 1000,
+      markPriceAtFill: 100,
+    };
+
+    await recorder.start(1000);
+    await recorder.recordFill(fill);
+    await recorder.recordMarketSnapshot({
+      market: "BTC-USD",
+      bestBid: 100,
+      bestAsk: 102,
+      microPrice: 101,
+      markPrice: 101,
+      timestamp: 6000,
+      marginRatio: 0.9,
+    });
+
+    const markout = repository.events.find((event) => event.type === "markout");
+    expect(markout?.payload.spreadCaptureBps).toBe(100);
+  });
 });
