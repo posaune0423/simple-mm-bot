@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parse as parseYaml } from "yaml";
 
 import { ConfigLoader } from "../src/config.ts";
 
@@ -6,11 +7,16 @@ describe("ConfigLoader", () => {
   test("loads quote sizing from committed config", async () => {
     const config = await ConfigLoader.load({ configPath: "config/config.paper.yml" });
 
-    expect(config.quoteEngine.sizing.positionSize).toBe(0.01);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(100);
+    expect(config.quoteEngine.sizing.positionSize).toBe(0.05);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(250);
   });
 
-  test("loads committed Bulk config", async () => {
+  test("loads committed Bulk config tuned for beta live volume", async () => {
+    const rawConfig = parseYaml(await Bun.file("config/config.bulk.yml").text()) as {
+      mode?: string;
+    };
+    expect(rawConfig.mode).toBe("live");
+
     const config = await ConfigLoader.load({ configPath: "config/config.bulk.yml" });
 
     expect(config.venue).toBe("bulk");
@@ -19,9 +25,20 @@ describe("ConfigLoader", () => {
     }
     expect(config.connections.bulk.httpUrl).toBe("https://exchange-api.bulk.trade/api/v1");
     expect(config.connections.bulk.wsUrl).toBe("wss://exchange-ws1.bulk.trade");
-    expect(config.connections.bulk.market).toBe("ETH-USD");
+    expect(config.connections.bulk.market).toBe("BTC-USD");
     expect(config.connections.bulk.nlevels).toBe(20);
+    expect(config.connections.bulk.maxLeverage).toBe(5);
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
+    expect(config.quoteEngine.strategy.params).toEqual({
+      gamma: 0,
+      kappa: 8,
+      kInv: 0.05,
+    });
+    expect(config.quoteEngine.inventoryScale).toBe(0.5);
+    expect(config.quoteEngine.sizing.positionSize).toBe(0.05);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(250);
+    expect(config.risk.maxPositionQty).toBe(0.5);
+    expect(config.bot.intervalMs).toBe(250);
   });
 
   test("loads bulk config without URL or account env overrides", async () => {

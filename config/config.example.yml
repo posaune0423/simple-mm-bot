@@ -1,40 +1,47 @@
-mode: paper
+# Bulk beta status:
+# - The leaderboard is public during the beta.
+# - Operators can claim 10,000 mock USD once per day.
+# - Use this period to make paper trading profitable before mainnet launch.
+mode: live
 venue: bulk
 
 connections:
   bulk:
     wsUrl: wss://exchange-ws1.bulk.trade
     httpUrl: https://exchange-api.bulk.trade/api/v1
-    market: ETH-USD
+    market: BTC-USD
     nlevels: 20
+    # Bulk accounts may default to 50x. The bot verifies the account setting
+    # before live orders and fails closed if the UI/API leverage is higher.
+    maxLeverage: 5
     privateKey: ${BULK_PRIVATE_KEY}
 
 quoteEngine:
-  markWeight: 0.6
-  inventoryScale: 0.05
-  timeHorizonSec: 30
-  slideMarginThreshold: 0.12
+  markWeight: 0.5
+  inventoryScale: 0.5
+  timeHorizonSec: 10
+  slideMarginThreshold: 0.08
   defaultTimeInForce: GTC
   sizing:
-    positionSize: 0.01
-    budgetUsd: 100
+    positionSize: 0.05
+    budgetUsd: 250
   strategy:
     type: avellaneda-stoikov
     params:
-      gamma: 0.02
-      kappa: 1.5
-      kInv: 0.3
+      gamma: 0
+      kappa: 8
+      kInv: 0.05
 
 risk:
-  imrBuffer: 0.15
-  mmrBuffer: 0.08
-  maxPositionQty: 0.05
+  imrBuffer: 0.08
+  mmrBuffer: 0.04
+  maxPositionQty: 0.5
 
 bot:
-  intervalMs: 500
+  intervalMs: 250
 
 paper:
-  touchFillRatio: 0.5
+  touchFillRatio: 1
 
 backtest:
   market: ETH

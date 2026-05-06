@@ -15,6 +15,7 @@ function config(mode: "live" | "paper" | "backtest"): AppConfig {
         httpUrl: "https://api.bulk.trade",
         wsUrl: "wss://api.bulk.trade/ws",
         market: "ETH-USD",
+        maxLeverage: 5,
         privateKey: mode === "live" ? "11111111111111111111111111111111" : undefined,
       },
     },
@@ -39,6 +40,15 @@ function config(mode: "live" | "paper" | "backtest"): AppConfig {
   };
 }
 
+function configWithoutBulkPrivateKey(): AppConfig {
+  const appConfig = config("live");
+  if (appConfig.venue !== "bulk") {
+    throw new Error("Expected bulk config");
+  }
+  appConfig.connections.bulk.privateKey = undefined;
+  return appConfig;
+}
+
 describe("DIContainer Bulk venue", () => {
   test("resolves bulk paper to BulkMarketFeed and PaperOrderGateway", async () => {
     const bot = await new DIContainer(config("paper")).buildBot();
@@ -54,7 +64,24 @@ describe("DIContainer Bulk venue", () => {
 
     expect(internals.marketFeed).toBeInstanceOf(BulkMarketFeed);
     expect(internals.orderGateway).toBeInstanceOf(BulkOrderGateway);
+    expect(
+      (internals.orderGateway as { params: { maxLeverage?: number } }).params.maxLeverage,
+    ).toBe(5);
     (internals.orderGateway as BulkOrderGateway).dispose();
+  });
+
+  test("rejects bulk live without BULK_PRIVATE_KEY", async () => {
+    await new DIContainer(configWithoutBulkPrivateKey()).buildBot().then(
+      () => {
+        throw new Error("Expected Bulk live without private key to reject");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(
+          "BULK_PRIVATE_KEY is required for live Bulk order placement",
+        );
+      },
+    );
   });
 
   test("rejects bulk backtest explicitly", async () => {

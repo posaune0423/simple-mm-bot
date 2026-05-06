@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { Fill } from "../../domain/entities/Fill.ts";
+import type { Position } from "../../domain/entities/Position.ts";
 import type {
   FillListener,
   IOrderGateway,
@@ -26,6 +27,21 @@ type BulkFill = {
   fee?: number;
   timestamp?: number;
 };
+type BulkLeverageEntry = {
+  symbol?: string;
+  leverage?: number;
+};
+type BulkPositionEntry = {
+  symbol?: string;
+  size?: number;
+  price?: number;
+  unrealizedPnl?: number;
+  iso?: boolean;
+};
+type BulkFullAccount = {
+  leverageSettings?: BulkLeverageEntry[];
+  positions?: BulkPositionEntry[];
+};
 
 interface BulkTradeClient {
   placeLimitOrder?(params: unknown): Promise<BulkOrderResponse>;
@@ -35,6 +51,7 @@ interface BulkTradeClient {
 }
 
 interface BulkAccountClient {
+  fullAccount?(user: string): Promise<BulkFullAccount>;
   fills(user: string): Promise<BulkFill[]>;
 }
 
@@ -46,11 +63,12 @@ export interface BulkOrderGatewayClient {
 export interface BulkOrderGatewayParams {
   market: string;
   accountId: string;
+  maxLeverage?: number;
   pollIntervalMs?: number;
 }
 
 const openStatusKeys = new Set(["resting", "working"]);
-const filledStatusKeys = new Set(["filled", "partiallyFilled"]);
+const filledStatusKeys = new Set(["filled"]);
 const cancelledStatusKeys = new Set([
   "cancelled",
   "cancelledRiskLimit",
@@ -88,6 +106,12 @@ function orderIdFrom(status: BulkStatus): string | undefined {
   return typeof oid === "string" || typeof oid === "number" ? String(oid) : undefined;
 }
 
+function rejectReasonFrom(status: BulkStatus): string | undefined {
+  const payload = statusPayload(status);
+  const reason = payload.reason;
+  return typeof reason === "string" ? reason : undefined;
+}
+
 function placedStatusFrom(status: BulkStatus): PlacedOrder["status"] {
   const key = statusKey(status);
   if (!key) {
@@ -99,15 +123,23 @@ function placedStatusFrom(status: BulkStatus): PlacedOrder["status"] {
   if (filledStatusKeys.has(key)) {
     return "filled";
   }
+  if (key === "partiallyFilled") {
+    return "partially_filled";
+  }
   if (cancelledStatusKeys.has(key)) {
     return "cancelled";
   }
   return "rejected";
 }
 
+function isCrossPosition(entry: BulkPositionEntry, market: string): boolean {
+  return entry.symbol === market && (entry.iso ?? false) === false;
+}
+
 export class BulkOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
   private readonly seenFillIds = new Set<string>();
+  private leverageChecked = false;
   private fillTimer: Timer | null = null;
 
   constructor(
@@ -124,6 +156,11 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async place(order: OrderRequest): Promise<PlacedOrder> {
+    await this.ensureMaxLeverage(order);
+    const type = order.price === undefined ? "market" : "limit";
+    logger.info(
+      `bulk_order_gateway.place_submitted market=${order.market} type=${type} side=${order.side} qty=${order.qty} price=${order.price ?? "market"} tif=${order.timeInForce} reduceOnly=${order.reduceOnly}`,
+    );
     const response =
       order.price === undefined
         ? await this.client.trade.placeMarketOrder?.({
@@ -142,18 +179,61 @@ export class BulkOrderGateway implements IOrderGateway {
           });
 
     const firstStatus = statusEntries(response ?? {})[0] ?? {};
+    const orderId = orderIdFrom(firstStatus) ?? order.clientOrderId ?? randomUUID();
+    const status = placedStatusFrom(firstStatus);
+    const key = statusKey(firstStatus) ?? "missing";
+    const reason = rejectReasonFrom(firstStatus);
+    const resultMessage = `bulk_order_gateway.place_result market=${order.market} orderId=${orderId} status=${status} statusKey=${key}`;
+    if (status === "rejected") {
+      logger.warn(reason === undefined ? resultMessage : `${resultMessage} reason=${reason}`);
+    } else {
+      logger.info(resultMessage);
+    }
     return {
-      id: orderIdFrom(firstStatus) ?? order.clientOrderId ?? randomUUID(),
+      id: orderId,
       request: order,
-      status: placedStatusFrom(firstStatus),
+      status,
     };
   }
 
+  private async ensureMaxLeverage(order: OrderRequest): Promise<void> {
+    if (order.reduceOnly || this.leverageChecked || this.params.maxLeverage === undefined) {
+      return;
+    }
+    if (!this.client.account.fullAccount) {
+      throw new Error(
+        `Bulk account leverage settings are required to verify ${this.params.market} max leverage before live orders.`,
+      );
+    }
+
+    const account = await this.client.account.fullAccount(this.params.accountId);
+    const leverage = account.leverageSettings?.find(
+      (entry) => entry.symbol === this.params.market,
+    )?.leverage;
+    if (leverage === undefined) {
+      throw new Error(
+        `Bulk leverage for ${this.params.market} is unavailable; expected <= ${this.params.maxLeverage}x. Set leverage in Bulk UI or a supported API path before starting live orders.`,
+      );
+    }
+    if (leverage > this.params.maxLeverage) {
+      throw new Error(
+        `Bulk leverage for ${this.params.market} is ${leverage}x; expected <= ${this.params.maxLeverage}x. Set leverage in Bulk UI or a supported API path before starting live orders.`,
+      );
+    }
+
+    logger.info(
+      `bulk_order_gateway.leverage_verified market=${this.params.market} leverage=${leverage} maxLeverage=${this.params.maxLeverage}`,
+    );
+    this.leverageChecked = true;
+  }
+
   async cancel(id: string): Promise<void> {
+    logger.info(`bulk_order_gateway.cancel_submitted market=${this.params.market} orderId=${id}`);
     await this.client.trade.cancelOrder?.({ symbol: this.params.market, orderId: id });
   }
 
   async cancelAll(): Promise<void> {
+    logger.info(`bulk_order_gateway.cancel_all_submitted market=${this.params.market}`);
     await this.client.trade.cancelAll?.({ symbols: [this.params.market] });
   }
 
@@ -161,6 +241,24 @@ export class BulkOrderGateway implements IOrderGateway {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  async syncFills(): Promise<void> {
+    await this.pollFillsOnce();
+  }
+
+  async getPosition(): Promise<Position> {
+    if (!this.client.account.fullAccount) {
+      throw new Error(`Bulk fullAccount is required to read ${this.params.market} position.`);
+    }
+    const account = await this.client.account.fullAccount(this.params.accountId);
+    const position = account.positions?.find((entry) => isCrossPosition(entry, this.params.market));
+
+    return {
+      qty: position?.size ?? 0,
+      avgEntry: position?.price ?? 0,
+      unrealizedPnl: position?.unrealizedPnl ?? 0,
     };
   }
 
@@ -173,12 +271,18 @@ export class BulkOrderGateway implements IOrderGateway {
 
   async pollFillsOnce(): Promise<void> {
     const fills = await this.client.account.fills(this.params.accountId);
+    logger.debug(
+      `bulk_order_gateway.fills_polled market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
+    );
     for (const fill of fills) {
       const normalized = this.normalizeFill(fill);
       if (normalized === null || this.seenFillIds.has(normalized.id)) {
         continue;
       }
       this.seenFillIds.add(normalized.id);
+      logger.info(
+        `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
+      );
       for (const listener of this.listeners) {
         await listener(normalized);
       }

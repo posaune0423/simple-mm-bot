@@ -4,6 +4,7 @@ import type {
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../../domain/ports/IOhlcvRepository.ts";
+import { logger } from "../../utils/logger.ts";
 import type { HyperliquidOhlcvFetcher } from "../hyperliquid/HyperliquidOhlcvFetcher.ts";
 
 export class HistoricalMarketFeed implements IMarketFeed {
@@ -23,6 +24,9 @@ export class HistoricalMarketFeed implements IMarketFeed {
   ) {}
 
   async connect(): Promise<void> {
+    logger.info(
+      `historical_market_feed.connect market=${this.params.market} timeframe=${this.params.timeframe} from=${this.params.from} to=${this.params.to}`,
+    );
     this.records = await this.ohlcvRepository.findByRange(
       this.params.market,
       this.params.timeframe,
@@ -45,10 +49,15 @@ export class HistoricalMarketFeed implements IMarketFeed {
     }
     this.records.sort((left, right) => left.ts - right.ts);
     this.index = 0;
+    logger.info(
+      `historical_market_feed.loaded market=${this.params.market} timeframe=${this.params.timeframe} candles=${this.records.length}`,
+    );
     this.publishCurrent();
   }
 
-  async disconnect(): Promise<void> {}
+  async disconnect(): Promise<void> {
+    logger.info(`historical_market_feed.disconnected market=${this.params.market}`);
+  }
 
   async getSnapshot(): Promise<MarketSnapshot> {
     if (this.records.length === 0) {
@@ -80,9 +89,15 @@ export class HistoricalMarketFeed implements IMarketFeed {
 
   async advance(): Promise<boolean> {
     if (this.index >= this.records.length - 1) {
+      logger.info(
+        `historical_market_feed.exhausted market=${this.params.market} candles=${this.records.length}`,
+      );
       return false;
     }
     this.index += 1;
+    logger.debug(
+      `historical_market_feed.advanced market=${this.params.market} index=${this.index}`,
+    );
     this.publishCurrent();
     return true;
   }

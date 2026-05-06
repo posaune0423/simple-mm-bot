@@ -32,8 +32,10 @@ import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
 import { BuildReportUseCase } from "./usecases/BuildReportUseCase.ts";
+import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { RecordFillUseCase } from "./usecases/RecordFillUseCase.ts";
+import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
 
@@ -63,10 +65,18 @@ export class DIContainer {
         refreshQuotes: new RefreshQuotesUseCase(feed, gateway, positionRepository, quoteEngine),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         recordFill: new RecordFillUseCase(repositories.tradeRepository, positionRepository),
+        recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
         reduceInventory: new ReduceInventoryUseCase(
           gateway,
           positionRepository,
+          feed,
           this.config.risk.maxPositionQty,
+          this.marketName(),
+        ),
+        closePosition: new ClosePositionUseCase(
+          gateway,
+          positionRepository,
+          feed,
           this.marketName(),
         ),
         buildReport: new BuildReportUseCase(
@@ -205,6 +215,7 @@ export class DIContainer {
       gateway: new BulkOrderGateway(client, {
         market: bulk.market,
         accountId,
+        maxLeverage: bulk.maxLeverage,
         pollIntervalMs: 1000,
       }),
     };

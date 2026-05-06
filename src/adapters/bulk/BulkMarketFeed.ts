@@ -88,11 +88,16 @@ export class BulkMarketFeed implements IMarketFeed {
   ) {}
 
   async connect(): Promise<void> {
+    logger.info(
+      `bulk_market_feed.connect market=${this.params.market} nlevels=${this.params.nlevels ?? "default"}`,
+    );
     await this.refreshSnapshot();
     await this.subscribeWs();
+    logger.info(`bulk_market_feed.connected market=${this.params.market}`);
   }
 
   async disconnect(): Promise<void> {
+    logger.info(`bulk_market_feed.disconnect market=${this.params.market}`);
     const results = await Promise.allSettled(
       this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
     );
@@ -102,6 +107,7 @@ export class BulkMarketFeed implements IMarketFeed {
       }
     }
     await this.client.ws.close();
+    logger.info(`bulk_market_feed.disconnected market=${this.params.market}`);
   }
 
   async getSnapshot(): Promise<MarketSnapshot> {
@@ -128,6 +134,9 @@ export class BulkMarketFeed implements IMarketFeed {
       this.fetchMarginRatio(),
     ]);
     this.snapshot = this.snapshotFrom(ticker, book, marginRatio);
+    logger.info(
+      `bulk_market_feed.snapshot_seeded market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio}`,
+    );
     this.publish(this.snapshot);
   }
 
@@ -143,6 +152,9 @@ export class BulkMarketFeed implements IMarketFeed {
     this.unsubscribers.push(
       async () => ticker.unsubscribe(),
       async () => book.unsubscribe(),
+    );
+    logger.info(
+      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Snapshot`,
     );
   }
 
@@ -183,6 +195,9 @@ export class BulkMarketFeed implements IMarketFeed {
       markPrice,
       timestamp: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
     };
+    logger.debug(
+      `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
+    );
     this.publish(this.snapshot);
   }
 
@@ -208,6 +223,9 @@ export class BulkMarketFeed implements IMarketFeed {
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
       timestamp: nsToMs(data.timestamp),
     };
+    logger.debug(
+      `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
+    );
     this.publish(this.snapshot);
   }
 

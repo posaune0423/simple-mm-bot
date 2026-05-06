@@ -72,6 +72,7 @@ export const appConfigSchema = z.discriminatedUnion("venue", [
         httpUrl: z.string().url(),
         market: z.string().min(1),
         nlevels: z.number().int().positive().optional(),
+        maxLeverage: z.number().min(1).max(50).optional(),
         privateKey: z.string().optional(),
       }),
     }),

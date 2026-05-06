@@ -146,6 +146,10 @@ Bullet の DI path は持たない。
   - repository から OHLCV を読む
   - 不足分を fetcher から取得する
   - 時系列順に replay する
+- `RecordOhlcvUseCase`
+  - live / paper の market snapshot を 1m OHLCV に集約して保存する
+  - bot 起動直後の snapshot と subscription update の両方を記録する
+  - 同一 candle は repository の upsert で更新する
 
 ## Bulk 固有の技術判断
 
@@ -167,6 +171,9 @@ secret env は現時点では `BULK_PRIVATE_KEY` のみ。
 
 Bulk live order placement は `BULK_PRIVATE_KEY` を要求する。
 Bulk paper mode は `BULK_PRIVATE_KEY` なしで動作する。
+Bulk API schema には leverage 更新用の `updateUserSettings` が存在するが、現在利用している `bulk-ts-sdk` の typed helper は order / cancel 系に限定される。
+そのため bot は `connections.bulk.maxLeverage` を自動設定値として扱わず、`fullAccount.leverageSettings` を初回注文前に検証する guard として扱う。
+Bulk UI または SDK が正式対応した API path で leverage を先に下げ、bot は account leverage が `maxLeverage` を超えていれば live order を送らず fail closed する。
 
 ### Time In Force
 
@@ -182,11 +189,11 @@ Bulk の現行 exchange info は `GTC` と `IOC` を扱う前提のため、Bulk
 
 ### テーブル
 
-| テーブル  | 用途                                   | 主なカラム                                                           |
-| --------- | -------------------------------------- | -------------------------------------------------------------------- |
-| `fills`   | fill 履歴、PnL、execution quality 分析 | venue, market, side, price, qty, fee, trade_pnl, filled_at           |
-| `reports` | session 集計結果                       | mode, venue, period range, net_pnl, markout_5s, max_drawdown, sharpe |
-| `ohlcv`   | backtest 用履歴 cache                  | market, ts, open, high, low, close, volume                           |
+| テーブル  | 用途                                               | 主なカラム                                                           |
+| --------- | -------------------------------------------------- | -------------------------------------------------------------------- |
+| `fills`   | fill 履歴、PnL、execution quality 分析             | venue, market, side, price, qty, fee, trade_pnl, filled_at           |
+| `reports` | session 集計結果                                   | mode, venue, period range, net_pnl, markout_5s, max_drawdown, sharpe |
+| `ohlcv`   | live / paper の 1m candle と backtest 用履歴 cache | market, timeframe, ts, open, high, low, close, volume                |
 
 ## 設定管理
 
@@ -201,8 +208,22 @@ Bulk の現行 exchange info は `GTC` と `IOC` を扱う前提のため、Bulk
 - `CONFIG_PATH`
 - `DATABASE_URL`
 - `DB_PATH`
+- `LOG_LEVEL`
 - `BULK_PRIVATE_KEY`
 - Hyperliquid env vars are kept only for the temporary backtest / legacy path
+
+Log output should go through `src/utils/logger.ts` by default so `LOG_LEVEL` filtering applies consistently.
+
+### Logging
+
+Operational logs use consistent event-style messages through `src/utils/logger.ts`.
+
+- `INFO`: runtime lifecycle, market feed connection, initial market snapshot, quote submission, order submission/cancel, fills, inventory reduction, and cleanup
+- `WARN`: risk guard pauses / emergency stops, rejected order responses, and recoverable polling or unsubscribe failures
+- `ERROR`: startup failures and unrecoverable application errors
+- `DEBUG`: high-frequency tick state, websocket market updates, fill polling, historical replay advancement, and persistence details
+
+This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowing `LOG_LEVEL=DEBUG` when investigating feed or tick-level behavior.
 
 ## テスト方針
 

@@ -12,6 +12,7 @@ export const env = createEnv({
     HL_SECRET_KEY: z.string().min(1).optional(),
     HL_ACCOUNT_ADDRESS: z.string().min(1).optional(),
     BULK_PRIVATE_KEY: z.string().min(1).optional(),
+    LOG_LEVEL: z.enum(["ERROR", "WARN", "LOG", "INFO", "DEBUG"]).default("INFO"),
   },
   runtimeEnv: Bun.env,
   emptyStringAsUndefined: true,

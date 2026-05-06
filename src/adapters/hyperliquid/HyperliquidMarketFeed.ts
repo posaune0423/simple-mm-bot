@@ -6,6 +6,7 @@ import type {
   MarketSnapshot,
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
+import { logger } from "../../utils/logger.ts";
 
 function computeMicroPrice(
   bestBid: number,
@@ -45,12 +46,15 @@ export class HyperliquidMarketFeed implements IMarketFeed {
   ) {}
 
   async connect(): Promise<void> {
+    logger.info(`hyperliquid_market_feed.connect market=${this.params.market}`);
     await this.refreshSnapshot();
     this.startPolling();
     await this.startSubscriptions();
+    logger.info(`hyperliquid_market_feed.connected market=${this.params.market}`);
   }
 
   async disconnect(): Promise<void> {
+    logger.info(`hyperliquid_market_feed.disconnect market=${this.params.market}`);
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -59,6 +63,7 @@ export class HyperliquidMarketFeed implements IMarketFeed {
     await this.midsUnsub?.();
     this.bookUnsub = null;
     this.midsUnsub = null;
+    logger.info(`hyperliquid_market_feed.disconnected market=${this.params.market}`);
   }
 
   async getSnapshot(): Promise<MarketSnapshot> {
@@ -80,8 +85,15 @@ export class HyperliquidMarketFeed implements IMarketFeed {
 
   private startPolling(): void {
     this.pollTimer = setInterval(() => {
-      void this.refreshSnapshot().catch(() => undefined);
+      void this.refreshSnapshot().catch((error) => {
+        logger.warn(
+          `hyperliquid_market_feed.refresh_failed market=${this.params.market} error=${String(error)}`,
+        );
+      });
     }, this.params.pollIntervalMs ?? 1000);
+    logger.info(
+      `hyperliquid_market_feed.polling_started market=${this.params.market} intervalMs=${this.params.pollIntervalMs ?? 1000}`,
+    );
   }
 
   private async startSubscriptions(): Promise<void> {
@@ -97,9 +109,15 @@ export class HyperliquidMarketFeed implements IMarketFeed {
           markPrice: mark,
           timestamp: Date.now(),
         };
+        logger.debug(
+          `hyperliquid_market_feed.mark_updated market=${this.params.market} markPrice=${mark}`,
+        );
         this.publish(this.snapshot);
       }
     });
+    logger.info(
+      `hyperliquid_market_feed.ws_subscribed market=${this.params.market} topics=l2Book,allMids`,
+    );
   }
 
   private mergeBook(book: BookSnapshot): void {
@@ -118,6 +136,9 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       microPrice: computeMicroPrice(bestBid.price, bestAsk.price, bestBid.size, bestAsk.size),
       timestamp: book.time,
     };
+    logger.debug(
+      `hyperliquid_market_feed.book_updated market=${this.params.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice}`,
+    );
     this.publish(this.snapshot);
   }
 
@@ -143,6 +164,9 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       timestamp: book.time,
       marginRatio,
     };
+    logger.info(
+      `hyperliquid_market_feed.snapshot_seeded market=${this.params.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio}`,
+    );
     this.publish(this.snapshot);
   }
 

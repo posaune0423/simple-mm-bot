@@ -58,22 +58,25 @@ Bulk HTTP/WS URLs, market, and L2 depth live in committed YAML config. The only 
 
 ### 3. Run
 
-Bulk paper mode:
+Bulk live mode:
+
+```bash
+bun run start
+```
+
+`bun run start` explicitly sets `MODE=live` and uses `config/config.bulk.yml`.
+Live mode sends real Bulk Trade orders and fails fast unless `BULK_PRIVATE_KEY` is set.
+
+Bulk paper mode, using the same Bulk market feed with simulated execution:
 
 ```bash
 bun run dev:paper
 ```
 
-Bulk live mode:
-
-```bash
-MODE=live bun run src/main.ts
-```
-
 Temporary Hyperliquid backtest mode:
 
 ```bash
-CONFIG_PATH=config/config.backtest.yml MODE=backtest bun run src/main.ts
+bun run dev:backtest
 ```
 
 ## Main Commands

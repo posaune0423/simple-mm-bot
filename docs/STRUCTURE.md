@@ -16,7 +16,15 @@ simple-mm-bot/
 │   ├── application/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
+│   │   ├── shutdown.ts
 │   │   └── usecases/
+│   │       ├── BuildReportUseCase.ts
+│   │       ├── ClosePositionUseCase.ts
+│   │       ├── GuardRiskUseCase.ts
+│   │       ├── RecordFillUseCase.ts
+│   │       ├── RecordOhlcvUseCase.ts
+│   │       ├── ReduceInventoryUseCase.ts
+│   │       └── RefreshQuotesUseCase.ts
 │   ├── domain/
 │   │   ├── entities/
 │   │   ├── ports/
@@ -40,6 +48,12 @@ simple-mm-bot/
 │   │   └── db/
 │   │       ├── postgres/
 │   │       └── sqlite/
+│   ├── reporting/
+│   │   ├── metrics/
+│   │   ├── queries/
+│   │   ├── report/
+│   │   └── svg/
+│   ├── utils/
 │   └── lib/
 │       └── hyperliquid/
 ├── config/
@@ -53,9 +67,13 @@ simple-mm-bot/
 │   ├── application/
 │   ├── domain/
 │   ├── e2e/
-│   └── infrastructure/
+│   ├── infrastructure/
+│   └── reporting/
 ├── scripts/
+│   ├── backtestPaperLoop.ts
+│   └── liveOptimizationLoop.ts
 ├── docs/
+│   ├── ARCHITECTURE.md
 │   ├── PRD.md
 │   ├── TECH.md
 │   ├── STRUCTURE.md
@@ -83,10 +101,13 @@ bot runtime と use case orchestration を置く。
 
 - tick loop を管理する
 - domain service を組み合わせる
+- live / paper の market snapshot を 1m OHLCV として保存する
 - `di.ts` で mode / venue / repository を解決する
 - venue protocol や SQL を直接書かない
 
 `di.ts` が具体実装を知る唯一の application 境界。
+
+`shutdown.ts` は runtime shutdown の共通処理を持つ。position close などの取引処理は use case 経由で実行し、signal handling から venue protocol を直接触らない。
 
 ### `src/adapters/`
 
@@ -126,6 +147,27 @@ DB など外部 storage の詳細を置く。
 - SQLite は local / lightweight operation 用
 - Postgres は production 用
 - repository は domain ports を実装し、schema 都合を domain に漏らさない
+
+### `src/reporting/`
+
+backtest / paper / live の分析出力を置く。
+
+- `metrics/` は drawdown、adverse rate、hourly bucket などの計算
+- `queries/` は report 用データ取得
+- `report/` は Markdown / KPI table / path 生成
+- `svg/` は chart rendering の primitive と chart 実装
+
+bot runtime の意思決定ロジックをここへ入れない。reporting は保存済みデータや report input から成果物を作る責務に限定する。
+
+### `src/utils/`
+
+logger、args、fs、Result helper、error helper などの横断的な小物を置く。
+production code の出力は `src/utils/logger.ts` を通す。
+
+### `src/lib/`
+
+外部 API wrapper を置く。現在は Hyperliquid public / exchange / subscription API wrapper と testnet detection を持つ。
+Bulk Trade の API wrapper は `bulk-ts-sdk` を利用し、この repo の `src/lib/` へ増やさない。
 
 ## Config
 
@@ -176,7 +218,9 @@ secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
 - `tests/adapters/`
   - Bulk adapter と venue payload normalization の unit test
 - `tests/infrastructure/`
-  - SQLite/Postgres repository integration test
+  - SQLite/Postgres repository integration test、report query test
+- `tests/reporting/`
+  - metrics、Markdown report、SVG chart rendering の unit test
 - `tests/e2e/`
   - public feed を使う smoke test
 
