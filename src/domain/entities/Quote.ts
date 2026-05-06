@@ -1,11 +1,21 @@
 export type OrderSide = "buy" | "sell";
 export type OrderTimeInForce = "ALO" | "GTC" | "IOC";
 
+export interface QuoteLevel {
+  level: number;
+  halfSpreadBps: number;
+  bid: number;
+  ask: number;
+  bidSize: number;
+  askSize: number;
+}
+
 export interface Quote {
   bid: number;
   ask: number;
   bidSize: number;
   askSize: number;
+  levels?: QuoteLevel[];
   policy: OrderTimeInForce;
   fairPrice: number;
   sigma: number;

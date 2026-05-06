@@ -134,6 +134,66 @@ describe("QuoteEngine", () => {
     expect(quote.askSize).toBe(0.04);
   });
 
+  test("builds configured half-spread ladder using per-level USD sizes", () => {
+    const engine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({
+        gamma: 0,
+        kappa: 625,
+        kInv: 0,
+      }),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.5,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "ALO",
+        positionSize: 0.02,
+        budgetUsd: 800,
+        minSpreadBps: 16,
+        levels: [
+          { halfSpreadBps: 8, sizeUsd: 150 },
+          { halfSpreadBps: 30, sizeUsd: 600 },
+        ],
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 99_990,
+        bestAsk: 100_010,
+        microPrice: 100_000,
+        markPrice: 100_000,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: 0, avgEntry: 0, unrealizedPnl: 0 },
+    );
+
+    expect(quote.policy).toBe("ALO");
+    expect(quote.levels).toEqual([
+      {
+        level: 0,
+        halfSpreadBps: 8,
+        bid: 99_920,
+        ask: 100_080,
+        bidSize: 0.0015,
+        askSize: 0.0015,
+      },
+      {
+        level: 1,
+        halfSpreadBps: 30,
+        bid: 99_700,
+        ask: 100_300,
+        bidSize: 0.006,
+        askSize: 0.006,
+      },
+    ]);
+    expect(quote.bid).toBe(99_920);
+    expect(quote.ask).toBe(100_080);
+  });
+
   test("enforces configured minimum spread in basis points for high-priced markets", () => {
     const engine = new QuoteEngine(
       new AvellanedaStoikovStrategy({

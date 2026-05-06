@@ -15,7 +15,9 @@ describe("package scripts", () => {
   test("keeps start explicit for live and dev commands for paper and backtest", async () => {
     const packageJson = (await Bun.file("package.json").json()) as PackageJson;
 
-    expect(packageJson.scripts?.start).toBe("MODE=live bun run src/main.ts");
+    expect(packageJson.scripts?.start).toBe(
+      "CONFIG_PATH=config/config.bulk.beta.yml MODE=live bun run src/main.ts",
+    );
     expect(packageJson.scripts?.["start:live"]).toBeUndefined();
     expect(packageJson.scripts?.["start:paper"]).toBeUndefined();
     expect(packageJson.scripts?.["start:backtest"]).toBeUndefined();
@@ -33,6 +35,18 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.["telemetry:tune"]).toBeUndefined();
     expect(packageJson.scripts?.["telemetry:issues"]).toBeUndefined();
     expect(packageJson.scripts?.["telemetry:report"]).toBeUndefined();
+  });
+
+  test("uses the Bulk beta config as the only default live preset before mainnet launch", async () => {
+    const dockerfile = await Bun.file("Dockerfile").text();
+
+    expect(existsSync("config/config.bulk.beta.yml")).toBe(true);
+    expect(existsSync("config/config.bulk.mainnet.yml")).toBe(true);
+    expect(existsSync("config/config.bulk.yml")).toBe(false);
+    expect(existsSync("config/config.yml")).toBe(false);
+    expect(dockerfile).toContain("ENV MODE=live");
+    expect(dockerfile).toContain("ENV CONFIG_PATH=config/config.bulk.beta.yml");
+    expect(dockerfile).not.toContain("config/config.yml");
   });
 
   test("keeps agent helper logic in scripts and persistence contracts in infrastructure", () => {

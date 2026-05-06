@@ -29,10 +29,10 @@ const issueMap: Record<string, { title: string; label: string; detail: string }>
     detail: "Metrics observed stale feed, high latency, or runtime health problems.",
   },
   bulk_backtest_missing: {
-    title: "Bulk paper/backtest market history and execution simulation are missing",
+    title: "Bulk backtest fidelity needs historical market-data improvement",
     label: "metrics-bulk-backtest",
     detail:
-      "Bulk paper/backtest compatibility needs market history and execution simulation before mainnet.",
+      "Bulk backtest currently uses OHLCV replay and paper execution; historical L2 is not available through the current Bulk SDK/API.",
   },
   strategy_model_gap: {
     title: "Strategy model needs fair price, volatility, or quote formula improvements",

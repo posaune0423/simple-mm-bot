@@ -200,8 +200,8 @@ flowchart LR
 | ------------- | ---------- | ----------------------- | ------------------------- | ---------------------------- |
 | `bulk`        | `paper`    | `BulkMarketFeed`        | `PaperOrderGateway`       | **primary**                  |
 | `bulk`        | `live`     | `BulkMarketFeed`        | `BulkOrderGateway`        | **primary** (要 PRIVATE_KEY) |
-| `bulk`        | `backtest` | -                       | -                         | **明示的にエラー**           |
-| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | 暫定の過去検証               |
+| `bulk`        | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | **primary**                  |
+| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | legacy compatibility         |
 | `hyperliquid` | `paper`    | `HyperliquidMarketFeed` | `PaperOrderGateway`       | legacy compatibility         |
 | `hyperliquid` | `live`     | `HyperliquidMarketFeed` | `HyperliquidOrderGateway` | legacy compatibility         |
 
@@ -217,7 +217,7 @@ flowchart TD
     V -- bulk --> M1{mode?}
     M1 -- paper --> BP["BulkMarketFeed + PaperOrderGateway"]
     M1 -- live  --> BL["BulkMarketFeed + BulkOrderGateway"]
-    M1 -- backtest --> ERR["throw: unsupported"]
+    M1 -- backtest --> BB["HistoricalMarketFeed + PaperOrderGateway"]
 
     V -- hyperliquid --> M2{mode?}
     M2 -- backtest --> HB["HistoricalMarketFeed + PaperOrderGateway"]
@@ -278,7 +278,7 @@ flowchart LR
 
 - secret は `BULK_PRIVATE_KEY` (Bulk) / `HL_SECRET_KEY` (Hyperliquid) のみ。
 - secret 系 env は **`src/env.ts` と config 展開以外で読まない**。
-- 既定の `CONFIG_PATH` は `config/config.bulk.yml`。
+- 既定の `CONFIG_PATH` は `config/config.bulk.beta.yml`。
 
 ---
 

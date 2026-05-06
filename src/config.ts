@@ -13,6 +13,10 @@ const quoteSizingSchema = z.object({
   positionSize: z.number().positive(),
   budgetUsd: z.number().positive().optional(),
 });
+const quoteLevelSchema = z.object({
+  halfSpreadBps: z.number().positive(),
+  sizeUsd: z.number().positive(),
+});
 
 const strategySchema = z.object({
   type: z.literal("avellaneda-stoikov"),
@@ -29,6 +33,7 @@ const commonConfigSchema = z.object({
     slideMarginThreshold: z.number().min(0).max(1),
     defaultTimeInForce: timeInForceSchema.default("ALO"),
     sizing: quoteSizingSchema,
+    levels: z.array(quoteLevelSchema).min(1).optional(),
     strategy: strategySchema,
   }),
   risk: z.object({
@@ -72,6 +77,7 @@ const appConfigSchema = z.discriminatedUnion("venue", [
         wsUrl: z.string().url(),
         httpUrl: z.string().url(),
         market: z.string().min(1),
+        environment: z.enum(["beta", "mainnet"]).default("mainnet"),
         nlevels: z.number().int().positive().optional(),
         maxLeverage: z.number().min(1).max(50).optional(),
         privateKey: z.string().optional(),

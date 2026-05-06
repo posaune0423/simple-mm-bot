@@ -13,6 +13,7 @@ simple-mm-bot/
 │   ├── main.ts
 │   ├── env.ts
 │   ├── config.ts
+│   ├── runtimePaths.ts
 │   ├── application/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
@@ -35,6 +36,7 @@ simple-mm-bot/
 │   ├── adapters/
 │   │   ├── bulk/
 │   │   │   ├── BulkMarketFeed.ts
+│   │   │   ├── BulkOhlcvFetcher.ts
 │   │   │   └── BulkOrderGateway.ts
 │   │   ├── hyperliquid/
 │   │   │   ├── HyperliquidMarketFeed.ts
@@ -49,6 +51,9 @@ simple-mm-bot/
 │   │   └── db/
 │   │       ├── postgres/
 │   │       └── sqlite/
+│   │           ├── bootstrap.ts
+│   │           ├── client.ts
+│   │           └── schema.ts
 │   ├── reporting/
 │   │   ├── metrics/
 │   │   ├── queries/
@@ -58,8 +63,8 @@ simple-mm-bot/
 │   └── lib/
 │       └── hyperliquid/
 ├── config/
-│   ├── config.yml
-│   ├── config.bulk.yml
+│   ├── config.bulk.beta.yml
+│   ├── config.bulk.mainnet.yml
 │   ├── config.paper.yml
 │   ├── config.backtest.yml
 │   └── config.example.yml
@@ -140,6 +145,9 @@ Bulk Trade の primary adapter。
   - Bulk timestamp は ns から ms に正規化する
   - top book から mid / microprice を計算する
   - account id が利用できる場合のみ margin ratio を取得する
+- `BulkOhlcvFetcher.ts`
+  - `bulk-ts-sdk` の `market.klines` から historical OHLCV を取得する
+  - Bulk `backtest` の replay feed 用に domain `OhlcvRecord` へ正規化する
 - `BulkOrderGateway.ts`
   - domain order を `placeLimitOrder` / `placeMarketOrder` に変換する
   - cancel / cancelAll を SDK に委譲する
@@ -166,6 +174,8 @@ DB など外部 storage の詳細を置く。
 - repository は domain ports と metrics repository contract を実装し、schema 都合を上位層に漏らさない
 - `Metrics.ts` は core metrics fact contract を定義する
 - `MetricsRepository.ts` は metrics repository port を定義する
+- SQLite の runtime DDL と table / view name list は `src/infrastructure/db/sqlite/bootstrap.ts`
+- SQLite / Drizzle table mapping は `src/infrastructure/db/sqlite/schema.ts`
 - metrics は `trading_runs`, `orderbook_snapshots`, `submitted_orders`, `trade_fills`, `account_state_observations` に保存する
 - `telemetry_events`, `markouts`, `quote_decisions`, `runtime_incidents` は作らず、分析結果は view で計算する
 
@@ -182,11 +192,16 @@ runtime source ではなく tool 用 script の実装詳細として扱う。
 - `MetricsEvaluation.ts`
   - 保存済み metrics facts / views から data health、PnL、markout、order quality、runtime health を評価する
 - `BulkConfigTuning.ts`
-  - `config/config.bulk.yml` への最小YAML tuningだけを扱うBulk固有tool logic
+  - `config/config.bulk.beta.yml` への最小YAML tuningだけを扱うBulk固有tool logic
 - `DesignIssuePlanner.ts`
   - SDK/API/code/design修正が必要な metrics signal をGitHub issue案へ変換する
 
 `scripts/lib/` は bot runtime の意思決定に import しない。
+
+### `src/runtimePaths.ts`
+
+Default config、SQLite DB path、Drizzle schema / migration output、metrics artifact output の path registry。
+新しい生成先や default path を増やす場合は、まずここへ追加してから scripts / docs / tests で参照する。
 
 ### `src/reporting/`
 
@@ -213,20 +228,20 @@ Bulk Trade の API wrapper は `bulk-ts-sdk` を利用し、この repo の `src
 
 `config/` には commit 可能な設定だけを置く。
 
-- `config/config.bulk.yml`
-  - Bulk Trade primary config
+- `config/config.bulk.beta.yml`
+  - Bulk beta live config。日次 10,000 mock USD を使う前提の aggressive preset
+- `config/config.bulk.mainnet.yml`
+  - Bulk mainnet live config。real capital 用の conservative preset
 - `config/config.paper.yml`
   - Bulk Trade paper config
-- `config/config.yml`
-  - default local config
 - `config/config.backtest.yml`
-  - temporary Hyperliquid historical backtest config
+  - Bulk historical backtest config
 - `config/config.example.yml`
   - safe template with `${BULK_PRIVATE_KEY}`
 
-デフォルトの `CONFIG_PATH` は `config/config.bulk.yml`。
+デフォルトの `CONFIG_PATH` は `config/config.bulk.beta.yml`。
 
-Bulk の HTTP URL、WS URL、market、L2 depth は YAML に置く。
+Bulk の HTTP URL、WS URL、market、environment、L2 depth は YAML に置く。
 secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
 
 ## Docs
@@ -242,8 +257,8 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 | ------------- | ---------- | ----------------------- | ------------------------- | -------------------- |
 | `bulk`        | `paper`    | `BulkMarketFeed`        | `PaperOrderGateway`       | primary              |
 | `bulk`        | `live`     | `BulkMarketFeed`        | `BulkOrderGateway`        | primary              |
-| `bulk`        | `backtest` | unsupported             | unsupported               | explicit error       |
-| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | temporary            |
+| `bulk`        | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | primary              |
+| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | legacy compatibility |
 | `hyperliquid` | `paper`    | `HyperliquidMarketFeed` | `PaperOrderGateway`       | legacy compatibility |
 | `hyperliquid` | `live`     | `HyperliquidMarketFeed` | `HyperliquidOrderGateway` | legacy compatibility |
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
 
 import { ConfigLoader } from "../src/config.ts";
+import { DEFAULT_BULK_BETA_CONFIG_PATH, DEFAULT_CONFIG_PATH } from "../src/runtimePaths.ts";
 
 describe("ConfigLoader", () => {
   test("loads quote sizing from committed config", async () => {
@@ -11,35 +12,80 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.sizing.budgetUsd).toBe(250);
   });
 
-  test("loads committed Bulk config tuned for beta live volume", async () => {
-    const rawConfig = parseYaml(await Bun.file("config/config.bulk.yml").text()) as {
+  test("loads committed Bulk beta config tuned to deploy the daily mock balance", async () => {
+    const rawConfig = parseYaml(await Bun.file("config/config.bulk.beta.yml").text()) as {
       mode?: string;
     };
     expect(rawConfig.mode).toBe("live");
 
-    const config = await ConfigLoader.load({ configPath: "config/config.bulk.yml" });
+    const config = await ConfigLoader.load({ configPath: "config/config.bulk.beta.yml" });
 
     expect(config.venue).toBe("bulk");
     if (config.venue !== "bulk") {
       throw new Error("Expected bulk config");
     }
+    expect(config.connections.bulk.environment).toBe("beta");
     expect(config.connections.bulk.httpUrl).toBe("https://exchange-api.bulk.trade/api/v1");
     expect(config.connections.bulk.wsUrl).toBe("wss://exchange-ws1.bulk.trade");
     expect(config.connections.bulk.market).toBe("BTC-USD");
     expect(config.connections.bulk.nlevels).toBe(20);
-    expect(config.connections.bulk.maxLeverage).toBe(5);
+    expect(config.connections.bulk.maxLeverage).toBe(25);
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
-    expect(config.quoteEngine.minSpreadBps).toBe(5.6);
+    expect(config.quoteEngine.minSpreadBps).toBe(16);
+    expect(config.quoteEngine.levels).toEqual([
+      { halfSpreadBps: 8, sizeUsd: 9400 },
+      { halfSpreadBps: 15, sizeUsd: 18800 },
+      { halfSpreadBps: 30, sizeUsd: 31300 },
+      { halfSpreadBps: 60, sizeUsd: 50000 },
+    ]);
     expect(config.quoteEngine.strategy.params).toEqual({
       gamma: 0,
-      kappa: 8,
-      kInv: 0.05,
+      kappa: 625,
+      kInv: 2,
     });
-    expect(config.quoteEngine.inventoryScale).toBe(0.5);
-    expect(config.quoteEngine.sizing.positionSize).toBe(0.05);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(250);
-    expect(config.risk.maxPositionQty).toBe(0.5);
-    expect(config.bot.intervalMs).toBe(250);
+    expect(config.quoteEngine.inventoryScale).toBe(0.2);
+    expect(config.quoteEngine.sizing.positionSize).toBe(1.25);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(50000);
+    expect(config.risk.maxPositionQty).toBe(0.85);
+    expect(config.bot.intervalMs).toBe(1000);
+  });
+
+  test("loads Bulk beta config as the default live config before mainnet launch", async () => {
+    const previousMode = Bun.env.MODE;
+    Bun.env.MODE = "live";
+    try {
+      const config = await ConfigLoader.load({ configPath: DEFAULT_CONFIG_PATH });
+
+      expect(DEFAULT_BULK_BETA_CONFIG_PATH).toBe("config/config.bulk.beta.yml");
+      expect(DEFAULT_CONFIG_PATH).toBe(DEFAULT_BULK_BETA_CONFIG_PATH);
+      expect(config.mode).toBe("live");
+      expect(config.venue).toBe("bulk");
+      if (config.venue !== "bulk") {
+        throw new Error("Expected bulk config");
+      }
+      expect(config.connections.bulk.environment).toBe("beta");
+      expect(config.quoteEngine.sizing.budgetUsd).toBe(50000);
+    } finally {
+      if (previousMode === undefined) {
+        delete Bun.env.MODE;
+      } else {
+        Bun.env.MODE = previousMode;
+      }
+    }
+  });
+
+  test("loads committed Bulk mainnet config as conservative real-capital settings", async () => {
+    const config = await ConfigLoader.load({ configPath: "config/config.bulk.mainnet.yml" });
+
+    expect(config.venue).toBe("bulk");
+    if (config.venue !== "bulk") {
+      throw new Error("Expected bulk config");
+    }
+    expect(config.connections.bulk.environment).toBe("mainnet");
+    expect(config.quoteEngine.minSpreadBps).toBe(8);
+    expect(config.quoteEngine.sizing.positionSize).toBe(0.01);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(100);
+    expect(config.risk.maxPositionQty).toBe(0.05);
   });
 
   test("loads bulk config without URL or account env overrides", async () => {

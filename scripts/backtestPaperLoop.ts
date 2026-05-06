@@ -11,6 +11,7 @@ import { createAppError, formatAppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { logger } from "../src/utils/logger.ts";
+import { BACKTEST_CONFIG_PATH, PAPER_CONFIG_PATH, STRATEGY_RUNS_DIR } from "../src/runtimePaths.ts";
 import { evaluateMetricsRun, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 
 interface BacktestPaperLoopSummary {
@@ -160,10 +161,9 @@ function loadLatestRunReport(dbPath: string, mode: "paper" | "backtest"): LoopRu
 
 function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const outputDir = options["output-dir"] ?? join("artifacts", "strategy-runs", `${Date.now()}`);
-  const backtestConfigPath =
-    options["backtest-config"] ?? options.config ?? "config/config.backtest.yml";
-  const paperConfigPath = options["paper-config"] ?? options.config ?? "config/config.paper.yml";
+  const outputDir = options["output-dir"] ?? join(STRATEGY_RUNS_DIR, `${Date.now()}`);
+  const backtestConfigPath = options["backtest-config"] ?? options.config ?? BACKTEST_CONFIG_PATH;
+  const paperConfigPath = options["paper-config"] ?? options.config ?? PAPER_CONFIG_PATH;
   const from = options.from ?? "2024-01-01";
   const to = options.to ?? "2024-01-07";
   const paperDurationMin = Number(options["paper-duration-min"] ?? "1");

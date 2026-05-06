@@ -5,8 +5,9 @@ import { join } from "node:path";
 
 import { BulkMarketFeed } from "../../src/adapters/bulk/BulkMarketFeed.ts";
 import { BulkOrderGateway } from "../../src/adapters/bulk/BulkOrderGateway.ts";
+import { HistoricalMarketFeed } from "../../src/adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../../src/adapters/paper/PaperOrderGateway.ts";
-import { DIContainer } from "../../src/application/di.ts";
+import { DIContainer, resolveCapitalMode } from "../../src/application/di.ts";
 import type { AppConfig } from "../../src/config.ts";
 
 function config(mode: "live" | "paper" | "backtest"): AppConfig {
@@ -18,6 +19,7 @@ function config(mode: "live" | "paper" | "backtest"): AppConfig {
         httpUrl: "https://api.bulk.trade",
         wsUrl: "wss://api.bulk.trade/ws",
         market: "ETH-USD",
+        environment: "beta",
         maxLeverage: 5,
         privateKey: mode === "live" ? "11111111111111111111111111111111" : undefined,
       },
@@ -101,6 +103,18 @@ describe("DIContainer Bulk venue", () => {
     await (internals.orderGateway as BulkOrderGateway).dispose();
   });
 
+  test("marks bulk beta live as mock capital and bulk mainnet live as real capital", () => {
+    const betaConfig = config("live");
+    const mainnetConfig = config("live");
+    if (mainnetConfig.venue !== "bulk") {
+      throw new Error("Expected bulk config");
+    }
+    mainnetConfig.connections.bulk.environment = "mainnet";
+
+    expect(resolveCapitalMode(betaConfig)).toBe("beta_mock");
+    expect(resolveCapitalMode(mainnetConfig)).toBe("real");
+  });
+
   test("rejects bulk live without BULK_PRIVATE_KEY", async () => {
     await new DIContainer(configWithoutBulkPrivateKey()).buildBot().then(
       () => {
@@ -115,15 +129,11 @@ describe("DIContainer Bulk venue", () => {
     );
   });
 
-  test("rejects bulk backtest explicitly", async () => {
-    await new DIContainer(config("backtest")).buildBot().then(
-      () => {
-        throw new Error("Expected Bulk backtest to reject");
-      },
-      (error) => {
-        expect(error).toBeInstanceOf(Error);
-        expect((error as Error).message).toBe("Bulk venue does not support backtest mode");
-      },
-    );
+  test("resolves bulk backtest to HistoricalMarketFeed and PaperOrderGateway", async () => {
+    const bot = await new DIContainer(config("backtest")).buildBot();
+    const internals = bot as unknown as { marketFeed: unknown; orderGateway: unknown };
+
+    expect(internals.marketFeed).toBeInstanceOf(HistoricalMarketFeed);
+    expect(internals.orderGateway).toBeInstanceOf(PaperOrderGateway);
   });
 });

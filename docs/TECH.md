@@ -104,12 +104,12 @@ Hyperliquid path では既存の `ALO` default を維持する。
 
 - `bulk + live` -> `BulkMarketFeed` + `BulkOrderGateway`
 - `bulk + paper` -> `BulkMarketFeed` + `PaperOrderGateway`
-- `bulk + backtest` -> unsupported error
+- `bulk + backtest` -> `HistoricalMarketFeed` + `PaperOrderGateway`
 - `hyperliquid + live` -> `HyperliquidMarketFeed` + `HyperliquidOrderGateway`
 - `hyperliquid + paper` -> `HyperliquidMarketFeed` + `PaperOrderGateway`
 - `hyperliquid + backtest` -> `HistoricalMarketFeed` + `PaperOrderGateway`
 
-Hyperliquid backtest は暫定の historical validation path として残す。
+Bulk backtest は `bulk-ts-sdk` の `klines` から OHLCV を取得し、historical replay feed と paper execution を組み合わせる。現行の Bulk SDK/API では historical L2 を取得できないため、backtest の fill quality は OHLCV 粒度と paper fill model に依存する。
 Bullet の DI path は持たない。
 
 #### DB 解決
@@ -209,10 +209,14 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 
 ## 設定管理
 
-- default config: `config/config.bulk.yml`
+- default config: `config/config.bulk.beta.yml`
+- Bulk beta live preset: `config/config.bulk.beta.yml`
+- Bulk mainnet live preset: `config/config.bulk.mainnet.yml`
 - Bulk paper preset: `config/config.paper.yml`
 - Bulk template: `config/config.example.yml`
-- Temporary Hyperliquid backtest preset: `config/config.backtest.yml`
+- Bulk backtest preset: `config/config.backtest.yml`
+
+Default path と生成先は `src/runtimePaths.ts` に集約する。script や Drizzle config へ hard-coded path を増やさない。
 
 環境変数による override:
 
@@ -222,7 +226,7 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 - `DB_PATH`
 - `LOG_LEVEL`
 - `BULK_PRIVATE_KEY`
-- Hyperliquid env vars are kept only for the temporary backtest / legacy path
+- Hyperliquid env vars are kept only for legacy compatibility paths
 
 Log output should go through `src/utils/logger.ts` by default so `LOG_LEVEL` filtering applies consistently.
 
@@ -251,8 +255,7 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 重点検証項目:
 
 - Bulk config が parse できること
-- Bulk paper/live DI が正しい adapter を解決すること
-- Bulk backtest が明示的に unsupported error になること
+- Bulk paper/live/backtest DI が正しい adapter を解決すること
 - Bulk market feed が ticker/L2/WS payload を `MarketSnapshot` に正規化すること
 - Bulk order gateway が order/cancel/fill を domain model に正規化すること
 - `defaultTimeInForce` が quote policy に反映されること

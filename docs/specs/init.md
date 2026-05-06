@@ -19,5 +19,4 @@ bot 側では `src/adapters/bulk/` に SDK 依存を閉じ込め、domain / appl
 
 Bullet venue は現在の対応対象ではない。
 
-Bulk historical backtest は未対応。
-当面の backtest / smoke validation は既存の Hyperliquid historical path を一時的に利用する。
+Bulk historical backtest は `bulk-ts-sdk` の klines と paper execution で実行する。historical L2 は現行の Bulk SDK/API から取得できないため、fill model の近似を前提に扱う。

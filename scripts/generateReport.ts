@@ -1,6 +1,7 @@
 import { ResultAsync } from "neverthrow";
 
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
+import { DEFAULT_SQLITE_DB_PATH } from "../src/runtimePaths.ts";
 import { fetchReportFills } from "../src/reporting/queries/MetricsFactQuery.ts";
 import {
   DEFAULT_PERIODS,
@@ -27,7 +28,7 @@ function parseOptions(argv: string[]): RunOptions {
   const mode = flags.mode ?? "live";
   const venue = flags.venue;
   const outputDir = flags["output"] ?? flags["output-dir"] ?? defaultOutputDir();
-  const dbPath = flags.db ?? Bun.env.DB_PATH ?? "data/mmbot.db";
+  const dbPath = flags.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH;
   const now = flags.now ? Number(flags.now) : Date.now();
   const periodKey = flags.period ?? "both";
   const periods = selectPeriods(periodKey);

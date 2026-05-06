@@ -3,6 +3,10 @@ import { ResultAsync } from "neverthrow";
 
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
+import {
+  LATEST_METRICS_ARTIFACTS_DIR,
+  LATEST_METRICS_EVALUATION_PATH,
+} from "../src/runtimePaths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
@@ -80,8 +84,8 @@ function markdown(artifact: EvaluationArtifact): string {
 
 function generate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const evaluationPath = options.evaluation ?? "artifacts/metrics/latest/evaluation.json";
-  const outputDir = options["output-dir"] ?? "artifacts/metrics/latest";
+  const evaluationPath = options.evaluation ?? LATEST_METRICS_EVALUATION_PATH;
+  const outputDir = options["output-dir"] ?? LATEST_METRICS_ARTIFACTS_DIR;
 
   return ResultAsync.fromPromise(
     (async () => {

@@ -2,6 +2,7 @@ import { env } from "../env.ts";
 import { BulkClient } from "bulk-ts-sdk";
 import type { AppConfig } from "../config.ts";
 import { BulkMarketFeed } from "../adapters/bulk/BulkMarketFeed.ts";
+import { BulkOhlcvFetcher } from "../adapters/bulk/BulkOhlcvFetcher.ts";
 import { BulkOrderGateway } from "../adapters/bulk/BulkOrderGateway.ts";
 import { HyperliquidMarketFeed } from "../adapters/hyperliquid/HyperliquidMarketFeed.ts";
 import { HyperliquidOhlcvFetcher } from "../adapters/hyperliquid/HyperliquidOhlcvFetcher.ts";
@@ -14,6 +15,7 @@ import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
+import type { CapitalMode } from "../infrastructure/Metrics.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
 import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
@@ -101,6 +103,7 @@ export class DIContainer {
         defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
         budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
+        levels: this.config.quoteEngine.levels,
       },
     );
   }
@@ -126,7 +129,7 @@ export class DIContainer {
     return new MetricsRecorder(repository, {
       mode: this.config.mode,
       venue: this.config.venue,
-      capitalMode: this.capitalMode(),
+      capitalMode: resolveCapitalMode(this.config),
       market: this.marketName(),
       strategyName: "avellaneda-stoikov",
       configJson: redactConfig(this.config),
@@ -136,7 +139,7 @@ export class DIContainer {
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
     if (this.config.venue === "bulk") {
-      return this.resolveBulkAdapters();
+      return this.resolveBulkAdapters(ohlcvRepository);
     }
 
     const { connections, mode } = this.config;
@@ -180,7 +183,7 @@ export class DIContainer {
     };
   }
 
-  private resolveBulkAdapters(): ResolvedAdapters {
+  private resolveBulkAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
     const config = this.config;
     if (config.venue !== "bulk") {
       throw new Error("Bulk adapters can only be resolved for Bulk config");
@@ -196,7 +199,16 @@ export class DIContainer {
     const accountId = client.accountPublicKey;
 
     if (mode === "backtest") {
-      throw new Error("Bulk venue does not support backtest mode");
+      const feed = new HistoricalMarketFeed(ohlcvRepository, new BulkOhlcvFetcher(client), {
+        market: config.backtest.market,
+        timeframe: config.backtest.timeframe,
+        from: Date.parse(config.backtest.from),
+        to: Date.parse(config.backtest.to),
+      });
+      return {
+        feed,
+        gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
+      };
     }
 
     const feed = new BulkMarketFeed(client, {
@@ -239,19 +251,19 @@ export class DIContainer {
       ? this.config.connections.bulk.market
       : this.config.connections.hyperliquid.market;
   }
+}
 
-  private capitalMode(): "beta_mock" | "paper" | "backtest" | "real" {
-    if (this.config.mode === "paper") {
-      return "paper";
-    }
-    if (this.config.mode === "backtest") {
-      return "backtest";
-    }
-    if (this.config.venue === "bulk") {
-      return "beta_mock";
-    }
-    return "real";
+export function resolveCapitalMode(config: AppConfig): CapitalMode {
+  if (config.mode === "paper") {
+    return "paper";
   }
+  if (config.mode === "backtest") {
+    return "backtest";
+  }
+  if (config.venue === "bulk" && config.connections.bulk.environment === "beta") {
+    return "beta_mock";
+  }
+  return "real";
 }
 
 function redactConfig(config: AppConfig): unknown {

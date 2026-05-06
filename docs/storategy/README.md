@@ -2,7 +2,7 @@
 
 この文書は、現在の `simple-mm-bot` が実際に使っている market making strategy を、実装に沿って説明する。
 
-対象は `config/config.bulk.yml` の Bulk live 設定と、`src/domain/QuoteEngine.ts` / `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts` の現行ロジック。
+対象は `config/config.bulk.beta.yml` の Bulk beta live 設定と、`src/domain/QuoteEngine.ts` / `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts` の現行ロジック。
 ここでは leaderboard volume ではなく、PnL を作るための quote 生成と risk control の流れに絞る。
 
 ## 全体像
@@ -43,24 +43,25 @@ flowchart LR
 
 ## 現在の設定
 
-`config/config.bulk.yml` の現在値:
+`config/config.bulk.beta.yml` の現在値:
 
 | 項目                   |    現在値 | 役割                                         |
 | ---------------------- | --------: | -------------------------------------------- |
 | `market`               | `BTC-USD` | quote 対象 market                            |
-| `intervalMs`           |     `250` | tick 間隔                                    |
+| `environment`          |    `beta` | mock-capital Bulk environment                |
+| `intervalMs`           |     `200` | tick 間隔                                    |
 | `markWeight`           |     `0.5` | mark price と micro price の混合比           |
-| `inventoryScale`       |     `0.5` | inventory skew の正規化幅                    |
-| `timeHorizonSec`       |      `10` | spread / skew が見る短期 horizon             |
-| `slideMarginThreshold` |    `0.08` | margin ratio が低いとき IOC に切り替える閾値 |
+| `inventoryScale`       |     `0.2` | inventory skew の正規化幅                    |
+| `timeHorizonSec`       |       `8` | spread / skew が見る短期 horizon             |
+| `slideMarginThreshold` |    `0.06` | margin ratio が低いとき IOC に切り替える閾値 |
 | `defaultTimeInForce`   |     `GTC` | 通常 quote の time in force                  |
-| `positionSize`         |    `0.05` | 片側 quote の最大 base size                  |
-| `budgetUsd`            |     `250` | 片側 quote の USD 上限                       |
-| `minSpreadBps`         |     `5.6` | fee 負けを避ける最小 quote 幅                |
+| `positionSize`         |     `0.2` | 片側 quote の最大 base size                  |
+| `budgetUsd`            |    `5000` | 片側 quote の USD 上限                       |
+| `minSpreadBps`         |     `4.2` | fee 負けを避ける最小 quote 幅                |
 | `gamma`                |       `0` | risk aversion。現在は fixed-spread fallback  |
-| `kappa`                |       `8` | spread の基準。`gamma=0` では `2 / kappa`    |
-| `kInv`                 |    `0.05` | inventory skew の強さ                        |
-| `maxPositionQty`       |     `0.5` | これを超える在庫は reduce-only IOC で削る    |
+| `kappa`                |      `12` | spread の基準。`gamma=0` では `2 / kappa`    |
+| `kInv`                 |    `0.12` | inventory skew の強さ                        |
+| `maxPositionQty`       |     `0.2` | これを超える在庫は reduce-only IOC で削る    |
 
 ## Quote 生成フロー
 
@@ -110,7 +111,7 @@ quoteSize = min(positionSize, budgetUsd / fairPrice)
 ```
 
 BTC が高いほど `budgetUsd` 側で size が絞られる。
-現在は `positionSize = 0.05`、`budgetUsd = 250` なので、BTC-USD では通常 `budgetUsd / fairPrice` が上限になる。
+現在は `positionSize = 0.2`、`budgetUsd = 5000` なので、BTC-USD では通常 `budgetUsd / fairPrice` が上限になる。両側 quote の合計 notional は約 10,000 USD を狙う。
 
 ## Avellaneda-Stoikov 部分
 
@@ -137,10 +138,10 @@ flowchart LR
 strategySpread = 2 / kappa
 ```
 
-現在は `kappa = 8` なので:
+現在は `kappa = 12` なので:
 
 ```text
-strategySpread = 2 / 8 = 0.25
+strategySpread = 2 / 12 = 0.1667
 ```
 
 これは price の絶対値幅で、bps ではない。BTC-USD のような高価格 market では非常に細い幅になるため、Bulk config は fee-aware な `minSpreadBps` を下限として適用する。
@@ -216,7 +217,7 @@ askSize = quoteSize
 flowchart TD
   MR["marginRatio"] --> Has{"null?"}
   Has -->|yes| GTC["use defaultTimeInForce<br/>GTC"]
-  Has -->|no| Low{"marginRatio < 0.08?"}
+  Has -->|no| Low{"marginRatio < 0.06?"}
   Low -->|yes| IOC["use IOC"]
   Low -->|no| GTC
 ```
@@ -251,9 +252,9 @@ Risk thresholds:
 
 | 項目             |     値 |
 | ---------------- | -----: |
-| `imrBuffer`      | `0.08` |
-| `mmrBuffer`      | `0.04` |
-| `maxPositionQty` |  `0.5` |
+| `imrBuffer`      | `0.06` |
+| `mmrBuffer`      | `0.03` |
+| `maxPositionQty` |  `0.2` |
 
 ## PnL-first tuning guide
 
@@ -292,4 +293,5 @@ Guideline:
 | volatility             | `src/domain/VolatilityEstimator.ts`                                   |
 | strategy formula       | `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts` |
 | strategy params schema | `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts`   |
-| Bulk live params       | `config/config.bulk.yml`                                              |
+| Bulk beta live params  | `config/config.bulk.beta.yml`                                         |
+| Bulk mainnet params    | `config/config.bulk.mainnet.yml`                                      |

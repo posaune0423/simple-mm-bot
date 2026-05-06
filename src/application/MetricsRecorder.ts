@@ -108,6 +108,7 @@ export class MetricsRecorder {
         ask: quote.ask,
         bidSize: quote.bidSize,
         askSize: quote.askSize,
+        levels: quote.levels,
         policy: quote.policy,
         quotedSpreadBps: distanceBps(quote.ask, quote.bid),
         bidDistanceBps: distanceBps(quote.fairPrice, quote.bid),

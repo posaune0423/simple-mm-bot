@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 import { ResultAsync } from "neverthrow";
 
 import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
+import { DEFAULT_SQLITE_DB_PATH, METRICS_ARTIFACTS_DIR } from "../src/runtimePaths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";
@@ -256,9 +257,9 @@ function percentileSorted(values: number[], percentile: number): number {
 
 function evaluate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const dbPath = options.db ?? Bun.env.DB_PATH ?? "data/mmbot.db";
+  const dbPath = options.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH;
   const runId = options["run-id"] ?? latestRunId(dbPath);
-  const outputDir = options["output-dir"] ?? join("artifacts", "metrics", runId ?? "unknown");
+  const outputDir = options["output-dir"] ?? join(METRICS_ARTIFACTS_DIR, runId ?? "unknown");
 
   if (runId === null) {
     return ResultAsync.fromPromise(

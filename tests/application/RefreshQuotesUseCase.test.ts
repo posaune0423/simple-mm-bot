@@ -249,4 +249,97 @@ describe("RefreshQuotesUseCase", () => {
     expect(placed[1]?.clientOrderId?.endsWith(":ask")).toBe(true);
     expect(bidPrefix).toBe(askPrefix);
   });
+
+  test("places every configured ladder level on both sides", async () => {
+    const placed: Array<{
+      side: "buy" | "sell";
+      price?: number;
+      qty: number;
+      clientOrderId?: string;
+    }> = [];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        return {
+          market: "BTC-USD",
+          bestBid: 99_990,
+          bestAsk: 100_010,
+          microPrice: 100_000,
+          markPrice: 100_000,
+          timestamp: 1,
+          marginRatio: 0.2,
+        };
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: {
+        side: "buy" | "sell";
+        price?: number;
+        qty: number;
+        clientOrderId?: string;
+      }) {
+        placed.push(order);
+        return {
+          id: `${order.side}-${placed.length}`,
+          request: {
+            market: "BTC-USD",
+            side: order.side,
+            price: order.price,
+            qty: order.qty,
+            reduceOnly: false,
+            timeInForce: "ALO" as const,
+          },
+          status: "open" as const,
+        };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({ gamma: 0, kappa: 625, kInv: 0 }),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.5,
+        timeHorizonSec: 30,
+        slideMarginThreshold: 0.12,
+        defaultTimeInForce: "ALO",
+        positionSize: 0.02,
+        budgetUsd: 800,
+        minSpreadBps: 16,
+        levels: [
+          { halfSpreadBps: 8, sizeUsd: 150 },
+          { halfSpreadBps: 30, sizeUsd: 600 },
+        ],
+      },
+    );
+
+    await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
+
+    expect(placed).toHaveLength(4);
+    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy", "sell"]);
+    expect(placed.map((order) => order.clientOrderId?.replace(/^[^:]+:/, ""))).toEqual([
+      "bid:0",
+      "ask:0",
+      "bid:1",
+      "ask:1",
+    ]);
+    expect(placed.map((order) => order.qty)).toEqual([0.0015, 0.0015, 0.006, 0.006]);
+  });
 });
