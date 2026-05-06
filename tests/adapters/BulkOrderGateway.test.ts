@@ -199,6 +199,57 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("rounds reduce-only dust size up to the minimum Bulk lot for close orders", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [
+              {
+                symbol: "BTC-USD",
+                sizePrecision: 6,
+                lotSize: 0.000001,
+                timeInForces: ["IOC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeMarketOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ filled: { oid: "dust-close" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      qty: 6.299999998349293e-7,
+      reduceOnly: true,
+      timeInForce: "IOC",
+      intent: "close",
+    });
+
+    expect(placed).toMatchObject({
+      id: "dust-close",
+      request: { qty: 0.000001, reduceOnly: true },
+      status: "filled",
+    });
+    expect(calls).toEqual([{ symbol: "BTC-USD", side: "sell", size: 0.000001, reduceOnly: true }]);
+  });
+
   test("logs order submission, cancellations, and new fills", async () => {
     const logs = captureLogs();
     const client = {

@@ -312,7 +312,9 @@ export class BulkOrderGateway implements IOrderGateway {
       );
     }
 
-    const qty = normalizeSize(order.qty, rules);
+    const qty = order.reduceOnly
+      ? normalizeReduceOnlySize(order.qty, rules)
+      : normalizeSize(order.qty, rules);
     if (qty <= 0) {
       throw new Error(`Bulk ${order.market} order size rounds to zero: qty=${order.qty}`);
     }
@@ -622,6 +624,16 @@ function normalizeSize(size: number, rules: BulkMarketRules): number {
   return size;
 }
 
+function normalizeReduceOnlySize(size: number, rules: BulkMarketRules): number {
+  if (rules.lotSize !== undefined && rules.lotSize > 0) {
+    return ceilToStep(size, rules.lotSize, rules.sizePrecision);
+  }
+  if (rules.sizePrecision !== undefined) {
+    return ceilToPrecision(size, rules.sizePrecision);
+  }
+  return size;
+}
+
 function floorToStep(value: number, step: number, precision?: number): number {
   const decimals = precision ?? decimalPlaces(step);
   return roundToPrecision(Math.floor(value / step + 1e-9) * step, decimals);
@@ -635,6 +647,11 @@ function ceilToStep(value: number, step: number, precision?: number): number {
 function floorToPrecision(value: number, precision: number): number {
   const factor = 10 ** precision;
   return Math.floor(value * factor + 1e-9) / factor;
+}
+
+function ceilToPrecision(value: number, precision: number): number {
+  const factor = 10 ** precision;
+  return Math.ceil(value * factor - 1e-9) / factor;
 }
 
 function roundToPrecision(value: number, precision: number): number {
