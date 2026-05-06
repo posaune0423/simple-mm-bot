@@ -19,18 +19,8 @@ const strategySchema = z.object({
   params: avellanedaStoikovParamsSchema,
 });
 
-export const appConfigSchema = z.object({
+const commonConfigSchema = z.object({
   mode: z.enum(["live", "paper", "backtest"]),
-  venue: z.literal("hyperliquid"),
-  connections: z.object({
-    hyperliquid: z.object({
-      wsUrl: z.string().url(),
-      httpUrl: z.string().url(),
-      market: z.string().min(1),
-      secretKey: z.string().optional(),
-      accountAddress: z.string().optional(),
-    }),
-  }),
   quoteEngine: z.object({
     markWeight: z.number().min(0).max(1),
     inventoryScale: z.number().positive(),
@@ -61,6 +51,34 @@ export const appConfigSchema = z.object({
   }),
 });
 
+export const appConfigSchema = z.discriminatedUnion("venue", [
+  commonConfigSchema.extend({
+    venue: z.literal("hyperliquid"),
+    connections: z.object({
+      hyperliquid: z.object({
+        wsUrl: z.string().url(),
+        httpUrl: z.string().url(),
+        market: z.string().min(1),
+        secretKey: z.string().optional(),
+        accountAddress: z.string().optional(),
+      }),
+    }),
+  }),
+  commonConfigSchema.extend({
+    venue: z.literal("bulk"),
+    connections: z.object({
+      bulk: z.object({
+        wsUrl: z.string().url(),
+        httpUrl: z.string().url(),
+        market: z.string().min(1),
+        nlevels: z.number().int().positive().optional(),
+        maxLeverage: z.number().min(1).max(50).optional(),
+        privateKey: z.string().optional(),
+      }),
+    }),
+  }),
+]);
+
 export type AppConfig = z.infer<typeof appConfigSchema>;
 export type AppMode = AppConfig["mode"];
 export type OrderTimeInForce = z.infer<typeof timeInForceSchema>;
@@ -70,23 +88,38 @@ export interface LoadConfigOptions {
 }
 
 function interpolateEnv(text: string): string {
-  return text.replaceAll(
-    /\$\{([A-Z0-9_]+)\}/g,
-    (_match, key) => (env as Record<string, string | undefined>)[key] ?? "",
-  );
+  return text.replaceAll(/\$\{([A-Z0-9_]+)\}/g, (_match, key) => envValue(key) ?? "");
+}
+
+function envValue(key: string): string | undefined {
+  return Bun.env[key] ?? (env as Record<string, string | undefined>)[key];
 }
 
 function applyEnvOverrides(config: AppConfig): AppConfig {
+  if (config.venue === "bulk") {
+    return {
+      ...config,
+      mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
+      connections: {
+        bulk: {
+          ...config.connections.bulk,
+          privateKey: envValue("BULK_PRIVATE_KEY") ?? config.connections.bulk.privateKey,
+        },
+      },
+    };
+  }
+
   return {
     ...config,
-    mode: env.MODE ?? config.mode,
+    mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
     connections: {
       hyperliquid: {
         ...config.connections.hyperliquid,
-        wsUrl: env.HL_WS_URL ?? config.connections.hyperliquid.wsUrl,
-        httpUrl: env.HL_HTTP_URL ?? config.connections.hyperliquid.httpUrl,
-        secretKey: env.HL_SECRET_KEY ?? config.connections.hyperliquid.secretKey,
-        accountAddress: env.HL_ACCOUNT_ADDRESS ?? config.connections.hyperliquid.accountAddress,
+        wsUrl: envValue("HL_WS_URL") ?? config.connections.hyperliquid.wsUrl,
+        httpUrl: envValue("HL_HTTP_URL") ?? config.connections.hyperliquid.httpUrl,
+        secretKey: envValue("HL_SECRET_KEY") ?? config.connections.hyperliquid.secretKey,
+        accountAddress:
+          envValue("HL_ACCOUNT_ADDRESS") ?? config.connections.hyperliquid.accountAddress,
       },
     },
   };

@@ -1,5 +1,5 @@
 import type { Position } from "./entities/Position.ts";
-import type { Quote } from "./entities/Quote.ts";
+import type { OrderTimeInForce, Quote } from "./entities/Quote.ts";
 import type { MarketSnapshot } from "./ports/IMarketFeed.ts";
 import type { IQuotingStrategy } from "./strategy/IQuotingStrategy.ts";
 import type { FairPriceCalculator } from "./FairPriceCalculator.ts";
@@ -9,6 +9,7 @@ export interface QuoteEngineConfig {
   inventoryScale: number;
   timeHorizonSec: number;
   slideMarginThreshold: number;
+  defaultTimeInForce: OrderTimeInForce;
   positionSize: number;
   budgetUsd?: number;
 }
@@ -37,6 +38,7 @@ export class QuoteEngine {
       inventoryScale: this.config.inventoryScale,
       timeHorizonSec: this.config.timeHorizonSec,
       slideMarginThreshold: this.config.slideMarginThreshold,
+      defaultTimeInForce: this.config.defaultTimeInForce,
       marginRatio: snapshot.marginRatio,
     });
   }

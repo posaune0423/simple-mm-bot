@@ -17,6 +17,7 @@ describe("QuoteEngine", () => {
         inventoryScale: 0.05,
         timeHorizonSec: 30,
         slideMarginThreshold: 0.12,
+        defaultTimeInForce: "ALO",
         positionSize: 0.01,
         budgetUsd: 100,
       });
@@ -62,6 +63,7 @@ describe("QuoteEngine", () => {
         inventoryScale: 0.05,
         timeHorizonSec: 30,
         slideMarginThreshold: 0.12,
+        defaultTimeInForce: "ALO",
         positionSize: 0.01,
         budgetUsd: 100,
       },
@@ -109,6 +111,7 @@ describe("QuoteEngine", () => {
         inventoryScale: 0.05,
         timeHorizonSec: 30,
         slideMarginThreshold: 0.12,
+        defaultTimeInForce: "ALO",
         positionSize: 0.1,
         budgetUsd: 10,
       },
@@ -129,5 +132,39 @@ describe("QuoteEngine", () => {
 
     expect(quote.bidSize).toBe(0.04);
     expect(quote.askSize).toBe(0.04);
+  });
+
+  test("uses configured default time in force for normal quote policy", () => {
+    const engine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({
+        gamma: 0.02,
+        kappa: 1.5,
+        kInv: 0.3,
+      }),
+      new FairPriceCalculator(0.6),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.05,
+        timeHorizonSec: 30,
+        slideMarginThreshold: 0.12,
+        defaultTimeInForce: "GTC",
+        positionSize: 0.01,
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "ETH-USD",
+        bestBid: 99,
+        bestAsk: 101,
+        microPrice: 100,
+        markPrice: 100,
+        timestamp: 1,
+        marginRatio: 0.2,
+      },
+      { qty: 0, avgEntry: 0, unrealizedPnl: 0 },
+    );
+
+    expect(quote.policy).toBe("GTC");
   });
 });

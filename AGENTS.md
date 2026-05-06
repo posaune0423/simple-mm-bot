@@ -1,80 +1,61 @@
-# Agent Guidelines
+# Repository Guidelines
 
-- please do not eslint-disable, just fix the implementation
-- Please use GitHub Flavored Markdown
-- do not ignore eslint
-- Never read secret env files during normal work. Do not open or inspect `.env*`, `.dev.vars`, `.prod.vars`, `.env.keys`, or other secret-bearing local config unless the user explicitly asks for that file/value.
-- If env context is needed, use committed docs and `src/env.ts` to understand the schema, and ask the user to paste a non-secret subset instead of reading local secret files.
+## Project Overview
 
-## Steering (Project Context)
+`simple-mm-bot` is a Bun + TypeScript market-making bot. The primary venue is Bulk Trade, the core strategy is Avellaneda-Stoikov, and the same runtime supports `live`, `paper`, and temporary Hyperliquid `backtest` modes.
 
-Load `docs/` as project memory at session start or when context is needed.
+Keep the architecture clean: domain logic stays pure, application code orchestrates use cases, adapters translate venue APIs, and infrastructure owns persistence.
 
-- **Path**: `docs/`
-- **Default files**: `PRD.md`, `TECH.md`, `STRUCTURE.md`
-- **Task memory**: `.agents/memory/todo.md`, `.agents/memory/lessons.md`
-- **Other docs**: Add or manage as needed (domain-specific .md)
+## Project Rules
 
-Use steering to align decisions with product goals, tech stack, and structure.
+- Do not use `console.log` in production code. Use the repository logger from `src/utils/logger.ts`.
+- Keep Bulk-specific API details inside `src/adapters/bulk` or `bulk-ts-sdk` boundaries.
+- Do not add Bullet support unless explicitly requested; current docs define Bulk Trade as the active target.
+- Generated outputs belong in `artifacts/` or `data/`, not in source directories.
+- Capture lessons after corrections by updating `.agents/memory/lessons.md`.
+- If a bug belongs outside this bot's responsibility, do not add forced workarounds here; fix the owning dependency instead.
+- Do not modify other local projects or repositories unless the user explicitly asks, even when related dependencies exist on disk.
 
----
+## External Repositories
 
-## Workflow Orchestration
+- `https://github.com/posaune0423/bulk-ts-sdk`: TypeScript SDK boundary for Bulk Trade HTTP/WS/order/account behavior used by this bot.
+- `https://github.com/Bulk-trade/bulk-keychain`: key and order-signing implementation used internally by the SDK.
 
-### 1. Plan Node Default
-
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One tack per subagent for focused execution
-
-### 3. Self-Improvement Loop
-
-- After ANY correction from the user: update `.agents/memory/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes - don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests - then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `.agents/memory/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `.agents/memory/todo.md`
-6. **Capture Lessons**: Update `.agents/memory/lessons.md` after corrections
+When Bulk API wrapping, account behavior, order payload construction, or SDK typing is wrong, prefer fixing `bulk-ts-sdk`. When order signing itself is wrong, prepare a PR to `bulk-keychain` instead of hiding the issue in this bot.
+Do not edit local clones of those repositories from this bot task unless explicitly requested.
 
 ## Core Principles
 
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code. YAGNI, KISS, DRY. No backward-compat shims or fallback paths unless they come free without adding cyclomatic complexity.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-- **Video Is Canon**: The reference video is the ultimate authority. If implementation looks different from the video, the implementation is wrong.
+- Simplicity First: make every change as simple as possible. Minimize impact, follow YAGNI/KISS/DRY, and avoid compatibility shims unless they are effectively free.
+- No Laziness: find root causes and avoid temporary fixes.
+- Minimal Impact: touch only what is necessary and avoid unrelated changes.
+- Video Is Canon: when a reference video exists, the implementation should match it.
+
+## Folder Structure
+
+Use [docs/STRUCTURE.md](./docs/STRUCTURE.md) as the source of truth for folder responsibilities, layer boundaries, DI matrix, config files, and test layout. Keep that document updated when adding or moving top-level modules, use cases, scripts, reports, or test areas.
+
+## Docs Reference
+
+- [docs/PRD.md](./docs/PRD.md): product scope, goals, non-goals, modes, and requirements.
+- [docs/TECH.md](./docs/TECH.md): stack, architecture policy, runtime flow, and domain design.
+- [docs/STRUCTURE.md](./docs/STRUCTURE.md): source of truth for directory responsibilities, layer boundaries, config, DI, and tests.
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md): diagrams and high-level architecture overview.
+
+Read these docs before changing runtime behavior, venue support, configuration, or layer boundaries.
+
+## Development Commands
+
+- `bun install`: install dependencies.
+- `bun run start`: run live Bulk mode.
+- `bun run dev:paper`: run Bulk paper mode.
+- `bun run dev:backtest`: run the temporary Hyperliquid backtest path.
+- `bun run check`: run type-aware checks.
+- `bun run lint` / `bun run lint:fix`: lint or fix code.
+- `bun run format:check` / `bun run format`: verify or apply formatting.
+- `bun run test`: run unit and integration tests.
+- `bun run test:e2e:paper`: run paper/backtest smoke tests.
+
+## Coding & Testing Rules
+
+Follow [.codex/rules/typescript.mdc](./.codex/rules/typescript.mdc) for TypeScript style and [.codex/rules/test.mdc](./.codex/rules/test.mdc) for test style. In short: design types and interfaces first, avoid `any`, prefer functions when no internal state is needed, use adapters for external dependencies, keep tests independent, and import the real implementation from `src/`.

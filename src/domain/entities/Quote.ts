@@ -19,5 +19,6 @@ export interface QuoteContext {
   inventoryScale: number;
   timeHorizonSec: number;
   slideMarginThreshold: number;
+  defaultTimeInForce: OrderTimeInForce;
   marginRatio: number | null;
 }

@@ -1,5 +1,8 @@
 import { env } from "../env.ts";
+import { BulkClient } from "bulk-ts-sdk";
 import type { AppConfig } from "../config.ts";
+import { BulkMarketFeed } from "../adapters/bulk/BulkMarketFeed.ts";
+import { BulkOrderGateway } from "../adapters/bulk/BulkOrderGateway.ts";
 import { HyperliquidMarketFeed } from "../adapters/hyperliquid/HyperliquidMarketFeed.ts";
 import { HyperliquidOhlcvFetcher } from "../adapters/hyperliquid/HyperliquidOhlcvFetcher.ts";
 import { HyperliquidOrderGateway } from "../adapters/hyperliquid/HyperliquidOrderGateway.ts";
@@ -29,8 +32,10 @@ import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
 import { BuildReportUseCase } from "./usecases/BuildReportUseCase.ts";
+import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { RecordFillUseCase } from "./usecases/RecordFillUseCase.ts";
+import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
 
@@ -60,11 +65,19 @@ export class DIContainer {
         refreshQuotes: new RefreshQuotesUseCase(feed, gateway, positionRepository, quoteEngine),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         recordFill: new RecordFillUseCase(repositories.tradeRepository, positionRepository),
+        recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
         reduceInventory: new ReduceInventoryUseCase(
           gateway,
           positionRepository,
+          feed,
           this.config.risk.maxPositionQty,
-          this.config.connections.hyperliquid.market,
+          this.marketName(),
+        ),
+        closePosition: new ClosePositionUseCase(
+          gateway,
+          positionRepository,
+          feed,
+          this.marketName(),
         ),
         buildReport: new BuildReportUseCase(
           repositories.tradeRepository,
@@ -89,6 +102,7 @@ export class DIContainer {
         inventoryScale: this.config.quoteEngine.inventoryScale,
         timeHorizonSec: this.config.quoteEngine.timeHorizonSec,
         slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
+        defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
         budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
       },
@@ -115,6 +129,10 @@ export class DIContainer {
   }
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
+    if (this.config.venue === "bulk") {
+      return this.resolveBulkAdapters();
+    }
+
     const { connections, mode } = this.config;
     const infoApi = new HyperliquidInfoApi(connections.hyperliquid.httpUrl);
 
@@ -156,10 +174,63 @@ export class DIContainer {
     };
   }
 
+  private resolveBulkAdapters(): ResolvedAdapters {
+    const config = this.config;
+    if (config.venue !== "bulk") {
+      throw new Error("Bulk adapters can only be resolved for Bulk config");
+    }
+
+    const { mode } = config;
+    const { bulk } = config.connections;
+    const client = new BulkClient({
+      httpUrl: bulk.httpUrl,
+      wsUrl: bulk.wsUrl,
+      privateKey: bulk.privateKey,
+    });
+    const accountId = client.accountId ?? client.accountPublicKey;
+
+    if (mode === "backtest") {
+      throw new Error("Bulk venue does not support backtest mode");
+    }
+
+    const feed = new BulkMarketFeed(client, {
+      market: bulk.market,
+      nlevels: bulk.nlevels,
+      accountId,
+    });
+
+    if (mode === "paper") {
+      return {
+        feed,
+        gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
+      };
+    }
+
+    if (!bulk.privateKey || !accountId) {
+      throw new Error("BULK_PRIVATE_KEY is required for live Bulk order placement");
+    }
+
+    return {
+      feed,
+      gateway: new BulkOrderGateway(client, {
+        market: bulk.market,
+        accountId,
+        maxLeverage: bulk.maxLeverage,
+        pollIntervalMs: 1000,
+      }),
+    };
+  }
+
   private requireSecretKey(secretKey: string | undefined): string {
     if (!secretKey) {
       throw new Error("HL_SECRET_KEY is required for live Hyperliquid order placement");
     }
     return secretKey;
+  }
+
+  private marketName(): string {
+    return this.config.venue === "bulk"
+      ? this.config.connections.bulk.market
+      : this.config.connections.hyperliquid.market;
   }
 }

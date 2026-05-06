@@ -8,6 +8,7 @@ import type {
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
+import { logger } from "../../utils/logger.ts";
 
 interface PaperOrderState extends PlacedOrder {
   openedAt: number;
@@ -31,6 +32,9 @@ export class PaperOrderGateway implements IOrderGateway {
 
   async place(order: OrderRequest): Promise<PlacedOrder> {
     const id = order.clientOrderId ?? randomUUID();
+    logger.info(
+      `paper_order_gateway.place_submitted market=${order.market} orderId=${id} side=${order.side} qty=${order.qty} price=${order.price ?? "market"} tif=${order.timeInForce} reduceOnly=${order.reduceOnly}`,
+    );
     const placed: PaperOrderState = {
       id,
       request: order,
@@ -44,11 +48,13 @@ export class PaperOrderGateway implements IOrderGateway {
         await this.fillOrder(placed, snapshot);
       } else {
         placed.status = "cancelled";
+        logger.info(`paper_order_gateway.ioc_cancelled market=${order.market} orderId=${id}`);
       }
       return placed;
     }
 
     this.openOrders.set(id, placed);
+    logger.debug(`paper_order_gateway.order_opened market=${order.market} orderId=${id}`);
     if (this.latestSnapshot !== null) {
       this.evaluateSnapshot(this.latestSnapshot);
     }
@@ -57,10 +63,12 @@ export class PaperOrderGateway implements IOrderGateway {
 
   async cancel(id: string): Promise<void> {
     this.openOrders.delete(id);
+    logger.info(`paper_order_gateway.cancel_submitted orderId=${id}`);
   }
 
   async cancelAll(): Promise<void> {
     this.openOrders.clear();
+    logger.info("paper_order_gateway.cancel_all_submitted");
   }
 
   subscribeFills(listener: FillListener): () => void {
@@ -72,12 +80,16 @@ export class PaperOrderGateway implements IOrderGateway {
 
   dispose(): void {
     this.unsubscribe();
+    logger.info("paper_order_gateway.disposed");
   }
 
   private evaluateSnapshot(snapshot: MarketSnapshot): void {
     for (const order of this.openOrders.values()) {
       const shouldFill = this.shouldFill(order.request, snapshot);
       if (shouldFill) {
+        logger.debug(
+          `paper_order_gateway.order_touched market=${order.request.market} orderId=${order.id} markPrice=${snapshot.markPrice}`,
+        );
         void this.fillOrder(order, snapshot);
       }
     }
@@ -127,6 +139,9 @@ export class PaperOrderGateway implements IOrderGateway {
       markPrice5s: markout5s,
       markPrice30s: markout30s,
     };
+    logger.info(
+      `paper_order_gateway.fill_created market=${fill.market} orderId=${fill.id} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
+    );
     for (const listener of this.listeners) {
       await listener(fill);
     }

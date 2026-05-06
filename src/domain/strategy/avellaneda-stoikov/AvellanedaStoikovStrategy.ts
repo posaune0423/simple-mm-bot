@@ -17,7 +17,7 @@ export class AvellanedaStoikovStrategy implements IQuotingStrategy {
     const policy =
       context.marginRatio !== null && context.marginRatio < context.slideMarginThreshold
         ? "IOC"
-        : "ALO";
+        : context.defaultTimeInForce;
 
     return {
       bid: Math.max(0, reservationPrice - spread / 2),

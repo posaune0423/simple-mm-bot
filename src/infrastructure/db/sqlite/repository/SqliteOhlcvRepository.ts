@@ -1,4 +1,4 @@
-import { and, between, eq } from "drizzle-orm";
+import { and, between, eq, sql } from "drizzle-orm";
 
 import type { IOhlcvRepository, OhlcvRecord } from "../../../../domain/ports/IOhlcvRepository.ts";
 import { ohlcvTable } from "../schema.ts";
@@ -30,6 +30,18 @@ export class SqliteOhlcvRepository implements IOhlcvRepository {
     if (records.length === 0) {
       return;
     }
-    await this.db.insert(ohlcvTable).values(records).onConflictDoNothing();
+    await this.db
+      .insert(ohlcvTable)
+      .values(records)
+      .onConflictDoUpdate({
+        target: [ohlcvTable.market, ohlcvTable.timeframe, ohlcvTable.ts],
+        set: {
+          open: sql`excluded.open`,
+          high: sql`excluded.high`,
+          low: sql`excluded.low`,
+          close: sql`excluded.close`,
+          volume: sql`excluded.volume`,
+        },
+      });
   }
 }

@@ -1,40 +1,42 @@
 # simple-mm-bot
 
-> Hyperliquid-first market making bot built with Bun + TypeScript.
+> Bulk Trade-first market making bot built with Bun + TypeScript.
 >
-> This repository is for running the same quoting core in `live`, `paper`, and `backtest` modes, with Avellaneda-Stoikov pricing, SQLite/Postgres persistence, and a Clean Architecture layout that keeps venue logic contained in adapters.
+> This repository runs the same quoting core in `live`, `paper`, and `backtest` modes, with Avellaneda-Stoikov pricing, SQLite/Postgres persistence, and venue logic isolated in adapters.
 
 ## At a Glance
 
-| Area       | Current setup                                            |
-| ---------- | -------------------------------------------------------- |
-| Venue      | Hyperliquid                                              |
-| Modes      | `live`, `paper`, `backtest`                              |
-| Strategy   | Avellaneda-Stoikov                                       |
-| Runtime    | Bun + TypeScript                                         |
-| Storage    | SQLite by default, PostgreSQL via `DATABASE_URL`         |
-| Validation | `check`, unit/integration tests, public-data smoke tests |
+| Area       | Current setup                                                          |
+| ---------- | ---------------------------------------------------------------------- |
+| Main venue | Bulk Trade                                                             |
+| SDK        | `bulk-ts-sdk`, a local API wrapper maintained by this repository owner |
+| Modes      | Bulk: `live`, `paper`; Hyperliquid: temporary `backtest` path          |
+| Strategy   | Avellaneda-Stoikov                                                     |
+| Runtime    | Bun + TypeScript                                                       |
+| Storage    | SQLite by default, PostgreSQL via `DATABASE_URL`                       |
 
 ## What This Repo Does
 
-- Streams market data from Hyperliquid and computes two-sided quotes.
-- Runs the same bot flow in `live`, `paper`, and `backtest`.
+- Streams Bulk Trade market data and computes two-sided quotes.
+- Places live Bulk orders through `bulk-ts-sdk` when `BULK_PRIVATE_KEY` is set.
+- Runs the same bot flow in Bulk `paper` mode with simulated fills.
+- Keeps Hyperliquid only for the current historical backtest path until Bulk historical data is wired.
 - Persists fills, reports, and backtest OHLCV data through repository ports.
-- Keeps strategy logic, runtime orchestration, venue adapters, and DB code separated.
-- Includes smoke coverage for short public-data backtest and paper sessions.
 
 ## Current Scope
 
-This codebase is the implementation track for a market making bot platform, but the current runtime is intentionally narrower than the long-term product docs:
+Implemented now:
 
-- Implemented now: Hyperliquid venue path, paper mode, backtest mode, live-mode wiring, reporting, SQLite/Postgres switching, and automated test coverage.
-- Planned in steering docs: broader venue abstraction goals and future operational expansion.
+- Bulk Trade `paper` and `live` adapter wiring
+- `bulk-ts-sdk` integration for Bulk HTTP/WS/order/account APIs
+- Hyperliquid public-data backtest adapter
+- Reporting, SQLite/Postgres switching, and automated test coverage
 
-If you want the product/architecture intent first, start with:
+Not current scope:
 
-- `docs/PRD.md`
-- `docs/TECH.md`
-- `docs/STRUCTURE.md`
+- Bullet venue support
+- Bulk backtest/replay support
+- Multi-venue hedging or XEMM
 
 ## Quick Start
 
@@ -44,44 +46,40 @@ If you want the product/architecture intent first, start with:
 bun install
 ```
 
-### 2. Configure environment
-
-Use the committed example as the starting point:
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-For `paper` and `backtest`, the default public Hyperliquid endpoints are already configured.
+Bulk HTTP/WS URLs, market, and L2 depth live in committed YAML config. The only Bulk secret env var is:
 
-For `live`, set:
+- `BULK_PRIVATE_KEY`: required only for live Bulk order placement
 
-- `HL_SECRET_KEY`
-- optionally `HL_ACCOUNT_ADDRESS`
+### 3. Run
 
-### 3. Run the bot
+Bulk live mode:
 
-Paper mode:
+```bash
+bun run start
+```
+
+`bun run start` explicitly sets `MODE=live` and uses `config/config.bulk.yml`.
+Live mode sends real Bulk Trade orders and fails fast unless `BULK_PRIVATE_KEY` is set.
+
+Bulk paper mode, using the same Bulk market feed with simulated execution:
 
 ```bash
 bun run dev:paper
 ```
 
-Backtest mode:
+Temporary Hyperliquid backtest mode:
 
 ```bash
 bun run dev:backtest
 ```
 
-Live mode:
-
-```bash
-MODE=live bun run src/main.ts
-```
-
 ## Main Commands
-
-### Quality gates
 
 ```bash
 bun run lint
@@ -91,22 +89,13 @@ bun run test
 bun run test:e2e:paper
 ```
 
-### Autofix
+Strategy validation loop:
 
 ```bash
-bun run lint:fix
-bun run check:fix
+bun run loop:backtest-paper --backtest-config config/config.backtest.yml --paper-config config/config.paper.yml --from 2024-01-01 --to 2024-01-07
 ```
 
-### Strategy validation loop
-
-Runs a backtest followed by a short paper session and writes artifacts under `artifacts/strategy-runs/`:
-
-```bash
-bun run loop:backtest-paper --config config/config.paper.yml --from 2024-01-01 --to 2024-01-07
-```
-
-### Database tooling
+Database tooling:
 
 ```bash
 bun run db:generate
@@ -122,18 +111,22 @@ The main runtime stays thin:
 3. Start the bot loop
 4. Produce a final report
 
-The repository structure follows this split:
+Repository split:
 
 - `src/domain`: pricing, analytics, entities, ports, strategy
 - `src/application`: bot loop, use cases, dependency injection
-- `src/adapters`: Hyperliquid and paper/backtest adapters
+- `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
+- `src/adapters/hyperliquid`: temporary public-data backtest support
+- `src/adapters/paper`: paper execution and historical feed helpers
 - `src/infrastructure`: SQLite/Postgres repositories
-- `tests`: domain, application, infrastructure, and e2e smoke coverage
+- `tests`: domain, application, adapter, infrastructure, and e2e smoke coverage
 
 ## Configuration Notes
 
-- Default config path: `config/config.paper.yml`
-- Backtest preset: `config/config.backtest.yml`
+- Default config path: `config/config.bulk.yml`
+- Bulk paper preset: `config/config.paper.yml`
+- Bulk template: `config/config.example.yml`
+- Temporary backtest preset: `config/config.backtest.yml`
 - `MODE` can override the config file mode at runtime
 - `DATABASE_URL` switches storage to PostgreSQL
 - `DB_PATH` controls the local SQLite file path
@@ -143,15 +136,15 @@ The repository structure follows this split:
 The repository currently has:
 
 - unit tests for strategy, analytics, and quote engine behavior
-- application tests for bot orchestration and reporting flows
+- application tests for bot orchestration, reporting, and Bulk DI resolution
+- adapter tests for Bulk market snapshots, order mapping, rejection handling, and fill normalization
 - infrastructure tests for SQLite persistence
-- e2e smoke tests for short Hyperliquid public-data backtest and paper sessions
+- e2e smoke tests for the temporary Hyperliquid public-data backtest and Bulk paper sessions
 
 ## Why This Layout
 
-The point of this repo is not only to place quotes, but to keep the trading logic testable and replaceable:
-
 - strategy logic should not know about exchange SDK details
-- venue-specific behavior should stay in adapters
+- Bulk-specific behavior stays in `src/adapters/bulk`
+- `bulk-ts-sdk` is used because Bulk Trade does not currently provide an official TypeScript SDK
 - storage should be swappable without rewriting domain logic
 - paper/backtest should reuse as much runtime flow as possible

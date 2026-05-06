@@ -1,22 +1,102 @@
-type LogLevel = "info" | "warn" | "error";
+import { env } from "../env.ts";
 
-function write(level: LogLevel, message: string): void {
-  const line = `[${level}] ${message}`;
-  if (level === "error") {
-    console.error(line);
-    return;
+const LogLevel = {
+  ERROR: "ERROR",
+  WARN: "WARN",
+  INFO: "INFO",
+  DEBUG: "DEBUG",
+  LOG: "LOG",
+} as const;
+
+type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
+
+const LOG_LEVELS = [LogLevel.ERROR, LogLevel.WARN, LogLevel.LOG, LogLevel.INFO, LogLevel.DEBUG];
+
+// Define log level priority (lower number = higher priority)
+const LOG_LEVEL_PRIORITY = {
+  [LogLevel.ERROR]: 0,
+  [LogLevel.WARN]: 1,
+  [LogLevel.LOG]: 2,
+  [LogLevel.INFO]: 3,
+  [LogLevel.DEBUG]: 4,
+} as const;
+
+const getTimestamp = () => {
+  return new Date().toISOString();
+};
+
+const getCurrentLogLevel = (): LogLevel => {
+  const envLevel = env.LOG_LEVEL;
+  if (LOG_LEVELS.includes(envLevel)) {
+    return envLevel;
   }
-  console.log(line);
-}
+
+  return LogLevel.INFO;
+};
+
+// Check if a log at the specified level should be output
+const shouldLog = (level: LogLevel): boolean => {
+  const currentLevel = getCurrentLogLevel();
+  return LOG_LEVEL_PRIORITY[level] <= LOG_LEVEL_PRIORITY[currentLevel];
+};
+
+const colorize = (message: string, level: LogLevel): string => {
+  const colors = {
+    [LogLevel.ERROR]: "\x1B[31m", // Red
+    [LogLevel.WARN]: "\x1B[33m", // Yellow
+    [LogLevel.INFO]: "\x1B[36m", // Cyan
+    [LogLevel.DEBUG]: "\x1B[32m", // Green
+    [LogLevel.LOG]: null, // No color (standard)
+  };
+
+  const reset = "\x1B[0m";
+  const color = colors[level];
+
+  if (color === null) {
+    return message; // No color for LOG
+  }
+
+  return `${color}${message}${reset}`;
+};
+
+const formatHeader = (level: LogLevel): string => {
+  const timestamp = `[${getTimestamp()}]`;
+  const levelTag = `[${level}]`;
+  return colorize(`${timestamp} ${levelTag}`, level);
+};
 
 export const logger = {
-  info(message: string) {
-    write("info", message);
+  log: (...args: unknown[]): void => {
+    if (!shouldLog(LogLevel.LOG)) return;
+    const header = formatHeader(LogLevel.LOG);
+    console.log(header, ...args);
   },
-  warn(message: string) {
-    write("warn", message);
+  info: (...args: unknown[]): void => {
+    if (!shouldLog(LogLevel.INFO)) return;
+    const header = formatHeader(LogLevel.INFO);
+    console.info(header, ...args);
   },
-  error(message: string) {
-    write("error", message);
+  debug: (...args: unknown[]): void => {
+    if (!shouldLog(LogLevel.DEBUG)) return;
+    const header = formatHeader(LogLevel.DEBUG);
+    console.log(header, ...args);
   },
+  warn: (...args: unknown[]): void => {
+    if (!shouldLog(LogLevel.WARN)) return;
+    const header = formatHeader(LogLevel.WARN);
+    console.warn(header, ...args);
+  },
+  error: (...args: unknown[]): void => {
+    if (!shouldLog(LogLevel.ERROR)) return;
+    const header = formatHeader(LogLevel.ERROR);
+    console.error(header, ...args);
+  },
+  /**
+   * Get the currently set log level
+   */
+  getCurrentLevel: (): LogLevel => getCurrentLogLevel(),
+  /**
+   * Get list of available log levels
+   */
+  getLevels: (): readonly LogLevel[] => LOG_LEVELS,
 };

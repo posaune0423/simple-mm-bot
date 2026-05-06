@@ -2,6 +2,7 @@ import { DIContainer } from "./application/di.ts";
 import { ConfigLoader } from "./config.ts";
 import type { AppMode } from "./config.ts";
 import { env } from "./env.ts";
+import { registerShutdownHandlers } from "./application/shutdown.ts";
 import type { AppError } from "./utils/errors.ts";
 import { formatAppError } from "./utils/errors.ts";
 import { logger } from "./utils/logger.ts";
@@ -10,19 +11,24 @@ function isAppError(error: unknown): error is AppError {
   return typeof error === "object" && error !== null && "code" in error && "message" in error;
 }
 
+function marketName(config: Awaited<ReturnType<typeof ConfigLoader.load>>): string {
+  return config.venue === "bulk"
+    ? config.connections.bulk.market
+    : config.connections.hyperliquid.market;
+}
+
 try {
   // Startup stays intentionally thin: load config, build the bot, then run it.
   const config = await ConfigLoader.load();
-  const mode: AppMode = env.MODE ?? "live";
+  const mode: AppMode = env.MODE ?? config.mode;
   config.mode = mode;
+  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${marketName(config)}`);
 
   const bot = await new DIContainer(config).buildBot();
-
-  // SIGINT is treated as a graceful shutdown so open connections can unwind.
-  process.on("SIGINT", () => {
-    bot.stop();
-    process.exitCode = 0;
-  });
+  registerShutdownHandlers(
+    bot,
+    process as unknown as Parameters<typeof registerShutdownHandlers>[1],
+  );
 
   // Bot.start() owns the runtime loop and returns the final session report.
   const report = await bot.start();

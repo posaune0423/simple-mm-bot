@@ -18,6 +18,7 @@ describe("AvellanedaStoikovStrategy", () => {
       inventoryScale: 0.05,
       timeHorizonSec: 30,
       slideMarginThreshold: 0.12,
+      defaultTimeInForce: "ALO",
       marginRatio: 0.2,
     });
 
@@ -39,6 +40,7 @@ describe("AvellanedaStoikovStrategy", () => {
       inventoryScale: 0.05,
       timeHorizonSec: 30,
       slideMarginThreshold: 0.12,
+      defaultTimeInForce: "ALO",
       marginRatio: 0.2,
     });
 

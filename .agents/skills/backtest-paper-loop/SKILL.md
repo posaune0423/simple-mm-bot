@@ -1,32 +1,40 @@
 ---
 name: backtest-paper-loop
-description: Run Hyperliquid backtest and paper validation loops for this repository, write artifacts, and summarize verdicts. Use when the user asks to run backtests, paper tests, strategy loops, or autonomous validation for this market making bot.
+description: バックテストとペーパートレードを実行し、戦略の妥当性を検証する。Run Hyperliquid backtest and paper validation loops, write artifacts, and summarize verdicts.
 ---
 
-# Backtest Paper Loop
+# バックテスト・ペーパーループ / Backtest Paper Loop
 
-## Primary command
+## 主要コマンド / Primary command
 
 ```bash
 bun run loop:backtest-paper --config <config-path> --from <yyyy-mm-dd> --to <yyyy-mm-dd> --paper-duration-min <minutes> --output-dir <dir>
 ```
 
-## Workflow
+## ワークフロー / Workflow
 
-1. Prefer backtest-first validation.
-2. If backtest fails structurally, stop before paper unless the user asks otherwise.
-3. Write outputs under `artifacts/strategy-runs/<timestamp>/`.
-4. Summarize the verdict from `summary.json` and `report.json`.
+1. **バックテスト優先 / Prefer backtest-first**
+   - まずバックテストで検証を行います。構造的な失敗がある場合はペーパーに進む前に停止します。
+   - Validate with backtest first. Stop before paper if backtest fails structurally.
 
-## Required outputs
+2. **成果物の記録 / Write artifacts**
+   - `artifacts/strategy-runs/<timestamp>/` に出力を保存します。
+   - Save outputs under `artifacts/strategy-runs/<timestamp>/`.
+
+3. **判定の要約 / Summarize verdict**
+   - `summary.json` と `report.json` から結果を要約します。
+   - Summarize the verdict from `summary.json` and `report.json`.
+
+## 必須出力 / Required outputs
 
 - `summary.json`
 - `report.json`
 - `run.md`
 
-## Close-out
+## 完了時処理 / Close-out
 
-- State the verdict
-- State whether backtest and paper both completed
-- Link the artifact directory
-- Name the next parameter or behavior to inspect
+- 最終判定（Verdict）の報告。
+- バックテストとペーパーの両方が完了したかの確認。
+- 成果物ディレクトリへのリンク。
+- 次に検証すべきパラメータや挙動の提案。
+- State verdict, completion status, link artifacts, and name next steps.
