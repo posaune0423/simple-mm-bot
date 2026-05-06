@@ -1,52 +1,75 @@
 ---
 name: live-optimization-loop
-description: ライブ環境での定量評価に基づき、botのパラメータ調整と実装改善を繰り返す。Run the trading bot in live mode, quantitatively evaluate metrics (markout, PnL), and iteratively optimize parameters/logic using scripts/liveOptimizationLoop.ts.
+description: ライブ環境での定量評価に基づき、botのパラメータ調整と実装改善を繰り返す。Bulk beta liveを主実験環境として、telemetry評価、最小YAML tuning、code/SDK/design issue化を行う。
 ---
 
 # ライブ最適化ループ / Live Optimization Loop
 
 ## 概要 / Objective
 
-Leaderboard上位へのランクアップと、月数万円（$200~$500）の安定収益を上げる「C級bot」への昇格を目標とします。
-短時間のLiveテストと、Markout（逆選択指標）などの定量データに基づくパラメータ調整を繰り返し、期待値を最大化します。
+現在のBulk betaは毎日mock資金が付与されるため、runtimeは`live`として扱い、telemetryでは`capitalMode: beta_mock`を明示します。
+telemetryはmode非依存で保存し、将来のBulk mainnet後に`paper`/`backtest`へ同じ評価指標を流用します。
 
-## 目標指標 (KPIs for C-Class Bot)
+## 目標指標 / KPIs (PnL-first)
 
-最適化の際、以下の数値を「合格ライン」として判断してください。
-
-- **Markout (5s)**: **> +0.5 bps** (正の値を維持。負の場合は「カモ」にされている)
-- **Net PnL**: 1日あたり **+ $10 以上** (月間 $300 達成の目安)
-- **Fill Rate**: **5% 〜 15%** (低すぎると機会損失、高すぎると逆選択の疑い)
-- **Adverse Selection Rate**: **< 30%** (不利な値動きでの約定割合)
+- **Net PnL**: 1日あたり **+ $10 以上**
+- **PnL per notional**: **> 0**。1ドル取引するたびに負ける状態ではvolumeを追わない。
+- **Markout (5s)**: **> +0.5 bps**
+- **Adverse Selection Rate**: **< 30%**
+- **Fill Rate**: Net PnLとPnL per notionalが正になるまでは診断指標。低fill rateだけではtuning目標にしない。
 
 ## 主要コマンド / Primary Commands
 
 ```bash
-# 指定した時間ライブ稼働してレポートを生成 (監視機能が内蔵されています)
-# Run live for specific minutes. Integrated monitor will log status every 10s.
-bun run loop:live --config config/config.bulk.yml --duration-min 10
+# Bulk beta liveを通常runtimeで起動し、通常shutdownで止める
+CONFIG_PATH=config/config.bulk.yml MODE=live bun run src/main.ts
+
+# 最新runを評価
+bun run telemetry:evaluate --db data/mmbot.db --output-dir artifacts/telemetry/latest
+
+# Markdown/JSON report生成
+bun run telemetry:report --evaluation artifacts/telemetry/latest/evaluation.json --output-dir artifacts/telemetry/latest
+
+# data healthが十分なときだけconfig/config.bulk.ymlを最小変更
+bun run telemetry:tune --evaluation artifacts/telemetry/latest/evaluation.json --config config/config.bulk.yml
+
+# code/SDK/design issue化。実作成前はdry-runする
+bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json --report artifacts/telemetry/latest/telemetry-report.md --dry-run=true
 ```
 
 ## ワークフロー / Workflow
 
-1. **初期設定 (必須: gamma > 0)**
-   - `config/config.bulk.yml` の `gamma`（在庫リスク回避）を必ず **0.1 以上** に設定します。
-   - `gamma: 0` はトレンド相場での逆選択リスクが非常に高いため、C級botとしては不適格です。
+1. **Start**
+   - `MODE=live`でBulk betaを動かす。
+   - telemetry runが`capitalMode: beta_mock`になっていることを確認する。
 
-2. **実行と監視 / Run and Monitor**
-   - `loop:live` コマンドを実行。
-   - 実行中、10秒おきに `[MONITOR]` ログが出力され、直近10分間の PnL や Markout (bps) を確認できます。
+2. **Telemetry確認**
+   - `telemetry:evaluate`を実行する。
+   - markout coverageやdata healthが不足している場合はtuningしない。
 
-3. **停止と評価 / Stop and Evaluate**
-   - 指定時間後に自動停止し、全注文キャンセルとポジションクローズが行われます。
-   - 生成された `summary.json` や `run.md` の数値を目標指標と比較します。
+3. **Evaluate**
+   - `telemetry:report`でreportを生成する。
+   - data health、PnL、markout、order quality、inventory、runtime healthを見る。
 
-4. **調整と繰り返し / Tweak and Iterate**
-   - **Markout が負の場合**: 防御不足。`gamma` を上げるか、`baseSpread` を広げます。
-   - **約定が全くない場合**: `baseSpread` が広すぎます。少しずつ狭めます。
-   - 修正後、再度実行して指標を改善していきます。
+4. **Tuning or Issue**
+   - YMLで直す:
+     - Net PnLが負、またはPnL per notionalが非正: fill volumeを増やさず、markoutが負でなければ`kappa`を下げてflowを広げる。
+     - negative markout/adverse高: `gamma`を上げる。spread wideningが必要なら`kappa`を下げる。
+     - fill不足かつmarkout良好: Net PnLとPnL per notionalが正のときだけ`kappa`を上げる。
+     - inventory偏り: `kInv`を上げる。
+     - drawdown/close cost高: `positionSize`または`budgetUsd`を下げる。
+   - issue化する:
+     - SDK/APIから必要fieldが取れない。
+     - reject/cancel/close失敗がstrategy parameterで説明できない。
+     - stale feed、高latency、order lifecycle不整合。
+     - Bulk paper/backtest用の市場履歴・execution simulation不足。
+     - strategy式、fair price、volatility model自体の改善。
+
+5. **Next Run**
+   - 最小YAML変更、またはissue作成後に次のlive runを行う。
 
 ## 安全策 / Safety Guardrails
 
-- `duration-min` は最初は 5-10分 から開始し、安定を確認してから伸ばす。
-- `budgetUsd` を増やす前に、必ず Markout が正であることを確認する。
+- 最初は短いlive windowで試す。
+- `config/config.bulk.yml`の変更は最小にし、次run前にdiffを見る。
+- Net PnL、PnL per notional、Markout、runtime healthが良い状態になるまで`budgetUsd`を増やさない。

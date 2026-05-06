@@ -21,7 +21,7 @@
 - Places live Bulk orders through `bulk-ts-sdk` when `BULK_PRIVATE_KEY` is set.
 - Runs the same bot flow in Bulk `paper` mode with simulated fills.
 - Keeps Hyperliquid only for the current historical backtest path until Bulk historical data is wired.
-- Persists fills, reports, and backtest OHLCV data through repository ports.
+- Persists fills, reports, and Bulk live / paper OHLCV candles through repository ports.
 
 ## Current Scope
 
@@ -118,8 +118,10 @@ Repository split:
 - `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
 - `src/adapters/hyperliquid`: temporary public-data backtest support
 - `src/adapters/paper`: paper execution and historical feed helpers
+- `src/telemetry`: mode-independent telemetry contracts and repository port
+- `src/ops`: external evaluation, Bulk YAML tuning, and issue planning helpers
 - `src/infrastructure`: SQLite/Postgres repositories
-- `tests`: domain, application, adapter, infrastructure, and e2e smoke coverage
+- `tests`: domain, ops, application, adapter, infrastructure, and e2e smoke coverage
 
 ## Configuration Notes
 

@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { Bot } from "../../src/application/Bot.ts";
-import type { MarketSnapshot } from "../../src/domain/ports/IMarketFeed.ts";
+import type { MarketSnapshot, SnapshotListener } from "../../src/domain/ports/IMarketFeed.ts";
+import type { FillListener, OrderEventListener } from "../../src/domain/ports/IOrderGateway.ts";
 import { logger } from "../../src/utils/logger.ts";
 
 function captureLogs() {
@@ -112,7 +113,7 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["cancelAll", "cancelAll", "closePosition"]);
+    expect(calls).toEqual(["cancelAll", "closePosition"]);
   });
 
   test("cleans up subscriptions and order gateway lifecycle after stopping", async () => {
@@ -206,6 +207,83 @@ describe("Bot", () => {
       "unsubscribe",
       "dispose",
     ]);
+  });
+
+  test("does not sleep after stop is requested during a tick", async () => {
+    const sleep = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    let stopBot = () => {};
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            stopBot();
+          },
+        },
+        recordFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+        buildReport: {
+          execute: async () => ({
+            id: "r1",
+            mode: "paper" as const,
+            venue: "bulk",
+            periodStart: 0,
+            periodEnd: 1,
+            metrics: {
+              netPnl: 0,
+              tradePnl: 0,
+              markout5s: 0,
+              markout30s: 0,
+              maxDrawdown: 0,
+              sharpe: 0,
+              fillRate: 0,
+            },
+            equityCurve: [],
+            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
+          }),
+        },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      60_000,
+    );
+    stopBot = () => bot.stop();
+
+    try {
+      await bot.start();
+    } finally {
+      sleep.mockRestore();
+    }
+
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   test("propagates close-position cleanup failures after disconnecting and disposing", async () => {
@@ -477,6 +555,137 @@ describe("Bot", () => {
     await bot.start(1);
 
     expect(recorded).toEqual([100, 101]);
+  });
+
+  test("serializes subscribed snapshot and fill handlers before continuing the tick", async () => {
+    const calls: string[] = [];
+    let marketListener: SnapshotListener | undefined;
+    let fillListener: FillListener | undefined;
+    let orderListener: OrderEventListener | undefined;
+
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            void marketListener?.({
+              market: "BTC-USD",
+              bestBid: 100,
+              bestAsk: 102,
+              microPrice: 101,
+              markPrice: 101,
+              timestamp: 2,
+              volume: 1,
+              marginRatio: null,
+            });
+            void fillListener?.({
+              id: "fill-1",
+              venue: "bulk",
+              market: "BTC-USD",
+              side: "buy",
+              price: 100,
+              qty: 1,
+              fee: 0,
+              tradePnl: 0,
+              filledAt: 2,
+            });
+            void orderListener?.({
+              action: "submit",
+              orderId: "order-1",
+              side: "buy",
+              price: 100,
+              qty: 1,
+              status: "placed",
+              latencyMs: 1,
+            });
+          },
+        },
+        recordFill: {
+          execute: async () => {
+            calls.push("fill");
+          },
+        },
+        recordOhlcv: {
+          execute: async (snapshot) => {
+            if (snapshot.timestamp === 2) {
+              calls.push("ohlcv:2:start");
+              await Promise.resolve();
+              calls.push("ohlcv:2:end");
+              return;
+            }
+            calls.push(`ohlcv:${snapshot.timestamp}`);
+          },
+        },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            calls.push("reduce");
+            return false;
+          },
+        },
+        closePosition: { execute: async () => {} },
+        buildReport: {
+          execute: async () => ({
+            id: "r1",
+            mode: "paper" as const,
+            venue: "bulk",
+            periodStart: 0,
+            periodEnd: 1,
+            metrics: {
+              netPnl: 0,
+              tradePnl: 0,
+              markout5s: 0,
+              markout30s: 0,
+              maxDrawdown: 0,
+              sharpe: 0,
+              fillRate: 0,
+            },
+            equityCurve: [],
+            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
+          }),
+        },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            volume: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe(listener) {
+          marketListener = listener;
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills(listener) {
+          fillListener = listener;
+          return () => {};
+        },
+        subscribeOrderEvents(listener) {
+          orderListener = listener;
+          return () => {};
+        },
+        dispose() {},
+      },
+      1,
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["ohlcv:1", "ohlcv:2:start", "ohlcv:2:end", "fill", "reduce"]);
   });
 
   test("logs lifecycle, tick state, and cleanup", async () => {

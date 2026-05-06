@@ -5,6 +5,7 @@ import type { Position } from "../../domain/entities/Position.ts";
 import type {
   FillListener,
   IOrderGateway,
+  OrderEventListener,
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
@@ -138,6 +139,7 @@ function isCrossPosition(entry: BulkPositionEntry, market: string): boolean {
 
 export class BulkOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
+  private readonly orderListeners = new Set<OrderEventListener>();
   private readonly seenFillIds = new Set<string>();
   private leverageChecked = false;
   private fillTimer: Timer | null = null;
@@ -158,9 +160,18 @@ export class BulkOrderGateway implements IOrderGateway {
   async place(order: OrderRequest): Promise<PlacedOrder> {
     await this.ensureMaxLeverage(order);
     const type = order.price === undefined ? "market" : "limit";
+    const submittedAt = Date.now();
     logger.info(
       `bulk_order_gateway.place_submitted market=${order.market} type=${type} side=${order.side} qty=${order.qty} price=${order.price ?? "market"} tif=${order.timeInForce} reduceOnly=${order.reduceOnly}`,
     );
+    await this.publishOrderEvent({
+      action: "submit",
+      side: order.side,
+      price: order.price,
+      qty: order.qty,
+      reduceOnly: order.reduceOnly,
+      timeInForce: order.timeInForce,
+    });
     const response =
       order.price === undefined
         ? await this.client.trade.placeMarketOrder?.({
@@ -189,6 +200,20 @@ export class BulkOrderGateway implements IOrderGateway {
     } else {
       logger.info(resultMessage);
     }
+    await this.publishOrderEvent({
+      action: status === "rejected" ? "reject" : "ack",
+      orderId,
+      side: order.side,
+      price: order.price,
+      qty: order.qty,
+      reduceOnly: order.reduceOnly,
+      timeInForce: order.timeInForce,
+      latencyMs: Date.now() - submittedAt,
+      status,
+      statusKey: key,
+      reason,
+      rawSummary: summarizeResponse(response),
+    });
     return {
       id: orderId,
       request: order,
@@ -229,18 +254,38 @@ export class BulkOrderGateway implements IOrderGateway {
 
   async cancel(id: string): Promise<void> {
     logger.info(`bulk_order_gateway.cancel_submitted market=${this.params.market} orderId=${id}`);
+    const submittedAt = Date.now();
     await this.client.trade.cancelOrder?.({ symbol: this.params.market, orderId: id });
+    await this.publishOrderEvent({
+      action: "cancel",
+      orderId: id,
+      latencyMs: Date.now() - submittedAt,
+      rawSummary: { request: "cancelOrder" },
+    });
   }
 
   async cancelAll(): Promise<void> {
     logger.info(`bulk_order_gateway.cancel_all_submitted market=${this.params.market}`);
+    const submittedAt = Date.now();
     await this.client.trade.cancelAll?.({ symbols: [this.params.market] });
+    await this.publishOrderEvent({
+      action: "cancel",
+      latencyMs: Date.now() - submittedAt,
+      rawSummary: { request: "cancelAll", symbols: [this.params.market] },
+    });
   }
 
   subscribeFills(listener: FillListener): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  subscribeOrderEvents(listener: OrderEventListener): () => void {
+    this.orderListeners.add(listener);
+    return () => {
+      this.orderListeners.delete(listener);
     };
   }
 
@@ -283,6 +328,15 @@ export class BulkOrderGateway implements IOrderGateway {
       logger.info(
         `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
       );
+      await this.publishOrderEvent({
+        action: "fill",
+        orderId: normalized.quoteId,
+        side: normalized.side,
+        price: normalized.price,
+        qty: normalized.qty,
+        status: "filled",
+        rawSummary: summarizeFill(fill),
+      });
       for (const listener of this.listeners) {
         await listener(normalized);
       }
@@ -329,4 +383,32 @@ export class BulkOrderGateway implements IOrderGateway {
     }
     return null;
   }
+
+  private async publishOrderEvent(event: Parameters<OrderEventListener>[0]): Promise<void> {
+    for (const listener of this.orderListeners) {
+      await listener(event);
+    }
+  }
+}
+
+function summarizeResponse(response: BulkOrderResponse | undefined): unknown {
+  return {
+    status: response?.status,
+    statuses: statusEntries(response ?? {}).map((status) => ({
+      key: statusKey(status) ?? "missing",
+      oid: orderIdFrom(status),
+      reason: rejectReasonFrom(status),
+    })),
+  };
+}
+
+function summarizeFill(fill: BulkFill): unknown {
+  return {
+    makerPresent: fill.maker !== undefined,
+    takerPresent: fill.taker !== undefined,
+    orderIdMakerPresent: fill.orderIdMaker !== undefined,
+    orderIdTakerPresent: fill.orderIdTaker !== undefined,
+    isBuyPresent: fill.isBuy !== undefined,
+    timestampPresent: fill.timestamp !== undefined,
+  };
 }

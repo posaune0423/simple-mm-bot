@@ -21,14 +21,17 @@ bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と 
 
 ## アーキテクチャ方針
 
-Clean Architecture を採用し、依存方向は常に内側の domain に向かう。
+Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
+telemetry contract と ops logic は core market making domain から分離する。
 
-| 層             | 責務                                           | 依存可能先                     |
-| -------------- | ---------------------------------------------- | ------------------------------ |
-| Domain         | 純粋なビジネスロジック、entity、port、strategy | 外部依存なし                   |
-| Application    | use case の実行順序、bot ループ、DI 構成       | domain                         |
-| Adapters       | venue / mode ごとの port 実装                  | domain ports + venue SDK       |
-| Infrastructure | DB client、schema、repository 実装             | domain ports + storage library |
+| 層             | 責務                                                   | 依存可能先                               |
+| -------------- | ------------------------------------------------------ | ---------------------------------------- |
+| Domain         | 純粋なビジネスロジック、entity、port、strategy         | 外部依存なし                             |
+| Application    | use case の実行順序、bot ループ、DI 構成               | domain                                   |
+| Adapters       | venue / mode ごとの port 実装                          | domain ports + venue SDK                 |
+| Telemetry      | run/event contract、telemetry repository port          | domain entity type                       |
+| Ops            | 保存済み telemetry の評価、YAML tuning、issue planning | domain entities + telemetry              |
+| Infrastructure | DB client、schema、repository 実装                     | domain/telemetry ports + storage library |
 
 ## ランタイム全体像
 
@@ -125,6 +128,8 @@ Bullet の DI path は持たない。
 - `BulkMarketFeed`
   - HTTP ticker / L2 book で初期 snapshot を作る
   - WS ticker / L2 snapshot で snapshot を更新する
+  - WS candle から実 OHLCV を取り込み、top-of-book snapshot から volume=0 candle を作らない
+  - 購読直後の historical candle batch は最新分だけ処理し、起動時の DB 書き込み量を bounded に保つ
   - Bulk timestamp は ns から ms に正規化する
   - best bid/ask と size から microprice を計算する
   - account id がある場合のみ margin を取得する
@@ -147,8 +152,9 @@ Bullet の DI path は持たない。
   - 不足分を fetcher から取得する
   - 時系列順に replay する
 - `RecordOhlcvUseCase`
-  - live / paper の market snapshot を 1m OHLCV に集約して保存する
-  - bot 起動直後の snapshot と subscription update の両方を記録する
+  - live / paper の venue OHLCV candle を 1m OHLCV として保存する
+  - Bulk では WS candle 由来の open / high / low / close / volume がある snapshot だけを保存する
+  - top-of-book / ticker だけの snapshot は OHLCV として保存しない
   - 同一 candle は repository の upsert で更新する
 
 ## Bulk 固有の技術判断
@@ -232,6 +238,7 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 | Domain unit                | strategy、quote engine、analytics | 外部依存なし              |
 | Application unit           | use case、DI                      | ports を mock             |
 | Adapter unit               | Bulk feed/order mapping           | SDK shape を test double  |
+| Ops unit                   | telemetry evaluation / tuning     | 保存済み入力を fixture 化 |
 | Infrastructure integration | repository                        | 実 SQLite を使用          |
 | Paper E2E                  | bot 全体                          | live feed + sim execution |
 

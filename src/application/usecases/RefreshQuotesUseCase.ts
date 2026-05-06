@@ -2,6 +2,7 @@ import type { QuoteEngine } from "../../domain/QuoteEngine.ts";
 import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
+import type { TelemetryRecorder } from "../TelemetryRecorder.ts";
 import { logger } from "../../utils/logger.ts";
 
 export class RefreshQuotesUseCase {
@@ -10,6 +11,7 @@ export class RefreshQuotesUseCase {
     private readonly orderGateway: IOrderGateway,
     private readonly positionRepository: IPositionRepository,
     private readonly quoteEngine: QuoteEngine,
+    private readonly telemetry?: TelemetryRecorder,
   ) {}
 
   async execute(): Promise<void> {
@@ -22,6 +24,7 @@ export class RefreshQuotesUseCase {
     logger.info(
       `refresh_quotes.quote_created market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} policy=${quote.policy} positionQty=${position.qty}`,
     );
+    await this.telemetry?.recordQuote(snapshot, position.qty, quote);
     await this.orderGateway.cancelAll();
     const bidOrder = await this.orderGateway.place({
       market: snapshot.market,

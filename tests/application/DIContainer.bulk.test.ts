@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import { BulkMarketFeed } from "../../src/adapters/bulk/BulkMarketFeed.ts";
 import { BulkOrderGateway } from "../../src/adapters/bulk/BulkOrderGateway.ts";
@@ -50,6 +53,34 @@ function configWithoutBulkPrivateKey(): AppConfig {
 }
 
 describe("DIContainer Bulk venue", () => {
+  let previousDbPath: string | undefined;
+  let previousDatabaseUrl: string | undefined;
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    previousDbPath = Bun.env.DB_PATH;
+    previousDatabaseUrl = Bun.env.DATABASE_URL;
+    tempDir = join(process.cwd(), "tmp-tests-di", randomUUID());
+    dbPath = join(tempDir, "di.db");
+    Bun.env.DB_PATH = dbPath;
+    delete Bun.env.DATABASE_URL;
+  });
+
+  afterEach(async () => {
+    if (previousDbPath === undefined) {
+      delete Bun.env.DB_PATH;
+    } else {
+      Bun.env.DB_PATH = previousDbPath;
+    }
+    if (previousDatabaseUrl === undefined) {
+      delete Bun.env.DATABASE_URL;
+    } else {
+      Bun.env.DATABASE_URL = previousDatabaseUrl;
+    }
+    await rm(tempDir, { force: true, recursive: true });
+  });
+
   test("resolves bulk paper to BulkMarketFeed and PaperOrderGateway", async () => {
     const bot = await new DIContainer(config("paper")).buildBot();
     const internals = bot as unknown as { marketFeed: unknown; orderGateway: unknown };

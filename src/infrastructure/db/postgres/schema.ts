@@ -1,4 +1,4 @@
-import { bigint, doublePrecision, pgTable, text } from "drizzle-orm/pg-core";
+import { bigint, boolean, doublePrecision, pgTable, text } from "drizzle-orm/pg-core";
 
 export const fillsTable = pgTable("fills", {
   id: text("id").primaryKey(),
@@ -36,4 +36,29 @@ export const ohlcvTable = pgTable("ohlcv", {
   low: doublePrecision("low").notNull(),
   close: doublePrecision("close").notNull(),
   volume: doublePrecision("volume").notNull(),
+});
+
+export const telemetryRunsTable = pgTable("telemetry_runs", {
+  id: text("id").primaryKey(),
+  mode: text("mode").notNull(),
+  venue: text("venue").notNull(),
+  capitalMode: text("capital_mode").notNull(),
+  market: text("market").notNull(),
+  configJson: text("config_json").notNull(),
+  gitSha: text("git_sha"),
+  gitDirty: boolean("git_dirty").notNull(),
+  startedAt: bigint("started_at", { mode: "number" }).notNull(),
+  endedAt: bigint("ended_at", { mode: "number" }),
+  status: text("status").notNull(),
+});
+
+export const telemetryEventsTable = pgTable("telemetry_events", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  mode: text("mode").notNull(),
+  venue: text("venue").notNull(),
+  type: text("type").notNull(),
+  ts: bigint("ts", { mode: "number" }).notNull(),
+  market: text("market"),
+  payloadJson: text("payload_json").notNull(),
 });

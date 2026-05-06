@@ -15,6 +15,7 @@ import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IReportRepository } from "../domain/ports/IReportRepository.ts";
+import type { ITelemetryRepository } from "../telemetry/ITelemetryRepository.ts";
 import type { ITradeRepository } from "../domain/ports/ITradeRepository.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
 import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
@@ -22,15 +23,18 @@ import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRe
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
 import { PostgresReportRepository } from "../infrastructure/db/postgres/repository/PostgresReportRepository.ts";
+import { PostgresTelemetryRepository } from "../infrastructure/db/postgres/repository/PostgresTelemetryRepository.ts";
 import { PostgresTradeRepository } from "../infrastructure/db/postgres/repository/PostgresTradeRepository.ts";
 import { createSqliteClient } from "../infrastructure/db/sqlite/client.ts";
 import { SqliteOhlcvRepository } from "../infrastructure/db/sqlite/repository/SqliteOhlcvRepository.ts";
 import { SqliteReportRepository } from "../infrastructure/db/sqlite/repository/SqliteReportRepository.ts";
+import { SqliteTelemetryRepository } from "../infrastructure/db/sqlite/repository/SqliteTelemetryRepository.ts";
 import { SqliteTradeRepository } from "../infrastructure/db/sqlite/repository/SqliteTradeRepository.ts";
 import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeApi.ts";
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
+import { TelemetryRecorder } from "./TelemetryRecorder.ts";
 import { BuildReportUseCase } from "./usecases/BuildReportUseCase.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
@@ -43,6 +47,7 @@ interface Repositories {
   tradeRepository: ITradeRepository;
   reportRepository: IReportRepository;
   ohlcvRepository: IOhlcvRepository;
+  telemetryRepository: ITelemetryRepository;
 }
 
 interface ResolvedAdapters {
@@ -59,10 +64,17 @@ export class DIContainer {
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
     const analytics = new Analytics();
+    const telemetry = this.buildTelemetryRecorder(repositories.telemetryRepository);
 
     return new Bot(
       {
-        refreshQuotes: new RefreshQuotesUseCase(feed, gateway, positionRepository, quoteEngine),
+        refreshQuotes: new RefreshQuotesUseCase(
+          feed,
+          gateway,
+          positionRepository,
+          quoteEngine,
+          telemetry,
+        ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         recordFill: new RecordFillUseCase(repositories.tradeRepository, positionRepository),
         recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
@@ -90,6 +102,7 @@ export class DIContainer {
       feed,
       gateway,
       this.config.bot.intervalMs,
+      telemetry,
     );
   }
 
@@ -117,6 +130,7 @@ export class DIContainer {
         tradeRepository: new PostgresTradeRepository(client.db),
         reportRepository: new PostgresReportRepository(client.db),
         ohlcvRepository: new PostgresOhlcvRepository(client.db),
+        telemetryRepository: new PostgresTelemetryRepository(client.db),
       };
     }
 
@@ -125,7 +139,19 @@ export class DIContainer {
       tradeRepository: new SqliteTradeRepository(client.db),
       reportRepository: new SqliteReportRepository(client.db),
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
+      telemetryRepository: new SqliteTelemetryRepository(client.db),
     };
+  }
+
+  private buildTelemetryRecorder(repository: ITelemetryRepository): TelemetryRecorder {
+    return new TelemetryRecorder(repository, {
+      mode: this.config.mode,
+      venue: this.config.venue,
+      capitalMode: this.capitalMode(),
+      market: this.marketName(),
+      configJson: redactConfig(this.config),
+      ...gitMetadata(),
+    });
   }
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
@@ -187,7 +213,7 @@ export class DIContainer {
       wsUrl: bulk.wsUrl,
       privateKey: bulk.privateKey,
     });
-    const accountId = client.accountId ?? client.accountPublicKey;
+    const accountId = client.accountPublicKey;
 
     if (mode === "backtest") {
       throw new Error("Bulk venue does not support backtest mode");
@@ -233,4 +259,58 @@ export class DIContainer {
       ? this.config.connections.bulk.market
       : this.config.connections.hyperliquid.market;
   }
+
+  private capitalMode(): "beta_mock" | "paper" | "backtest" | "real" {
+    if (this.config.mode === "paper") {
+      return "paper";
+    }
+    if (this.config.mode === "backtest") {
+      return "backtest";
+    }
+    if (this.config.venue === "bulk") {
+      return "beta_mock";
+    }
+    return "real";
+  }
+}
+
+function redactConfig(config: AppConfig): unknown {
+  if (config.venue === "bulk") {
+    return {
+      ...config,
+      connections: {
+        bulk: {
+          ...config.connections.bulk,
+          privateKey: config.connections.bulk.privateKey === undefined ? undefined : "[redacted]",
+        },
+      },
+    };
+  }
+  return {
+    ...config,
+    connections: {
+      hyperliquid: {
+        ...config.connections.hyperliquid,
+        secretKey:
+          config.connections.hyperliquid.secretKey === undefined ? undefined : "[redacted]",
+      },
+    },
+  };
+}
+
+function gitMetadata(): { gitSha?: string; gitDirty: boolean } {
+  const sha = runGit(["rev-parse", "--short", "HEAD"]);
+  const status = runGit(["status", "--porcelain"]);
+  return {
+    gitSha: sha === "" ? undefined : sha,
+    gitDirty: status !== "",
+  };
+}
+
+function runGit(args: string[]): string {
+  const result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "ignore" });
+  if (!result.success) {
+    return "";
+  }
+  return new TextDecoder().decode(result.stdout).trim();
 }

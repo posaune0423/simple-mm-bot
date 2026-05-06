@@ -4,6 +4,68 @@ import { RecordOhlcvUseCase } from "../../src/application/usecases/RecordOhlcvUs
 import type { OhlcvRecord } from "../../src/domain/ports/IOhlcvRepository.ts";
 
 describe("RecordOhlcvUseCase", () => {
+  test("skips top-of-book snapshots that do not contain OHLCV data", async () => {
+    const saved: OhlcvRecord[][] = [];
+    const useCase = new RecordOhlcvUseCase({
+      async findByRange() {
+        return [];
+      },
+      async saveMany(records) {
+        saved.push(records);
+      },
+    });
+
+    await useCase.execute({
+      market: "BTC-USD",
+      bestBid: 99,
+      bestAsk: 101,
+      microPrice: 100,
+      markPrice: 100,
+      timestamp: 1_700_000_020_000,
+      marginRatio: null,
+    });
+
+    expect(saved).toEqual([]);
+  });
+
+  test("saves venue OHLCV candles directly", async () => {
+    const saved: OhlcvRecord[][] = [];
+    const useCase = new RecordOhlcvUseCase({
+      async findByRange() {
+        return [];
+      },
+      async saveMany(records) {
+        saved.push(records);
+      },
+    });
+
+    await useCase.execute({
+      market: "BTC-USD",
+      bestBid: 99,
+      bestAsk: 101,
+      microPrice: 100,
+      markPrice: 105,
+      timestamp: 1_700_000_000_000,
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      volume: 12.5,
+      marginRatio: null,
+    });
+
+    expect(saved.at(-1)?.[0]).toEqual({
+      market: "BTC-USD",
+      timeframe: "1m",
+      ts: 1_700_000_000_000,
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      volume: 12.5,
+    });
+  });
+
   test("aggregates market snapshots into one minute candles", async () => {
     const saved: OhlcvRecord[][] = [];
     const useCase = new RecordOhlcvUseCase({

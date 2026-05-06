@@ -4,7 +4,18 @@
 
 `simple-mm-bot` is a Bun + TypeScript market-making bot. The primary venue is Bulk Trade, the core strategy is Avellaneda-Stoikov, and the same runtime supports `live`, `paper`, and temporary Hyperliquid `backtest` modes.
 
-Keep the architecture clean: domain logic stays pure, application code orchestrates use cases, adapters translate venue APIs, and infrastructure owns persistence.
+## Clean Architecture
+
+Implement and extend this codebase following **Clean Architecture** (Robert C. Martin). Obey the **dependency rule**: source dependencies point **inward**—inner circles must not import framework, I/O, or venue-specific code.
+
+| Concern              | In this repo                                                       | Depends on                                               |
+| -------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| Enterprise / domain  | `src/domain` (pure models, strategy math, **ports** as interfaces) | Nothing outside domain                                   |
+| Application          | `src/application` (use cases, orchestration, `Bot`, DI wiring)     | Domain only (via ports); no direct SDK or SQL            |
+| Interface adapters   | `src/adapters` (Bulk, paper, backtest bridges implementing ports)  | Domain + application contracts                           |
+| Frameworks & drivers | `src/infrastructure` (SQLite/Postgres, logging, config loaders)    | Outermost; implements repositories and technical details |
+
+New features should add or extend **use cases** in the application layer, keep **domain** free of venue and persistence details, and push HTTP/WebSocket/DB specifics into **adapters** and **infrastructure**. The **composition root** (e.g. application DI wiring) may construct and inject adapter and infrastructure implementations; individual use cases should still depend on **ports**, not concrete SDK or DB clients. See [docs/STRUCTURE.md](./docs/STRUCTURE.md) for the canonical folder map and [docs/TECH.md](./docs/TECH.md) for runtime and design policy.
 
 ## Project Rules
 
