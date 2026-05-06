@@ -25,5 +25,3 @@ export const theme = {
     padding: { top: 40, right: 16, bottom: 32, left: 56 },
   },
 } as const;
-
-export type Theme = typeof theme;

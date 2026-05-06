@@ -3,7 +3,7 @@ export interface Domain {
   readonly max: number;
 }
 
-export interface Range {
+interface Range {
   readonly start: number;
   readonly end: number;
 }

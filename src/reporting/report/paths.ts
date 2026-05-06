@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-export interface ReportPaths {
+interface ReportPaths {
   root: string;
   dateDir: string;
   chartsDir: string;

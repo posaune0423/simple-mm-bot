@@ -1,4 +1,4 @@
-export interface ReportMetrics {
+export interface PerformanceMetrics {
   netPnl: number;
   tradePnl: number;
   markout5s: number;
@@ -16,15 +16,4 @@ export interface EquityPoint {
 export interface FillAnalysis {
   adverseSelectionCount: number;
   fillCount: number;
-}
-
-export interface Report {
-  id: string;
-  mode: "live" | "paper" | "backtest";
-  venue: string;
-  periodStart: number;
-  periodEnd: number;
-  metrics: ReportMetrics;
-  equityCurve: EquityPoint[];
-  fillAnalysis: FillAnalysis;
 }

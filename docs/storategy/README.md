@@ -254,7 +254,7 @@ Risk thresholds:
 
 ```mermaid
 flowchart TD
-  Eval["Telemetry evaluation"] --> Pnl{"Net PnL > 0<br/>and PnL/notional > 0?"}
+  Eval["Metrics evaluation"] --> Pnl{"Net PnL > 0<br/>and PnL/notional > 0?"}
   Pnl -->|no| Defensive["Do not chase fills<br/>reduce kappa or create strategy issue"]
   Pnl -->|yes| Markout{"5s markout positive<br/>adverse < 30%?"}
   Markout -->|no| Wider["increase gamma / widen flow"]

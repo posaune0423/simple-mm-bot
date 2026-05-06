@@ -8,7 +8,7 @@ export function createAppError(code: string, message: string, cause?: unknown): 
   return { code, message, cause };
 }
 
-export function getErrorMessage(error: unknown): string {
+function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }

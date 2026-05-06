@@ -1,8 +1,8 @@
-import type { FillAnalysis, ReportMetrics } from "../../domain/entities/Report.ts";
+import type { FillAnalysis, PerformanceMetrics } from "../../domain/entities/PerformanceMetrics.ts";
 
 export interface PeriodKpis {
   label: string;
-  metrics: ReportMetrics;
+  metrics: PerformanceMetrics;
   fillAnalysis: FillAnalysis;
 }
 

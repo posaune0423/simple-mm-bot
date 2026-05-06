@@ -50,15 +50,17 @@ describe("ClosePositionUseCase", () => {
     ).execute();
 
     expect(placed).toEqual([
-      {
+      expect.objectContaining({
         market: "BTC-USD",
         side: "sell",
-        price: undefined,
         qty: 0.4,
         reduceOnly: true,
         timeInForce: "IOC",
-      },
+        intent: "close",
+      }),
     ]);
+    expect(placed[0]?.price).toBeUndefined();
+    expect(typeof placed[0]?.clientOrderId).toBe("string");
   });
 
   test("retries market close orders until one fills", async () => {

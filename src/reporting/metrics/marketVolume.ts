@@ -1,6 +1,6 @@
 import type { Fill } from "../../domain/entities/Fill.ts";
 
-export interface MarketVolume {
+interface MarketVolume {
   market: string;
   notional: number;
   fillCount: number;
@@ -21,7 +21,7 @@ export function computeMarketVolume(fills: ReadonlyArray<Fill>): MarketVolume[] 
   return Array.from(totals.values()).sort((a, b) => b.notional - a.notional);
 }
 
-export interface FeeVsPnlPoint {
+interface FeeVsPnlPoint {
   hour: number;
   fee: number;
   tradePnl: number;

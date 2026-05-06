@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
@@ -126,6 +128,8 @@ export class ClosePositionUseCase {
         qty,
         reduceOnly: true,
         timeInForce: "IOC",
+        clientOrderId: randomUUID(),
+        intent: "close",
       })
       .catch((err) => {
         const error = String(err);
@@ -168,6 +172,8 @@ export class ClosePositionUseCase {
         qty,
         reduceOnly: true,
         timeInForce: "IOC",
+        clientOrderId: randomUUID(),
+        intent: "close",
       })
       .catch((err) => {
         recordStatus(`error: ${String(err)}`);

@@ -33,7 +33,7 @@ export interface PeriodWindow {
   durationMs: number;
 }
 
-export interface GenerateReportInput {
+interface GenerateReportInput {
   fetchFills: (input: {
     venue?: string;
     periodStart: number;
@@ -47,7 +47,7 @@ export interface GenerateReportInput {
   notes?: ReadonlyArray<string>;
 }
 
-export interface GenerateReportOutput {
+interface GenerateReportOutput {
   latestMd: string;
   historyMd: string;
   chartFiles: string[];

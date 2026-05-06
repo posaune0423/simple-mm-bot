@@ -1,20 +1,20 @@
 import { ResultAsync } from "neverthrow";
 
 import { tuneBulkConfigDocument } from "./lib/BulkConfigTuning.ts";
-import type { TelemetryEvaluation } from "./lib/TelemetryEvaluation.ts";
+import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
 interface EvaluationArtifact {
-  evaluation: TelemetryEvaluation;
+  evaluation: MetricsEvaluation;
 }
 
 function tune(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
   const configPath = options.config ?? "config/config.bulk.yml";
-  const evaluationPath = options.evaluation ?? "artifacts/telemetry/latest/evaluation.json";
+  const evaluationPath = options.evaluation ?? "artifacts/metrics/latest/evaluation.json";
   const outputPath = options["output"] ?? configPath;
   const dryRun = options["dry-run"] === "true";
 
@@ -35,7 +35,7 @@ function tune(argv: string[]): ResultAsync<string, AppError> {
       });
       return outputPath;
     })(),
-    (error) => createAppError("telemetry.tune_failed", "Failed to tune Bulk config", error),
+    (error) => createAppError("metrics.tune_failed", "Failed to tune Bulk config", error),
   );
 }
 

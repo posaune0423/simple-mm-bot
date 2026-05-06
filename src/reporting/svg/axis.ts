@@ -2,7 +2,7 @@ import { g, line, text } from "./primitives.ts";
 import type { BandScale, LinearScale } from "./scale.ts";
 import { theme } from "./theme.ts";
 
-export interface XAxisOptions {
+interface XAxisOptions {
   scale: LinearScale;
   ticks: ReadonlyArray<number>;
   y: number;
@@ -11,7 +11,7 @@ export interface XAxisOptions {
   format?: (value: number) => string;
 }
 
-export interface YAxisOptions {
+interface YAxisOptions {
   scale: LinearScale;
   ticks: ReadonlyArray<number>;
   x: number;
@@ -22,7 +22,7 @@ export interface YAxisOptions {
   gridX1?: number;
 }
 
-export interface BandAxisOptions {
+interface BandAxisOptions {
   scale: BandScale;
   y: number;
   x0: number;

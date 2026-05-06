@@ -8,34 +8,29 @@ import { HyperliquidOhlcvFetcher } from "../adapters/hyperliquid/HyperliquidOhlc
 import { HyperliquidOrderGateway } from "../adapters/hyperliquid/HyperliquidOrderGateway.ts";
 import { HistoricalMarketFeed } from "../adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../adapters/paper/PaperOrderGateway.ts";
-import { Analytics } from "../domain/Analytics.ts";
 import { FairPriceCalculator } from "../domain/FairPriceCalculator.ts";
 import { QuoteEngine } from "../domain/QuoteEngine.ts";
 import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
-import type { IReportRepository } from "../domain/ports/IReportRepository.ts";
-import type { ITelemetryRepository } from "../infrastructure/TelemetryRepository.ts";
+import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
 import type { ITradeRepository } from "../domain/ports/ITradeRepository.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
 import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
-import { PostgresReportRepository } from "../infrastructure/db/postgres/repository/PostgresReportRepository.ts";
-import { PostgresTelemetryRepository } from "../infrastructure/db/postgres/repository/PostgresTelemetryRepository.ts";
+import { PostgresMetricsRepository } from "../infrastructure/db/postgres/repository/PostgresMetricsRepository.ts";
 import { PostgresTradeRepository } from "../infrastructure/db/postgres/repository/PostgresTradeRepository.ts";
 import { createSqliteClient } from "../infrastructure/db/sqlite/client.ts";
+import { SqliteMetricsRepository } from "../infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
 import { SqliteOhlcvRepository } from "../infrastructure/db/sqlite/repository/SqliteOhlcvRepository.ts";
-import { SqliteReportRepository } from "../infrastructure/db/sqlite/repository/SqliteReportRepository.ts";
-import { SqliteTelemetryRepository } from "../infrastructure/db/sqlite/repository/SqliteTelemetryRepository.ts";
 import { SqliteTradeRepository } from "../infrastructure/db/sqlite/repository/SqliteTradeRepository.ts";
 import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeApi.ts";
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
-import { TelemetryRecorder } from "./TelemetryRecorder.ts";
-import { BuildReportUseCase } from "./usecases/BuildReportUseCase.ts";
+import { MetricsRecorder } from "./MetricsRecorder.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { RecordFillUseCase } from "./usecases/RecordFillUseCase.ts";
@@ -45,9 +40,8 @@ import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
 
 interface Repositories {
   tradeRepository: ITradeRepository;
-  reportRepository: IReportRepository;
   ohlcvRepository: IOhlcvRepository;
-  telemetryRepository: ITelemetryRepository;
+  metricsRepository: IMetricsRepository;
 }
 
 interface ResolvedAdapters {
@@ -63,8 +57,7 @@ export class DIContainer {
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
-    const analytics = new Analytics();
-    const telemetry = this.buildTelemetryRecorder(repositories.telemetryRepository);
+    const metrics = this.buildMetricsRecorder(repositories.metricsRepository);
 
     return new Bot(
       {
@@ -73,7 +66,7 @@ export class DIContainer {
           gateway,
           positionRepository,
           quoteEngine,
-          telemetry,
+          metrics,
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         recordFill: new RecordFillUseCase(repositories.tradeRepository, positionRepository),
@@ -91,18 +84,11 @@ export class DIContainer {
           feed,
           this.marketName(),
         ),
-        buildReport: new BuildReportUseCase(
-          repositories.tradeRepository,
-          repositories.reportRepository,
-          analytics,
-          this.config.mode,
-          this.config.venue,
-        ),
       },
       feed,
       gateway,
       this.config.bot.intervalMs,
-      telemetry,
+      metrics,
     );
   }
 
@@ -128,27 +114,26 @@ export class DIContainer {
       const client = createPostgresClient(databaseUrl);
       return {
         tradeRepository: new PostgresTradeRepository(client.db),
-        reportRepository: new PostgresReportRepository(client.db),
         ohlcvRepository: new PostgresOhlcvRepository(client.db),
-        telemetryRepository: new PostgresTelemetryRepository(client.db),
+        metricsRepository: new PostgresMetricsRepository(client.db),
       };
     }
 
     const client = createSqliteClient(Bun.env.DB_PATH ?? env.DB_PATH);
     return {
       tradeRepository: new SqliteTradeRepository(client.db),
-      reportRepository: new SqliteReportRepository(client.db),
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
-      telemetryRepository: new SqliteTelemetryRepository(client.db),
+      metricsRepository: new SqliteMetricsRepository(client.db),
     };
   }
 
-  private buildTelemetryRecorder(repository: ITelemetryRepository): TelemetryRecorder {
-    return new TelemetryRecorder(repository, {
+  private buildMetricsRecorder(repository: IMetricsRepository): MetricsRecorder {
+    return new MetricsRecorder(repository, {
       mode: this.config.mode,
       venue: this.config.venue,
       capitalMode: this.capitalMode(),
       market: this.marketName(),
+      strategyName: "avellaneda-stoikov",
       configJson: redactConfig(this.config),
       ...gitMetadata(),
     });

@@ -23,14 +23,30 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.["dev:backtest"]).toBe(
       "CONFIG_PATH=config/config.backtest.yml MODE=backtest bun run src/main.ts",
     );
+    expect(packageJson.scripts?.["metrics:evaluate"]).toBe("bun run scripts/evaluateLiveRun.ts");
+    expect(packageJson.scripts?.["metrics:tune"]).toBe("bun run scripts/tuneBulkConfig.ts");
+    expect(packageJson.scripts?.["metrics:issues"]).toBe("bun run scripts/createDesignIssues.ts");
+    expect(packageJson.scripts?.["metrics:report"]).toBe(
+      "bun run scripts/generateMetricsReport.ts",
+    );
+    expect(packageJson.scripts?.["telemetry:evaluate"]).toBeUndefined();
+    expect(packageJson.scripts?.["telemetry:tune"]).toBeUndefined();
+    expect(packageJson.scripts?.["telemetry:issues"]).toBeUndefined();
+    expect(packageJson.scripts?.["telemetry:report"]).toBeUndefined();
   });
 
   test("keeps agent helper logic in scripts and persistence contracts in infrastructure", () => {
     expect(existsSync("src/ops")).toBe(false);
     expect(existsSync("src/telemetry")).toBe(false);
     expect(existsSync("tests/ops")).toBe(false);
-    expect(existsSync("scripts/lib/TelemetryEvaluation.ts")).toBe(true);
-    expect(existsSync("src/infrastructure/TelemetryRepository.ts")).toBe(true);
+    expect(existsSync("scripts/lib/MetricsEvaluation.ts")).toBe(true);
+    expect(existsSync("src/application/MetricsRecorder.ts")).toBe(true);
+    expect(existsSync("src/application/TelemetryRecorder.ts")).toBe(false);
+    expect(existsSync("src/infrastructure/Telemetry.ts")).toBe(false);
+    expect(existsSync("src/infrastructure/TelemetryRepository.ts")).toBe(false);
+    expect(existsSync("src/infrastructure/db/sqlite/repository/SqliteTelemetryRepository.ts")).toBe(
+      false,
+    );
   });
 });
 

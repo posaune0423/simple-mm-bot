@@ -30,9 +30,7 @@ try {
     process as unknown as Parameters<typeof registerShutdownHandlers>[1],
   );
 
-  // Bot.start() owns the runtime loop and returns the final session report.
-  const report = await bot.start();
-  logger.info(JSON.stringify(report, null, 2));
+  await bot.start();
 } catch (error) {
   if (isAppError(error)) {
     logger.error(formatAppError(error));

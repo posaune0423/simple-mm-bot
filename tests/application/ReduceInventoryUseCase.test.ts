@@ -67,15 +67,17 @@ describe("ReduceInventoryUseCase", () => {
 
     expect(didReduce).toBe(true);
     expect(placed).toEqual([
-      {
+      expect.objectContaining({
         market: "ETH-USD",
         side: "sell",
         price: 99,
         qty: 0.30000000000000004,
         reduceOnly: true,
         timeInForce: "IOC",
-      },
+        intent: "reduce",
+      }),
     ]);
+    expect(typeof placed[0]?.clientOrderId).toBe("string");
   });
 
   test("uses an aggressive IOC limit price when reducing short inventory", async () => {

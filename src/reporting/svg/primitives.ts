@@ -1,4 +1,4 @@
-export type Attrs = Record<string, string | number | undefined>;
+type Attrs = Record<string, string | number | undefined>;
 
 export function svgEscape(value: string): string {
   return value

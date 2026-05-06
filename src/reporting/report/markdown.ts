@@ -1,7 +1,7 @@
 import type { PeriodKpis } from "./kpiTable.ts";
 import { renderKpiTable } from "./kpiTable.ts";
 
-export interface ChartReference {
+interface ChartReference {
   alt: string;
   relativePath: string;
 }
@@ -11,7 +11,7 @@ export interface ReportSection {
   charts: ReadonlyArray<ChartReference>;
 }
 
-export interface MarkdownReportInput {
+interface MarkdownReportInput {
   generatedAt: number;
   mode: string;
   venue: string;

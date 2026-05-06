@@ -19,7 +19,3 @@ export function tryCatchAsync<T, E>(
 export function fromResult<T, E>(result: Result<T, E>): ResultAsync<T, E> {
   return ResultAsync.fromSafePromise(Promise.resolve(result)).andThen((value) => value);
 }
-
-export function fromError<T, E>(error: E): ResultAsync<T, E> {
-  return ResultAsync.fromPromise(Promise.reject(error), (caught) => caught as E);
-}

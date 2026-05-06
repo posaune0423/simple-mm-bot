@@ -4,6 +4,27 @@ import { join } from "node:path";
 
 import { DIContainer } from "../../src/application/di.ts";
 import { ConfigLoader } from "../../src/config.ts";
+import { createSqliteClient } from "../../src/infrastructure/db/sqlite/client.ts";
+
+function latestRunPerformance(dbPath: string, mode: string) {
+  const client = createSqliteClient(dbPath);
+  try {
+    return client.sqlite
+      .query<{ venue: string; fill_rate: number }, [string]>(
+        `
+          SELECT r.venue, COALESCE(p.fill_rate, 0) AS fill_rate
+          FROM trading_runs r
+          LEFT JOIN v_run_performance p ON p.run_id = r.id
+          WHERE r.mode = ?
+          ORDER BY r.started_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(mode);
+  } finally {
+    client.sqlite.close();
+  }
+}
 
 describe("backtest and paper smoke", () => {
   const tempDir = join(process.cwd(), "tmp-e2e");
@@ -19,13 +40,15 @@ describe("backtest and paper smoke", () => {
     config.backtest.from = start.toISOString();
     config.backtest.to = end.toISOString();
     const previousDbPath = Bun.env.DB_PATH;
-    Bun.env.DB_PATH = join(tempDir, "backtest.db");
+    const dbPath = join(tempDir, "backtest.db");
+    Bun.env.DB_PATH = dbPath;
     try {
       const bot = await new DIContainer(config).buildBot();
-      const report = await bot.start(4);
+      await bot.start(4);
+      const performance = latestRunPerformance(dbPath, "backtest");
 
-      expect(report.venue).toBe("hyperliquid");
-      expect(report.metrics.fillRate).toBeGreaterThanOrEqual(0);
+      expect(performance?.venue).toBe("hyperliquid");
+      expect(performance?.fill_rate).toBeGreaterThanOrEqual(0);
     } finally {
       Bun.env.DB_PATH = previousDbPath;
     }
@@ -34,13 +57,15 @@ describe("backtest and paper smoke", () => {
   test("runs a short paper session against the public live feed", async () => {
     const config = await ConfigLoader.load({ configPath: "config/config.paper.yml" });
     const previousDbPath = Bun.env.DB_PATH;
-    Bun.env.DB_PATH = join(tempDir, "paper.db");
+    const dbPath = join(tempDir, "paper.db");
+    Bun.env.DB_PATH = dbPath;
     try {
       const bot = await new DIContainer(config).buildBot();
-      const report = await bot.start(2);
+      await bot.start(2);
+      const performance = latestRunPerformance(dbPath, "paper");
 
-      expect(report.venue).toBe("bulk");
-      expect(report.metrics.fillRate).toBeGreaterThanOrEqual(0);
+      expect(performance?.venue).toBe("bulk");
+      expect(performance?.fill_rate).toBeGreaterThanOrEqual(0);
     } finally {
       Bun.env.DB_PATH = previousDbPath;
     }

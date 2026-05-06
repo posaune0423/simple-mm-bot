@@ -1,4 +1,4 @@
-export interface CandleLike {
+interface CandleLike {
   open?: number;
   high?: number;
   low?: number;
