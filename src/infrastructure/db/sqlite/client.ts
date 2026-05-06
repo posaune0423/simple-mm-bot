@@ -6,9 +6,16 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 
 import * as schema from "./schema.ts";
 
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+
 export function createSqliteClient(path: string) {
   mkdirSync(dirname(path), { recursive: true });
   const sqlite = new Database(path, { create: true });
+  sqlite.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
+  `);
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS fills (
       id TEXT PRIMARY KEY,
@@ -45,6 +52,29 @@ export function createSqliteClient(path: string) {
       close REAL NOT NULL,
       volume REAL NOT NULL,
       PRIMARY KEY (market, timeframe, ts)
+    );
+    CREATE TABLE IF NOT EXISTS telemetry_runs (
+      id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL,
+      venue TEXT NOT NULL,
+      capital_mode TEXT NOT NULL,
+      market TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      git_sha TEXT,
+      git_dirty INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      status TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS telemetry_events (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      venue TEXT NOT NULL,
+      type TEXT NOT NULL,
+      ts INTEGER NOT NULL,
+      market TEXT,
+      payload_json TEXT NOT NULL
     );
   `);
 

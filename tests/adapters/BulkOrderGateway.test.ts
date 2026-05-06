@@ -124,6 +124,81 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("aligns Bulk limit orders to exchange price and size increments before submission", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [
+              {
+                symbol: "BTC-USD",
+                pricePrecision: 3,
+                sizePrecision: 6,
+                tickSize: 0.001,
+                lotSize: 0.000001,
+                timeInForces: ["GTC", "IOC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeLimitOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ resting: { oid: "limit-1" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const bid = await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "GTC",
+    });
+    const ask = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "GTC",
+    });
+
+    expect(bid.request).toMatchObject({ price: 81_532.123, qty: 0.003066 });
+    expect(ask.request).toMatchObject({ price: 81_532.124, qty: 0.003066 });
+    expect(calls).toEqual([
+      {
+        symbol: "BTC-USD",
+        side: "buy",
+        price: 81_532.123,
+        size: 0.003066,
+        tif: "GTC",
+        reduceOnly: false,
+      },
+      {
+        symbol: "BTC-USD",
+        side: "sell",
+        price: 81_532.124,
+        size: 0.003066,
+        tif: "GTC",
+        reduceOnly: false,
+      },
+    ]);
+  });
+
   test("logs order submission, cancellations, and new fills", async () => {
     const logs = captureLogs();
     const client = {
@@ -435,6 +510,109 @@ describe("BulkOrderGateway", () => {
     });
 
     expect(placed).toMatchObject({ id: "bad-1", status: "rejected" });
+  });
+
+  test("returns rejected placed order when Bulk responds with HTTP 422", async () => {
+    const events: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {
+          async placeLimitOrder() {
+            const error = new Error("HTTP error 422");
+            Object.assign(error, { name: "BulkHttpError", status: 422 });
+            throw error;
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+    gateway.subscribeOrderEvents((event) => {
+      events.push(event);
+    });
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      price: 81_349,
+      qty: 0.003073,
+      reduceOnly: false,
+      timeInForce: "GTC",
+      clientOrderId: "quote-1",
+    });
+
+    expect(placed).toEqual({
+      id: "quote-1",
+      request: {
+        market: "BTC-USD",
+        side: "sell",
+        price: 81_349,
+        qty: 0.003073,
+        reduceOnly: false,
+        timeInForce: "GTC",
+        clientOrderId: "quote-1",
+      },
+      status: "rejected",
+    });
+    expect(events).toMatchObject([
+      { action: "submit", side: "sell", price: 81_349, qty: 0.003073 },
+      {
+        action: "reject",
+        orderId: "quote-1",
+        status: "rejected",
+        statusKey: "http_422",
+        reason: "HTTP error 422",
+      },
+    ]);
+  });
+
+  test("serializes scheduled fill polling and waits for the in-flight poll on dispose", async () => {
+    let calls = 0;
+    let started: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const releasePromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            calls += 1;
+            started?.();
+            await releasePromise;
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account", pollIntervalMs: 1 },
+    );
+
+    await startedPromise;
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
+
+    let disposed = false;
+    const disposePromise = Promise.resolve(gateway.dispose()).then(() => {
+      disposed = true;
+    });
+    await Bun.sleep(5);
+    expect(disposed).toBe(false);
+
+    release?.();
+    await disposePromise;
+    const callsAfterDispose = calls;
+    await Bun.sleep(5);
+
+    expect(disposed).toBe(true);
+    expect(calls).toBe(callsAfterDispose);
   });
 
   test("does not report Bulk partial fills as fully filled orders", async () => {

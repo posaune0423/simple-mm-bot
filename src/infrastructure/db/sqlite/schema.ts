@@ -37,3 +37,28 @@ export const ohlcvTable = sqliteTable("ohlcv", {
   close: real("close").notNull(),
   volume: real("volume").notNull(),
 });
+
+export const telemetryRunsTable = sqliteTable("telemetry_runs", {
+  id: text("id").primaryKey(),
+  mode: text("mode").notNull(),
+  venue: text("venue").notNull(),
+  capitalMode: text("capital_mode").notNull(),
+  market: text("market").notNull(),
+  configJson: text("config_json").notNull(),
+  gitSha: text("git_sha"),
+  gitDirty: integer("git_dirty", { mode: "boolean" }).notNull(),
+  startedAt: integer("started_at").notNull(),
+  endedAt: integer("ended_at"),
+  status: text("status").notNull(),
+});
+
+export const telemetryEventsTable = sqliteTable("telemetry_events", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  mode: text("mode").notNull(),
+  venue: text("venue").notNull(),
+  type: text("type").notNull(),
+  ts: integer("ts").notNull(),
+  market: text("market"),
+  payloadJson: text("payload_json").notNull(),
+});

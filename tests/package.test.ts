@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import { describe, expect, test } from "bun:test";
 
 import { toKeychainMarketOrder } from "../node_modules/bulk-ts-sdk/esm/builders/orders.js";
@@ -21,6 +23,14 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.["dev:backtest"]).toBe(
       "CONFIG_PATH=config/config.backtest.yml MODE=backtest bun run src/main.ts",
     );
+  });
+
+  test("keeps agent helper logic in scripts and persistence contracts in infrastructure", () => {
+    expect(existsSync("src/ops")).toBe(false);
+    expect(existsSync("src/telemetry")).toBe(false);
+    expect(existsSync("tests/ops")).toBe(false);
+    expect(existsSync("scripts/lib/TelemetryEvaluation.ts")).toBe(true);
+    expect(existsSync("src/infrastructure/TelemetryRepository.ts")).toBe(true);
   });
 });
 

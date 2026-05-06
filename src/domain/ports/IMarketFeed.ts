@@ -23,4 +23,5 @@ export interface IMarketFeed {
   disconnect(): Promise<void>;
   getSnapshot(): Promise<MarketSnapshot>;
   subscribe(listener: SnapshotListener): () => void;
+  advance?(): Promise<boolean>;
 }

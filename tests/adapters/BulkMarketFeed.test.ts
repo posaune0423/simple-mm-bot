@@ -98,7 +98,7 @@ describe("BulkMarketFeed", () => {
         "bulk_market_feed.snapshot_seeded market=BTC-USD bestBid=99 bestAsk=101 markPrice=101 marginRatio=null",
       );
       expect(logs.messages).toContain(
-        "bulk_market_feed.ws_subscribed market=BTC-USD topics=ticker,l2Snapshot",
+        "bulk_market_feed.ws_subscribed market=BTC-USD topics=ticker,l2Snapshot,candle",
       );
     } finally {
       logs.restore();
@@ -153,6 +153,190 @@ describe("BulkMarketFeed", () => {
     expect(snapshot.microPrice).toBe(103);
     expect(snapshot.timestamp).toBe(1_700_000_002_000);
     expect(snapshot.marginRatio).toBe(0.75);
+  });
+
+  test("updates snapshot with real OHLCV data from websocket candles", async () => {
+    const handlers: Array<(message: unknown) => void> = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe(_subscription: unknown, handler: (message: unknown) => void) {
+          handlers.push(handler);
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "BTC-USD", nlevels: 20 });
+
+    await feed.connect();
+    handlers[2]?.({
+      data: {
+        candles: [
+          {
+            t: 1_700_000_000_000,
+            T: 1_700_000_059_999,
+            o: 100,
+            h: 110,
+            l: 95,
+            c: 105,
+            v: 12.5,
+          },
+        ],
+      },
+    });
+
+    const snapshot = await feed.getSnapshot();
+    expect(snapshot).toMatchObject({
+      market: "BTC-USD",
+      markPrice: 105,
+      timestamp: 1_700_000_000_000,
+      open: 100,
+      high: 110,
+      low: 95,
+      close: 105,
+      volume: 12.5,
+    });
+  });
+
+  test("does not carry candle OHLCV fields into ticker and book snapshots", async () => {
+    const handlers: Array<(message: unknown) => void> = [];
+    const snapshots: Array<{ timestamp: number; open?: number; volume?: number }> = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe(_subscription: unknown, handler: (message: unknown) => void) {
+          handlers.push(handler);
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "BTC-USD", nlevels: 20 });
+    feed.subscribe((snapshot) => {
+      snapshots.push({
+        timestamp: snapshot.timestamp,
+        open: snapshot.open,
+        volume: snapshot.volume,
+      });
+    });
+
+    await feed.connect();
+    handlers[2]?.({
+      data: {
+        candles: [
+          {
+            t: 1_700_000_000_000,
+            T: 1_700_000_059_999,
+            o: 100,
+            h: 110,
+            l: 95,
+            c: 105,
+            v: 12.5,
+          },
+        ],
+      },
+    });
+    handlers[0]?.({ data: { markPrice: 106, timestamp: 1_700_000_010_000 * 1_000_000 } });
+    handlers[1]?.({
+      data: {
+        levels: [[{ price: 104, size: 1 }], [{ price: 108, size: 1 }]],
+        timestamp: 1_700_000_020_000 * 1_000_000,
+      },
+    });
+
+    expect(snapshots.at(-3)).toMatchObject({
+      timestamp: 1_700_000_000_000,
+      open: 100,
+      volume: 12.5,
+    });
+    expect(snapshots.at(-2)).toEqual({ timestamp: 1_700_000_010_000 });
+    expect(snapshots.at(-1)).toEqual({ timestamp: 1_700_000_020_000 });
+  });
+
+  test("keeps websocket historical candle batches bounded to the latest candles", async () => {
+    const handlers: Array<(message: unknown) => void> = [];
+    const snapshots: Array<{ timestamp: number; volume?: number }> = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe(_subscription: unknown, handler: (message: unknown) => void) {
+          handlers.push(handler);
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "BTC-USD",
+      nlevels: 20,
+    });
+    feed.subscribe((snapshot) => {
+      if (snapshot.open !== undefined) {
+        snapshots.push({ timestamp: snapshot.timestamp, volume: snapshot.volume });
+      }
+    });
+
+    await feed.connect();
+    handlers[2]?.({
+      data: {
+        candles: Array.from({ length: 25 }, (_, index) => ({
+          t: 1_700_000_000_000 + index * 60_000,
+          T: 1_700_000_059_999 + index * 60_000,
+          o: 100 + index,
+          h: 101 + index,
+          l: 99 + index,
+          c: 100.5 + index,
+          v: index,
+        })),
+      },
+    });
+
+    expect(snapshots).toHaveLength(20);
+    expect(snapshots[0]).toEqual({ timestamp: 1_700_000_300_000, volume: 5 });
+    expect(snapshots.at(-1)).toEqual({ timestamp: 1_700_001_440_000, volume: 24 });
   });
 
   test("ignores empty websocket L2 snapshots after initial seed", async () => {

@@ -19,11 +19,37 @@ export class RecordOhlcvUseCase {
       return;
     }
 
+    if (this.hasVenueCandle(snapshot)) {
+      const candle: OhlcvRecord = {
+        market: snapshot.market,
+        timeframe: this.timeframe,
+        ts: snapshot.timestamp,
+        open: snapshot.open,
+        high: snapshot.high,
+        low: snapshot.low,
+        close: snapshot.close,
+        volume: snapshot.volume ?? 0,
+      };
+      this.candles.set(`${snapshot.market}:${this.timeframe}:${snapshot.timestamp}`, candle);
+      await this.ohlcvRepository.saveMany([candle]);
+      logger.debug(
+        `record_ohlcv.saved market=${candle.market} timeframe=${candle.timeframe} ts=${candle.ts} close=${candle.close} volume=${candle.volume}`,
+      );
+      return;
+    }
+
+    if (snapshot.volume === undefined) {
+      logger.debug(
+        `record_ohlcv.skipped market=${snapshot.market} reason=top_of_book_snapshot ts=${snapshot.timestamp}`,
+      );
+      return;
+    }
+
     const bucketTs = Math.floor(snapshot.timestamp / this.timeframeMs) * this.timeframeMs;
     const key = `${snapshot.market}:${this.timeframe}:${bucketTs}`;
     const cached = this.candles.get(key);
     const base = cached ?? (await this.loadOrCreate(snapshot, bucketTs));
-    const volume = snapshot.volume ?? 0;
+    const volume = snapshot.volume;
     const candle: OhlcvRecord = {
       ...base,
       high: Math.max(base.high, snapshot.markPrice),
@@ -60,5 +86,17 @@ export class RecordOhlcvUseCase {
       close: snapshot.markPrice,
       volume: 0,
     };
+  }
+
+  private hasVenueCandle(
+    snapshot: MarketSnapshot,
+  ): snapshot is MarketSnapshot &
+    Required<Pick<MarketSnapshot, "open" | "high" | "low" | "close">> {
+    return (
+      snapshot.open !== undefined &&
+      snapshot.high !== undefined &&
+      snapshot.low !== undefined &&
+      snapshot.close !== undefined
+    );
   }
 }

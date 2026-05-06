@@ -71,7 +71,12 @@ export default {
           "no-restricted-imports": [
             "error",
             {
-              patterns: ["**/adapters/**", "**/infrastructure/**", "**/lib/**"],
+              patterns: [
+                "**/adapters/**",
+                "**/infrastructure/db/**",
+                "**/infrastructure/InMemoryPositionRepository.ts",
+                "**/lib/**",
+              ],
             },
           ],
         },

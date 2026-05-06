@@ -1,3 +1,5 @@
+import type { Candle as BulkCandle } from "bulk-ts-sdk";
+
 import type {
   IMarketFeed,
   MarketSnapshot,
@@ -43,7 +45,11 @@ export interface BulkMarketFeedParams {
   market: string;
   nlevels?: number;
   accountId?: string;
+  candleInterval?: "1m";
 }
+
+const DEFAULT_CANDLE_INTERVAL = "1m";
+const MAX_CANDLES_PER_MESSAGE = 20;
 
 function nsToMs(timestamp: number | undefined): number {
   if (timestamp === undefined) {
@@ -68,6 +74,18 @@ function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: 
   return (bestAsk * bidSize + bestBid * askSize) / denominator;
 }
 
+function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
+  return {
+    market: snapshot.market,
+    bestBid: snapshot.bestBid,
+    bestAsk: snapshot.bestAsk,
+    microPrice: snapshot.microPrice,
+    markPrice: snapshot.markPrice,
+    timestamp: snapshot.timestamp,
+    marginRatio: snapshot.marginRatio,
+  };
+}
+
 function dataOf(message: unknown): Record<string, unknown> {
   if (typeof message !== "object" || message === null) {
     return {};
@@ -77,9 +95,30 @@ function dataOf(message: unknown): Record<string, unknown> {
   return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : record;
 }
 
+function payloadOf(message: unknown, nestedKeys: string[]): Record<string, unknown> {
+  const data = dataOf(message);
+  for (const key of nestedKeys) {
+    const nested = data[key];
+    if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>;
+    }
+  }
+  return data;
+}
+
+function candlesOf(message: unknown): BulkCandle[] {
+  const data = dataOf(message);
+  const candles = data.candles;
+  if (Array.isArray(candles)) {
+    return candles as BulkCandle[];
+  }
+  return [];
+}
+
 export class BulkMarketFeed implements IMarketFeed {
   private readonly listeners = new Set<SnapshotListener>();
   private readonly unsubscribers: Array<() => Promise<void>> = [];
+  private lastCandleTs: number | null = null;
   private snapshot: MarketSnapshot | null = null;
 
   constructor(
@@ -149,12 +188,21 @@ export class BulkMarketFeed implements IMarketFeed {
       { type: "l2Snapshot", symbol: this.params.market, nlevels: this.params.nlevels },
       (message: unknown) => this.mergeBook(message),
     );
+    const candle = await this.client.ws.subscribe(
+      {
+        type: "candle",
+        symbol: this.params.market,
+        interval: this.params.candleInterval ?? DEFAULT_CANDLE_INTERVAL,
+      },
+      (message: unknown) => this.mergeCandle(message),
+    );
     this.unsubscribers.push(
       async () => ticker.unsubscribe(),
       async () => book.unsubscribe(),
+      async () => candle.unsubscribe(),
     );
     logger.info(
-      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Snapshot`,
+      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Snapshot,candle`,
     );
   }
 
@@ -185,13 +233,13 @@ export class BulkMarketFeed implements IMarketFeed {
     if (this.snapshot === null) {
       return;
     }
-    const data = dataOf(message);
+    const data = payloadOf(message, ["ticker"]);
     const markPrice = Number(data.markPrice ?? data.fairBookPx ?? data.lastPrice);
     if (!Number.isFinite(markPrice)) {
       return;
     }
     this.snapshot = {
-      ...this.snapshot,
+      ...quoteSnapshot(this.snapshot),
       markPrice,
       timestamp: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
     };
@@ -205,7 +253,7 @@ export class BulkMarketFeed implements IMarketFeed {
     if (this.snapshot === null) {
       return;
     }
-    const data = dataOf(message) as BulkBook;
+    const data = payloadOf(message, ["l2Snapshot", "l2snapshot", "book"]) as BulkBook;
     const levels = this.tryTopLevels(data);
     if (levels === null) {
       return;
@@ -217,7 +265,7 @@ export class BulkMarketFeed implements IMarketFeed {
       return;
     }
     this.snapshot = {
-      ...this.snapshot,
+      ...quoteSnapshot(this.snapshot),
       bestBid,
       bestAsk,
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
@@ -225,6 +273,58 @@ export class BulkMarketFeed implements IMarketFeed {
     };
     logger.debug(
       `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
+    );
+    this.publish(this.snapshot);
+  }
+
+  private mergeCandle(message: unknown): void {
+    if (this.snapshot === null) {
+      return;
+    }
+    const candles = candlesOf(message).slice(-MAX_CANDLES_PER_MESSAGE);
+    for (const candle of candles) {
+      this.applyCandle(candle);
+    }
+  }
+
+  private applyCandle(data: BulkCandle): void {
+    if (this.snapshot === null) {
+      return;
+    }
+    const timestamp = typeof data.t === "number" ? data.t : undefined;
+    const open = Number(data.o);
+    const high = Number(data.h);
+    const low = Number(data.l);
+    const close = Number(data.c);
+    const volume = Number(data.v);
+    if (
+      timestamp === undefined ||
+      !Number.isFinite(open) ||
+      !Number.isFinite(high) ||
+      !Number.isFinite(low) ||
+      !Number.isFinite(close) ||
+      !Number.isFinite(volume)
+    ) {
+      return;
+    }
+    const ts = nsToMs(timestamp);
+    if (this.lastCandleTs !== null && ts < this.lastCandleTs) {
+      return;
+    }
+    this.lastCandleTs = ts;
+
+    this.snapshot = {
+      ...this.snapshot,
+      markPrice: close,
+      timestamp: ts,
+      open,
+      high,
+      low,
+      close,
+      volume,
+    };
+    logger.info(
+      `bulk_market_feed.candle_received market=${this.snapshot.market} ts=${this.snapshot.timestamp} open=${open} high=${high} low=${low} close=${close} volume=${volume}`,
     );
     this.publish(this.snapshot);
   }

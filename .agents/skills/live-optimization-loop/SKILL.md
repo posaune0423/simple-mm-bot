@@ -1,50 +1,72 @@
 ---
 name: live-optimization-loop
-description: ライブ環境での定量評価に基づき、botのパラメータ調整と実装改善を繰り返す。Run the trading bot in live mode, quantitatively evaluate metrics (markout, PnL), and iteratively optimize parameters/logic using scripts/liveOptimizationLoop.ts.
+description: ライブ環境での定量評価に基づき、botのパラメータ調整と実装改善を繰り返す。Run the bot in Bulk beta live mode, evaluate telemetry, apply minimal YAML tuning, and create issues for code/SDK/design gaps.
 ---
 
 # Live Optimization Loop
 
 ## Objective
 
-Targeting to become a "C-Class Bot" that earns a stable monthly profit ($200-$500) and moves up the Leaderboard.
-Iteratively optimize parameters and logic based on quantitative data like Markout (adverse selection metric) through integrated live tests.
+Use Bulk beta `live` as the main experiment environment because current funds are daily mock funds.
+Telemetry is mode-independent so the same evaluation path can be reused for `live`, `paper`, and `backtest` when Bulk mainnet support is ready.
 
-## Key Performance Indicators (KPIs for C-Class Bot)
+## Key Performance Indicators (PnL-first)
 
 Use these as the "Pass/Fail" criteria during optimization:
 
-- **Markout (5s)**: **> +0.5 bps** (Must be positive. Negative means you are being picked off/toxic flow).
 - **Net PnL**: **+ $10 or more per day** (To reach $300/month target).
-- **Fill Rate**: **5% to 15%** (Too low = missed opportunity, too high = likely adverse selection).
+- **PnL per notional**: **> 0** (Do not chase volume when each dollar traded is losing money).
+- **Markout (5s)**: **> +0.5 bps** (Must be positive. Negative means you are being picked off/toxic flow).
 - **Adverse Selection Rate**: **< 30%** (Ratio of fills with negative price moves).
+- **Fill Rate**: Diagnostic only until Net PnL and PnL per notional are positive. Low fill rate is not a tuning target by itself.
 
 ## Primary Commands
 
 ```bash
-# Run live for a specific duration. Integrated monitor logs status every 10s.
-bun run loop:live --config config/config.bulk.yml --duration-min 10
+# Run live directly. Stop with the normal shutdown path after the chosen window.
+CONFIG_PATH=config/config.bulk.yml MODE=live bun run src/main.ts
+
+# Evaluate the latest telemetry run.
+bun run telemetry:evaluate --db data/mmbot.db --output-dir artifacts/telemetry/latest
+
+# Generate human-readable and JSON reports.
+bun run telemetry:report --evaluation artifacts/telemetry/latest/evaluation.json --output-dir artifacts/telemetry/latest
+
+# Apply minimal YAML tuning only when data health allows it.
+bun run telemetry:tune --evaluation artifacts/telemetry/latest/evaluation.json --config config/config.bulk.yml
+
+# Create code/SDK/design issues. Use --dry-run=true before creating GitHub issues.
+bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json --report artifacts/telemetry/latest/telemetry-report.md --dry-run=true
 ```
 
 ## Workflow
 
-1. **Initial Setup (Mandatory: gamma > 0)**
-   - Ensure `gamma` (inventory risk aversion) in `config/config.bulk.yml` is **at least 0.1**.
+1. **Start**
+   - Run Bulk beta as `MODE=live`.
+   - Confirm the telemetry run has `capitalMode: beta_mock`.
 
-2. **Run and Monitor**
-   - Execute `loop:live`.
-   - The integrated monitor will log `[MONITOR]` status every 10s showing recent PnL and Markout (bps).
+2. **Telemetry Check**
+   - Run `telemetry:evaluate`.
+   - Do not tune when markout coverage or data health is insufficient.
 
-3. **Auto-stop and Evaluate**
-   - The bot stops automatically, cancels orders, and closes positions.
-   - Compare `summary.json` or `run.md` against KPIs.
+3. **Evaluate**
+   - Generate the telemetry report.
+   - Review data health, PnL, markout, order quality, inventory, and runtime health.
 
-4. **Tweak and Iterate**
-   - **If Markout is negative**: Increase `gamma` or widen `baseSpread`.
-   - **If no trades**: Narrow `baseSpread` incrementally.
-   - Repeat until the bot meets C-Class KPIs.
+4. **Tweak or Issue**
+   - YAML tuning only:
+     - Negative Net PnL or non-positive PnL per notional: do not increase fill volume; widen flow by reducing `kappa` unless markout is already negative.
+     - Negative markout or high adverse selection: increase `gamma`, or reduce `kappa` if spread widening is needed.
+     - Low fills with good markout: increase `kappa` only after Net PnL and PnL per notional are positive.
+     - Inventory skew: increase `kInv`.
+     - High drawdown or close cost: reduce `positionSize` or `budgetUsd`.
+   - Create issues instead of editing code when SDK/API fields are missing, lifecycle errors are unexplained, feeds are stale, Bulk backtest simulation is missing, or strategy math needs design work.
+
+5. **Next Run**
+   - Re-run live after the minimal YAML change or after the owning issue is created.
 
 ## Safety Guardrails
 
-- Start with short `duration-min` (5-10 mins).
-- Ensure Markout is positive before increasing `budgetUsd`.
+- Start with short live windows.
+- Keep `config/config.bulk.yml` tuning minimal and review the diff before the next run.
+- Do not increase `budgetUsd` unless Net PnL, PnL per notional, markout, and runtime health are acceptable.
