@@ -40,7 +40,7 @@ describe("Bot", () => {
       {
         guardRisk: { execute: async () => "OK" as const },
         refreshQuotes: { execute: async () => {} },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
@@ -89,7 +89,7 @@ describe("Bot", () => {
             calls.push("refresh");
           },
         },
-        recordFill: {
+        updatePositionOnFill: {
           execute: async () => {
             calls.push("fill");
           },
@@ -150,7 +150,7 @@ describe("Bot", () => {
             calls.push("refresh");
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: {
@@ -219,7 +219,7 @@ describe("Bot", () => {
       {
         guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
         refreshQuotes: { execute: async () => {} },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
@@ -277,7 +277,7 @@ describe("Bot", () => {
             stopBot();
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
@@ -334,7 +334,7 @@ describe("Bot", () => {
             calls.push("refresh");
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: {
@@ -423,7 +423,7 @@ describe("Bot", () => {
             throw new Error("refresh failed");
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: {
@@ -534,7 +534,7 @@ describe("Bot", () => {
             });
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: {
           execute: async (snapshot) => {
             recorded.push(snapshot.markPrice);
@@ -606,7 +606,7 @@ describe("Bot", () => {
             });
           },
         },
-        recordFill: {
+        updatePositionOnFill: {
           execute: async () => {
             calls.push("fill");
           },
@@ -680,7 +680,7 @@ describe("Bot", () => {
       {
         guardRisk: { execute: async () => "OK" as const },
         refreshQuotes: { execute: async () => {} },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },

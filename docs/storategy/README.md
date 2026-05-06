@@ -56,6 +56,7 @@ flowchart LR
 | `defaultTimeInForce`   |     `GTC` | 通常 quote の time in force                  |
 | `positionSize`         |    `0.05` | 片側 quote の最大 base size                  |
 | `budgetUsd`            |     `250` | 片側 quote の USD 上限                       |
+| `minSpreadBps`         |     `5.6` | fee 負けを避ける最小 quote 幅                |
 | `gamma`                |       `0` | risk aversion。現在は fixed-spread fallback  |
 | `kappa`                |       `8` | spread の基準。`gamma=0` では `2 / kappa`    |
 | `kInv`                 |    `0.05` | inventory skew の強さ                        |
@@ -130,26 +131,32 @@ flowchart LR
 
 ### Spread
 
-`gamma = 0` の場合、現在の実装は fixed-spread fallback になる。
+`gamma = 0` の場合、strategy spread は fixed-spread fallback になる。
 
 ```text
-spread = 2 / kappa
+strategySpread = 2 / kappa
 ```
 
 現在は `kappa = 8` なので:
 
 ```text
-spread = 2 / 8 = 0.25
+strategySpread = 2 / 8 = 0.25
 ```
 
-これは price の絶対値幅で、bps ではない。
-BTC-USD のような高価格 market では非常に細い幅になるため、PnL が出ていない場合は fill volume ではなく realized PnL / markout / fee を見て調整する。
+これは price の絶対値幅で、bps ではない。BTC-USD のような高価格 market では非常に細い幅になるため、Bulk config は fee-aware な `minSpreadBps` を下限として適用する。
 
 `gamma > 0` の場合は Avellaneda-Stoikov 型の spread を使う。
 
 ```text
 varianceTerm = sigma^2 * timeHorizonSec
 spread = gamma * varianceTerm + (2 / gamma) * log(1 + gamma / kappa)
+```
+
+最終的な quote 幅:
+
+```text
+minSpread = fairPrice * minSpreadBps / 10_000
+spread = max(strategySpread, minSpread)
 ```
 
 直感:

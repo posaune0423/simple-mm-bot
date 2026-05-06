@@ -1,8 +1,7 @@
 import { ResultAsync } from "neverthrow";
 
-import type { Fill } from "../src/domain/entities/Fill.ts";
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
-import { fetchFills } from "../src/reporting/queries/FillsQuery.ts";
+import { fetchReportFills } from "../src/reporting/queries/MetricsFactQuery.ts";
 import {
   DEFAULT_PERIODS,
   defaultOutputDir,
@@ -52,7 +51,7 @@ function runGenerateReport(argv: string[]): ResultAsync<string, AppError> {
   ).andThen((client) =>
     ResultAsync.fromPromise(
       generateReport({
-        fetchFills: async (input): Promise<Fill[]> => fetchFills({ db: client.db, ...input }),
+        fetchFills: async (input) => fetchReportFills({ sqlite: client.sqlite, ...input }),
         now: options.now,
         mode: options.mode,
         venue: options.venue,

@@ -25,6 +25,7 @@ const commonConfigSchema = z.object({
     markWeight: z.number().min(0).max(1),
     inventoryScale: z.number().positive(),
     timeHorizonSec: z.number().positive(),
+    minSpreadBps: z.number().min(0).optional(),
     slideMarginThreshold: z.number().min(0).max(1),
     defaultTimeInForce: timeInForceSchema.default("ALO"),
     sizing: quoteSizingSchema,

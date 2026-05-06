@@ -29,6 +29,7 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.nlevels).toBe(20);
     expect(config.connections.bulk.maxLeverage).toBe(5);
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
+    expect(config.quoteEngine.minSpreadBps).toBe(5.6);
     expect(config.quoteEngine.strategy.params).toEqual({
       gamma: 0,
       kappa: 8,

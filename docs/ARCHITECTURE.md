@@ -27,7 +27,7 @@ flowchart LR
 
     subgraph App["Application layer"]
         Bot["Bot (tick loop)"]
-        UC["UseCases\n- GuardRisk\n- RefreshQuotes\n- RecordFill\n- ReduceInventory"]
+        UC["UseCases\n- GuardRisk\n- RefreshQuotes\n- UpdatePositionOnFill\n- ReduceInventory"]
     end
 
     subgraph Domain["Domain layer (pure)"]
@@ -35,8 +35,7 @@ flowchart LR
         Strat["AvellanedaStoikovStrategy"]
         Fair["FairPriceCalculator"]
         Vol["VolatilityEstimator"]
-        Ana["Analytics"]
-        Ports[["Ports\nIMarketFeed / IOrderGateway\nITradeRepository\nIOhlcvRepository / IPositionRepository"]]
+        Ports[["Ports\nIMarketFeed / IOrderGateway\nIOhlcvRepository / IPositionRepository"]]
     end
 
     subgraph Adapters["Adapters"]
@@ -99,8 +98,7 @@ src/
 │   ├── strategy/           # IQuotingStrategy + Avellaneda-Stoikov
 │   ├── QuoteEngine.ts      # 戦略 + fair + vol + sizing の合成点
 │   ├── FairPriceCalculator.ts
-│   ├── VolatilityEstimator.ts
-│   └── Analytics.ts        # PnL / markout / sharpe / drawdown
+│   └── VolatilityEstimator.ts
 ├── adapters/
 │   ├── bulk/               # primary (BulkMarketFeed / BulkOrderGateway)
 │   ├── hyperliquid/        # legacy + backtest path
@@ -128,8 +126,7 @@ sequenceDiagram
     participant GW as IOrderGateway
     participant Reduce as ReduceInventoryUseCase
     participant Pos as IPositionRepository
-    participant Record as RecordFillUseCase
-    participant Trade as ITradeRepository
+    participant UpdatePos as UpdatePositionOnFillUseCase
 
     Note over Bot: Bot.start() 起動
     Bot->>Feed: connect()
@@ -161,10 +158,9 @@ sequenceDiagram
         end
     end
 
-    Note over GW,Record: 並行: fill が来たら
-    GW-->>Record: onFill(fill)
-    Record->>Trade: save(fill)
-    Record->>Pos: update(fill)
+    Note over GW,UpdatePos: 並行: fill が来たら
+    GW-->>UpdatePos: onFill(fill)
+    UpdatePos->>Pos: update(fill)
 
     Bot->>Feed: disconnect()
     Bot->>Metrics: finish run
@@ -242,12 +238,11 @@ flowchart LR
         QE["QuoteEngine / UseCases"]
         IMF[/"IMarketFeed"/]
         IOG[/"IOrderGateway"/]
-        ITR[/"ITradeRepository"/]
         IMR[/"IMetricsRepository"/]
         IOR[/"IOhlcvRepository"/]
         IPR[/"IPositionRepository"/]
         QE --- IMF & IOG & IPR
-        QE --- ITR & IOR
+        QE --- IOR
     end
 
     subgraph Outside["Adapters / Infrastructure"]
@@ -259,8 +254,6 @@ flowchart LR
         HOG["HyperliquidOrderGateway"] --> IOG
         POG["PaperOrderGateway"] --> IOG
 
-        SqTrade["SqliteTradeRepository"] --> ITR
-        PgTrade["PostgresTradeRepository"] --> ITR
         SqMetrics["SqliteMetricsRepository"] --> IMR
         PgMetrics["PostgresMetricsRepository"] --> IMR
         SqOhlcv["SqliteOhlcvRepository"] --> IOR
@@ -315,9 +308,8 @@ stateDiagram-v2
 flowchart LR
     Venue["Venue (Bulk WS / poll)"] --> AdpFill["Adapter\nfill normalize"]
     AdpFill --> Listener["GW.subscribeFills"]
-    Listener --> RFU["RecordFillUseCase"]
-    RFU --> TradeRepo[("ITradeRepository")]
-    RFU --> PosRepo[("IPositionRepository")]
+    Listener --> UPU["UpdatePositionOnFillUseCase"]
+    UPU --> PosRepo[("IPositionRepository")]
 
     Listener --> Metrics["MetricsRecorder"]
     Metrics --> FactRepo[("IMetricsRepository")]

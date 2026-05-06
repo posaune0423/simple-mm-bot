@@ -21,8 +21,14 @@ interface MetricsRecorderOptions {
   horizonsSec?: ReadonlyArray<5 | 30 | 60 | 300>;
 }
 
+interface PnlPosition {
+  qty: number;
+  avgEntry: number;
+}
+
 export class MetricsRecorder {
   readonly runId: string;
+  private readonly pnlPositions = new Map<string, PnlPosition>();
 
   constructor(
     private readonly repository: IMetricsRepository,
@@ -86,9 +92,29 @@ export class MetricsRecorder {
   }
 
   async recordQuote(snapshot: MarketSnapshot, positionQty: number, quote: Quote): Promise<void> {
-    void snapshot;
-    void positionQty;
-    void quote;
+    await this.repository.recordAccountStateObservation({
+      id: `${this.runId}:${snapshot.market}:${snapshot.timestamp}:quote`,
+      runId: this.runId,
+      venue: this.options.venue,
+      market: snapshot.market,
+      observedAt: snapshot.timestamp,
+      positionQty,
+      marginRatio: snapshot.marginRatio,
+      rawJson: {
+        source: "quote",
+        fairPrice: quote.fairPrice,
+        sigma: quote.sigma,
+        bid: quote.bid,
+        ask: quote.ask,
+        bidSize: quote.bidSize,
+        askSize: quote.askSize,
+        policy: quote.policy,
+        quotedSpreadBps: distanceBps(quote.ask, quote.bid),
+        bidDistanceBps: distanceBps(quote.fairPrice, quote.bid),
+        askDistanceBps: distanceBps(quote.ask, quote.fairPrice),
+        marketSpreadBps: spreadBps(snapshot),
+      },
+    });
   }
 
   async recordOrder(payload: OrderGatewayEvent, market = this.options.market): Promise<void> {
@@ -127,6 +153,7 @@ export class MetricsRecorder {
   }
 
   async recordFill(fill: Fill): Promise<void> {
+    const tradePnl = this.computeTradePnl(fill);
     await this.repository.recordTradeFill({
       id: fill.id,
       runId: this.runId,
@@ -140,10 +167,10 @@ export class MetricsRecorder {
       price: fill.price,
       quantity: fill.qty,
       fee: fill.fee,
-      tradePnl: fill.tradePnl,
+      tradePnl,
       makerTaker: "unknown",
       filledAt: fill.filledAt,
-      rawJson: fill,
+      rawJson: { ...fill, computedTradePnl: tradePnl },
     });
   }
 
@@ -157,6 +184,37 @@ export class MetricsRecorder {
     void code;
     void message;
     void rawSummary;
+  }
+
+  private computeTradePnl(fill: Fill): number {
+    const position = this.pnlPositions.get(fill.market) ?? { qty: 0, avgEntry: 0 };
+    const signedQty = fill.side === "buy" ? fill.qty : -fill.qty;
+    const previousQty = position.qty;
+    const nextQty = previousQty + signedQty;
+    let tradePnl = 0;
+
+    if (previousQty === 0 || Math.sign(previousQty) === Math.sign(signedQty)) {
+      const previousNotional = position.avgEntry * Math.abs(previousQty);
+      const nextNotional = fill.price * Math.abs(signedQty);
+      const totalQty = Math.abs(previousQty) + Math.abs(signedQty);
+      position.avgEntry = totalQty === 0 ? 0 : (previousNotional + nextNotional) / totalQty;
+    } else {
+      const closingQty = Math.min(Math.abs(previousQty), Math.abs(signedQty));
+      tradePnl =
+        previousQty > 0
+          ? (fill.price - position.avgEntry) * closingQty
+          : (position.avgEntry - fill.price) * closingQty;
+
+      if (nextQty === 0) {
+        position.avgEntry = 0;
+      } else if (Math.sign(nextQty) !== Math.sign(previousQty)) {
+        position.avgEntry = fill.price;
+      }
+    }
+
+    position.qty = nextQty;
+    this.pnlPositions.set(fill.market, position);
+    return Number(tradePnl.toFixed(12));
   }
 }
 

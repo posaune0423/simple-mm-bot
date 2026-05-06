@@ -8,7 +8,7 @@ import type { RiskState } from "./usecases/GuardRiskUseCase.ts";
 interface UseCases {
   guardRisk: { execute(): Promise<RiskState> };
   refreshQuotes: { execute(): Promise<void> };
-  recordFill: { execute(fill: Fill): Promise<void> };
+  updatePositionOnFill: { execute(fill: Fill): Promise<void> };
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
   reduceInventory: { executeIfNeeded(): Promise<boolean> };
   closePosition: { execute(): Promise<void> };
@@ -81,7 +81,7 @@ export class Bot {
         );
         this.enqueueEventTask(async () => {
           await this.metrics?.recordFill(fill);
-          await this.useCases.recordFill.execute(fill);
+          await this.useCases.updatePositionOnFill.execute(fill);
         });
       }),
     );

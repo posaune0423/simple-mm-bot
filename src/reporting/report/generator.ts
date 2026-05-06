@@ -1,5 +1,5 @@
-import { Analytics } from "../../domain/Analytics.ts";
 import type { Fill } from "../../domain/entities/Fill.ts";
+import type { FillAnalysis, PerformanceMetrics } from "../../domain/entities/PerformanceMetrics.ts";
 import { writeTextFile } from "../../utils/fs.ts";
 import { computeHourlyAdverseRate } from "../metrics/adverseRate.ts";
 import { computeDrawdown } from "../metrics/drawdown.ts";
@@ -69,14 +69,13 @@ interface PeriodArtifacts {
 export async function generateReport(input: GenerateReportInput): Promise<GenerateReportOutput> {
   const snapshotDate = snapshotDateFromMs(input.now);
   const paths = reportPaths(input.outputDir, snapshotDate);
-  const analytics = new Analytics();
 
   const periodArtifacts: PeriodArtifacts[] = [];
   for (const period of input.periods) {
     const periodEnd = input.now;
     const periodStart = input.now - period.durationMs;
     const fills = await input.fetchFills({ venue: input.venue, periodStart, periodEnd });
-    const built = analytics.build({ fills, quotedCount: fills.length });
+    const built = buildReportStats(fills);
     const kpis: PeriodKpis = {
       label: period.label,
       metrics: built.metrics,
@@ -381,6 +380,63 @@ function collectMarkoutBps(fills: ReadonlyArray<Fill>, horizon: "5s" | "30s"): n
     values.push((delta / fill.markPriceAtFill) * 10_000);
   }
   return values;
+}
+
+function buildReportStats(fills: ReadonlyArray<Fill>): {
+  metrics: PerformanceMetrics;
+  fillAnalysis: FillAnalysis;
+  equityCurve: Array<{ timestamp: number; value: number }>;
+} {
+  let cumulative = 0;
+  let peak = 0;
+  let maxDrawdown = 0;
+  const returns: number[] = [];
+  let adverseSelectionCount = 0;
+
+  const equityCurve = fills.map((fill) => {
+    const net = fill.tradePnl - fill.fee;
+    cumulative += net;
+    peak = Math.max(peak, cumulative);
+    maxDrawdown = Math.max(maxDrawdown, peak - cumulative);
+    returns.push(net);
+    if (fillHasAdverseMarkout(fill)) {
+      adverseSelectionCount += 1;
+    }
+    return { timestamp: fill.filledAt, value: cumulative };
+  });
+
+  const avgReturn =
+    returns.length > 0 ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
+  const variance =
+    returns.length > 1
+      ? returns.reduce((sum, value) => sum + (value - avgReturn) ** 2, 0) / (returns.length - 1)
+      : 0;
+  const sharpe = variance > 0 ? (avgReturn / Math.sqrt(variance)) * Math.sqrt(365) : 0;
+  const tradePnl = fills.reduce((sum, fill) => sum + fill.tradePnl, 0);
+  const netPnl = fills.reduce((sum, fill) => sum + fill.tradePnl - fill.fee, 0);
+  const markout5s = collectMarkoutBps(fills, "5s").reduce((sum, value) => sum + value, 0);
+  const markout30s = collectMarkoutBps(fills, "30s").reduce((sum, value) => sum + value, 0);
+
+  return {
+    metrics: {
+      netPnl,
+      tradePnl,
+      markout5s,
+      markout30s,
+      maxDrawdown,
+      sharpe,
+      fillRate: fills.length > 0 ? 1 : 0,
+    },
+    fillAnalysis: {
+      adverseSelectionCount,
+      fillCount: fills.length,
+    },
+    equityCurve,
+  };
+}
+
+function fillHasAdverseMarkout(fill: Fill): boolean {
+  return collectMarkoutBps([fill], "5s").some((value) => value < 0);
 }
 
 export const DEFAULT_PERIODS: PeriodWindow[] = [

@@ -21,15 +21,14 @@ simple-mm-bot/
 │   │   └── usecases/
 │   │       ├── ClosePositionUseCase.ts
 │   │       ├── GuardRiskUseCase.ts
-│   │       ├── RecordFillUseCase.ts
 │   │       ├── RecordOhlcvUseCase.ts
 │   │       ├── ReduceInventoryUseCase.ts
-│   │       └── RefreshQuotesUseCase.ts
+│   │       ├── RefreshQuotesUseCase.ts
+│   │       └── UpdatePositionOnFillUseCase.ts
 │   ├── domain/
 │   │   ├── entities/
 │   │   ├── ports/
 │   │   ├── strategy/
-│   │   ├── Analytics.ts
 │   │   ├── FairPriceCalculator.ts
 │   │   ├── QuoteEngine.ts
 │   │   └── VolatilityEstimator.ts
@@ -106,7 +105,7 @@ simple-mm-bot/
 - env を直接読まない
 - adapter payload を entity に持ち込まない
 
-`QuoteEngine` は strategy、fair price、volatility、risk sizing を組み合わせて quote を生成する。
+`QuoteEngine` は strategy、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
 metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。

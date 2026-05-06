@@ -7,10 +7,18 @@ export interface MetricsEvaluationInput {
   tradePnl: number;
   fee: number;
   pnlPerNotional: number;
+  pnlPerVolumeBps?: number;
   maxDrawdown: number;
   avg5sMarkoutBps: number;
+  avg30sMarkoutBps?: number;
+  avg300sMarkoutBps?: number;
+  markout30sTailBps?: MarkoutTailBps;
   adverseSelectionRate: number;
   spreadCaptureBps?: number;
+  realizedSpreadBps?: number;
+  sideImbalance?: number;
+  avgMarketSpreadBps?: number;
+  staleRate?: number;
   fillRate: number;
   rejectRate: number;
   cancelRate: number;
@@ -21,8 +29,23 @@ export interface MetricsEvaluationInput {
   warningCount?: number;
   errorCount?: number;
   issueSignals?: string[];
+  minFillCount?: number;
   minMarkoutCoverage?: number;
 }
+
+export interface MarkoutTailBps {
+  p10: number;
+  p5: number;
+  worst: number;
+}
+
+type ParameterAction =
+  | "hold"
+  | "blocked_by_data_health"
+  | "widen_spread_or_increase_gamma"
+  | "increase_k_inv"
+  | "reduce_size_or_budget"
+  | "tighten_spread";
 
 export interface MetricsEvaluation {
   dataHealth: {
@@ -36,12 +59,17 @@ export interface MetricsEvaluation {
     tradePnl: number;
     fee: number;
     pnlPerNotional: number;
+    pnlPerVolumeBps: number;
     maxDrawdown: number;
   };
   markouts: {
     avg5sBps: number;
+    avg30sBps: number;
+    avg300sBps: number;
+    tail30sBps: MarkoutTailBps;
     adverseSelectionRate: number;
     spreadCaptureBps: number;
+    realizedSpreadBps: number;
   };
   orderQuality: {
     fillRate: number;
@@ -49,22 +77,38 @@ export interface MetricsEvaluation {
     cancelRate: number;
     makerRatio: number;
     avgLatencyMs: number;
+    sideImbalance: number;
   };
   inventory: {
     positionSkew: number;
     closeCost: number;
   };
+  market: {
+    avgSpreadBps: number;
+    staleRate: number;
+  };
   runtimeHealth: {
     warningCount: number;
     errorCount: number;
   };
+  passFail: {
+    netPnl: boolean;
+    pnlPerVolumeBps: boolean;
+    avgMarkout30s: boolean;
+    markoutTail: boolean;
+    sideImbalance: boolean;
+  };
+  verdict: "pass" | "review";
+  parameterAction: ParameterAction;
   tuningAllowed: boolean;
   issueSignals: string[];
 }
 
 export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvaluation {
+  const minFillCount = input.minFillCount ?? 3;
   const minMarkoutCoverage = input.minMarkoutCoverage ?? 0.8;
-  const tuningAllowed = input.markoutCoverage >= minMarkoutCoverage && input.fillCount > 0;
+  const tuningAllowed =
+    input.fillCount >= minFillCount && input.markoutCoverage >= minMarkoutCoverage;
   return {
     dataHealth: {
       fillCount: input.fillCount,
@@ -77,12 +121,17 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       tradePnl: input.tradePnl,
       fee: input.fee,
       pnlPerNotional: input.pnlPerNotional,
+      pnlPerVolumeBps: input.pnlPerVolumeBps ?? input.pnlPerNotional * 10_000,
       maxDrawdown: input.maxDrawdown,
     },
     markouts: {
       avg5sBps: input.avg5sMarkoutBps,
+      avg30sBps: input.avg30sMarkoutBps ?? 0,
+      avg300sBps: input.avg300sMarkoutBps ?? 0,
+      tail30sBps: input.markout30sTailBps ?? { p10: 0, p5: 0, worst: 0 },
       adverseSelectionRate: input.adverseSelectionRate,
       spreadCaptureBps: input.spreadCaptureBps ?? 0,
+      realizedSpreadBps: input.realizedSpreadBps ?? 0,
     },
     orderQuality: {
       fillRate: input.fillRate,
@@ -90,27 +139,87 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       cancelRate: input.cancelRate,
       makerRatio: input.makerRatio ?? 0,
       avgLatencyMs: input.avgLatencyMs ?? 0,
+      sideImbalance: input.sideImbalance ?? 0,
     },
     inventory: {
       positionSkew: input.positionSkew ?? 0,
       closeCost: input.closeCost ?? 0,
     },
+    market: {
+      avgSpreadBps: input.avgMarketSpreadBps ?? 0,
+      staleRate: input.staleRate ?? 0,
+    },
     runtimeHealth: {
       warningCount: input.warningCount ?? 0,
       errorCount: input.errorCount ?? 0,
     },
+    passFail: passFailFor(input),
+    verdict: verdictFor(input),
+    parameterAction: parameterActionFor(input, tuningAllowed),
     tuningAllowed,
-    issueSignals: issueSignalsFor(input, minMarkoutCoverage),
+    issueSignals: issueSignalsFor(input, minFillCount, minMarkoutCoverage),
   };
 }
 
-function issueSignalsFor(input: MetricsEvaluationInput, minMarkoutCoverage: number): string[] {
+function passFailFor(input: MetricsEvaluationInput): MetricsEvaluation["passFail"] {
+  const pnlPerVolumeBps = input.pnlPerVolumeBps ?? input.pnlPerNotional * 10_000;
+  const avgMarkout30s = input.avg30sMarkoutBps ?? 0;
+  const tail = input.markout30sTailBps ?? { p10: 0, p5: 0, worst: 0 };
+  return {
+    netPnl: input.netPnl >= 0,
+    pnlPerVolumeBps: pnlPerVolumeBps >= 5,
+    avgMarkout30s: avgMarkout30s >= -5,
+    markoutTail: tail.p10 >= -150,
+    sideImbalance: Math.abs(input.sideImbalance ?? 0) < 0.7,
+  };
+}
+
+function verdictFor(input: MetricsEvaluationInput): MetricsEvaluation["verdict"] {
+  return Object.values(passFailFor(input)).every(Boolean) ? "pass" : "review";
+}
+
+function parameterActionFor(
+  input: MetricsEvaluationInput,
+  tuningAllowed: boolean,
+): ParameterAction {
+  if (!tuningAllowed) {
+    return "blocked_by_data_health";
+  }
+  const tail = input.markout30sTailBps ?? { p10: 0, p5: 0, worst: 0 };
+  if ((input.avg30sMarkoutBps ?? 0) < -5 || tail.p10 < -150 || tail.p5 < -150) {
+    return "widen_spread_or_increase_gamma";
+  }
+  if (Math.abs(input.positionSkew ?? 0) > 0.5) {
+    return "increase_k_inv";
+  }
+  if (input.maxDrawdown > 5) {
+    return "reduce_size_or_budget";
+  }
+  if (
+    input.netPnl >= 0 &&
+    (input.pnlPerVolumeBps ?? input.pnlPerNotional * 10_000) >= 5 &&
+    (input.avg30sMarkoutBps ?? 0) >= 0 &&
+    input.fillRate < 0.05
+  ) {
+    return "tighten_spread";
+  }
+  return "hold";
+}
+
+function issueSignalsFor(
+  input: MetricsEvaluationInput,
+  minFillCount: number,
+  minMarkoutCoverage: number,
+): string[] {
   const signals = new Set(input.issueSignals ?? []);
+  if (input.fillCount < minFillCount) {
+    signals.add("low_fill_count");
+  }
   if (input.markoutCoverage < minMarkoutCoverage) {
     signals.add("low_markout_coverage");
   }
   if (
-    input.fillCount > 0 &&
+    input.fillCount >= minFillCount &&
     input.markoutCoverage >= minMarkoutCoverage &&
     (input.netPnl <= 0 || input.pnlPerNotional <= 0)
   ) {

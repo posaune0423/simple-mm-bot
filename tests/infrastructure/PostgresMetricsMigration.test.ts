@@ -16,7 +16,11 @@ describe("Postgres metrics migration", () => {
     expect(migration).toContain("DROP TABLE IF EXISTS reports");
     expect(migration).toContain("DROP TABLE IF EXISTS telemetry_events");
     expect(migration).toContain("CREATE OR REPLACE VIEW v_fill_markouts");
-    expect(migration).toContain("orderbook_snapshots s5");
+    expect(migration).toContain("LEFT JOIN LATERAL");
+    expect(migration).toContain("next_s5.observed_at >= f.filled_at + 5000");
+    expect(migration).toContain("WITH latest_snapshot AS");
+    expect(migration).toContain("ls.latest_observed_at >= f.filled_at + 5000");
+    expect(migration).not.toContain("s5.observed_at = f.filled_at + 5000");
     expect(migration).not.toContain("ohlcv");
   });
 });

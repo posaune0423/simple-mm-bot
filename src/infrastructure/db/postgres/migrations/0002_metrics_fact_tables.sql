@@ -227,27 +227,57 @@ CREATE OR REPLACE VIEW v_fill_markouts AS
       ELSE ((f.price - s300.mid_price) / f.price) * 10000
     END AS markout_300s_bps
   FROM trade_fills f
-  LEFT JOIN orderbook_snapshots s5
-    ON s5.run_id = f.run_id
-   AND s5.market = f.market
-   AND s5.observed_at = f.filled_at + 5000
-  LEFT JOIN orderbook_snapshots s30
-    ON s30.run_id = f.run_id
-   AND s30.market = f.market
-   AND s30.observed_at = f.filled_at + 30000
-  LEFT JOIN orderbook_snapshots s300
-    ON s300.run_id = f.run_id
-   AND s300.market = f.market
-   AND s300.observed_at = f.filled_at + 300000;
+  LEFT JOIN LATERAL (
+    SELECT mid_price
+    FROM orderbook_snapshots next_s5
+    WHERE next_s5.run_id = f.run_id
+      AND next_s5.market = f.market
+      AND next_s5.observed_at >= f.filled_at + 5000
+    ORDER BY next_s5.observed_at ASC
+    LIMIT 1
+  ) s5 ON true
+  LEFT JOIN LATERAL (
+    SELECT mid_price
+    FROM orderbook_snapshots next_s30
+    WHERE next_s30.run_id = f.run_id
+      AND next_s30.market = f.market
+      AND next_s30.observed_at >= f.filled_at + 30000
+    ORDER BY next_s30.observed_at ASC
+    LIMIT 1
+  ) s30 ON true
+  LEFT JOIN LATERAL (
+    SELECT mid_price
+    FROM orderbook_snapshots next_s300
+    WHERE next_s300.run_id = f.run_id
+      AND next_s300.market = f.market
+      AND next_s300.observed_at >= f.filled_at + 300000
+    ORDER BY next_s300.observed_at ASC
+    LIMIT 1
+  ) s300 ON true;
 --> statement-breakpoint
 CREATE OR REPLACE VIEW v_markout_quality AS
+  WITH latest_snapshot AS (
+    SELECT
+      run_id,
+      market,
+      MAX(observed_at) AS latest_observed_at
+    FROM orderbook_snapshots
+    GROUP BY run_id, market
+  )
   SELECT
-    run_id,
-    AVG(markout_5s_bps) AS avg_markout_5s_bps,
-    AVG(adverse_5s) AS adverse_selection_rate_5s,
-    SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS markout_5s_coverage
-  FROM v_fill_markouts
-  GROUP BY run_id;
+    f.run_id,
+    AVG(f.markout_5s_bps) AS avg_markout_5s_bps,
+    AVG(f.adverse_5s) AS adverse_selection_rate_5s,
+    SUM(CASE WHEN f.markout_5s_bps IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION /
+      NULLIF(
+        SUM(CASE WHEN ls.latest_observed_at >= f.filled_at + 5000 THEN 1 ELSE 0 END),
+        0
+      ) AS markout_5s_coverage
+  FROM v_fill_markouts f
+  LEFT JOIN latest_snapshot ls
+    ON ls.run_id = f.run_id
+   AND ls.market = f.market
+  GROUP BY f.run_id;
 --> statement-breakpoint
 CREATE OR REPLACE VIEW v_market_quality AS
   SELECT

@@ -17,21 +17,6 @@ export function createSqliteClient(path: string) {
     PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
   `);
   sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS fills (
-      id TEXT PRIMARY KEY,
-      venue TEXT NOT NULL,
-      market TEXT NOT NULL,
-      side TEXT NOT NULL,
-      price REAL NOT NULL,
-      qty REAL NOT NULL,
-      fee REAL NOT NULL,
-      trade_pnl REAL NOT NULL,
-      filled_at INTEGER NOT NULL,
-      quote_id TEXT,
-      mark_price_at_fill REAL,
-      mark_price_5s REAL,
-      mark_price_30s REAL
-    );
     CREATE TABLE IF NOT EXISTS ohlcv (
       market TEXT NOT NULL,
       timeframe TEXT NOT NULL,
@@ -130,6 +115,15 @@ export function createSqliteClient(path: string) {
       raw_json TEXT,
       UNIQUE (run_id, market, observed_at)
     );
+    DROP VIEW IF EXISTS v_run_performance;
+    DROP VIEW IF EXISTS v_inventory_risk;
+    DROP VIEW IF EXISTS v_market_quality;
+    DROP VIEW IF EXISTS v_markout_quality;
+    DROP VIEW IF EXISTS v_fill_markouts;
+    DROP VIEW IF EXISTS v_order_quality;
+    DROP VIEW IF EXISTS v_run_drawdown;
+    DROP VIEW IF EXISTS v_equity_curve;
+    DROP VIEW IF EXISTS v_run_pnl;
     CREATE VIEW IF NOT EXISTS v_run_pnl AS
       SELECT
         run_id,
@@ -228,25 +222,58 @@ export function createSqliteClient(path: string) {
         END AS markout_300s_bps
       FROM trade_fills f
       LEFT JOIN orderbook_snapshots s5
-        ON s5.run_id = f.run_id
-       AND s5.market = f.market
-       AND s5.observed_at = f.filled_at + 5000
+        ON s5.id = (
+          SELECT next_s5.id
+          FROM orderbook_snapshots next_s5
+          WHERE next_s5.run_id = f.run_id
+            AND next_s5.market = f.market
+            AND next_s5.observed_at >= f.filled_at + 5000
+          ORDER BY next_s5.observed_at ASC
+          LIMIT 1
+        )
       LEFT JOIN orderbook_snapshots s30
-        ON s30.run_id = f.run_id
-       AND s30.market = f.market
-       AND s30.observed_at = f.filled_at + 30000
+        ON s30.id = (
+          SELECT next_s30.id
+          FROM orderbook_snapshots next_s30
+          WHERE next_s30.run_id = f.run_id
+            AND next_s30.market = f.market
+            AND next_s30.observed_at >= f.filled_at + 30000
+          ORDER BY next_s30.observed_at ASC
+          LIMIT 1
+        )
       LEFT JOIN orderbook_snapshots s300
-        ON s300.run_id = f.run_id
-       AND s300.market = f.market
-       AND s300.observed_at = f.filled_at + 300000;
+        ON s300.id = (
+          SELECT next_s300.id
+          FROM orderbook_snapshots next_s300
+          WHERE next_s300.run_id = f.run_id
+            AND next_s300.market = f.market
+            AND next_s300.observed_at >= f.filled_at + 300000
+          ORDER BY next_s300.observed_at ASC
+          LIMIT 1
+        );
     CREATE VIEW IF NOT EXISTS v_markout_quality AS
+      WITH latest_snapshot AS (
+        SELECT
+          run_id,
+          market,
+          MAX(observed_at) AS latest_observed_at
+        FROM orderbook_snapshots
+        GROUP BY run_id, market
+      )
       SELECT
-        run_id,
-        AVG(markout_5s_bps) AS avg_markout_5s_bps,
-        AVG(adverse_5s) AS adverse_selection_rate_5s,
-        SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS markout_5s_coverage
-      FROM v_fill_markouts
-      GROUP BY run_id;
+        f.run_id,
+        AVG(f.markout_5s_bps) AS avg_markout_5s_bps,
+        AVG(f.adverse_5s) AS adverse_selection_rate_5s,
+        SUM(CASE WHEN f.markout_5s_bps IS NOT NULL THEN 1 ELSE 0 END) * 1.0 /
+          NULLIF(
+            SUM(CASE WHEN ls.latest_observed_at >= f.filled_at + 5000 THEN 1 ELSE 0 END),
+            0
+          ) AS markout_5s_coverage
+      FROM v_fill_markouts f
+      LEFT JOIN latest_snapshot ls
+        ON ls.run_id = f.run_id
+       AND ls.market = f.market
+      GROUP BY f.run_id;
     CREATE VIEW IF NOT EXISTS v_market_quality AS
       WITH ranked AS (
         SELECT

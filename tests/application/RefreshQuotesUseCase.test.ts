@@ -174,4 +174,79 @@ describe("RefreshQuotesUseCase", () => {
       logs.restore();
     }
   });
+
+  test("places bid and ask with a shared quote cycle client order id prefix", async () => {
+    const placed: Array<{ side: "buy" | "sell"; clientOrderId?: string }> = [];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        return {
+          market: "BTC-USD",
+          bestBid: 99,
+          bestAsk: 101,
+          microPrice: 100,
+          markPrice: 100,
+          timestamp: 1,
+          marginRatio: 0.2,
+        };
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: { side: "buy" | "sell"; clientOrderId?: string }) {
+        placed.push(order);
+        return {
+          id: `${order.side}-1`,
+          request: {
+            market: "BTC-USD",
+            side: order.side,
+            price: 100,
+            qty: 0.01,
+            reduceOnly: false,
+            timeInForce: "GTC" as const,
+          },
+          status: "open" as const,
+        };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({ gamma: 0, kappa: 8, kInv: 0.05 }),
+      new FairPriceCalculator(0.5),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.5,
+        timeHorizonSec: 30,
+        slideMarginThreshold: 0.12,
+        defaultTimeInForce: "GTC",
+        positionSize: 0.05,
+        budgetUsd: 250,
+      },
+    );
+
+    await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
+
+    expect(placed).toHaveLength(2);
+    const bidPrefix = placed[0]?.clientOrderId?.replace(/:bid$/, "");
+    const askPrefix = placed[1]?.clientOrderId?.replace(/:ask$/, "");
+    expect(placed[0]?.clientOrderId?.endsWith(":bid")).toBe(true);
+    expect(placed[1]?.clientOrderId?.endsWith(":ask")).toBe(true);
+    expect(bidPrefix).toBe(askPrefix);
+  });
 });

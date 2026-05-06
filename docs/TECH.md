@@ -41,7 +41,7 @@ bot の 1 tick は以下の責務順で動作する。
 1. `GuardRiskUseCase` を実行する
 2. `OK` の場合のみ `RefreshQuotesUseCase` を実行する
 3. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
-4. fill event は `RecordFillUseCase` で保存する
+4. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
 5. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
 
 この流れにより、mode や venue を知らない共通の bot ループを維持する。
@@ -73,7 +73,6 @@ bot の 1 tick は以下の責務順で動作する。
   - `cancel(id)`
   - `cancelAll()`
 - `IPositionRepository`
-- `ITradeRepository`
 - `IOhlcvRepository`
 
 ### Strategy / Quote Engine
@@ -88,6 +87,7 @@ bot の 1 tick は以下の責務順で動作する。
 | `gamma`        | リスク回避係数        | `0.001-0.5`、ただし `0` を許容 | `0.02` |
 | `kappa`        | fill intensity 推定値 | `> 0`                          | `1.5`  |
 | `kInv`         | inventory skew 係数   | `0-2`                          | `0.3`  |
+| `minSpreadBps` | 最小 quote 幅         | `>= 0`                         | `5.6`  |
 | `positionSize` | 基本発注サイズ        | `> 0`                          | `0.01` |
 | `budgetUsd`    | 発注あたり予算上限    | `> 0`                          | `100`  |
 

@@ -14,18 +14,15 @@ import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
-import type { ITradeRepository } from "../domain/ports/ITradeRepository.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
 import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
 import { PostgresMetricsRepository } from "../infrastructure/db/postgres/repository/PostgresMetricsRepository.ts";
-import { PostgresTradeRepository } from "../infrastructure/db/postgres/repository/PostgresTradeRepository.ts";
 import { createSqliteClient } from "../infrastructure/db/sqlite/client.ts";
 import { SqliteMetricsRepository } from "../infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
 import { SqliteOhlcvRepository } from "../infrastructure/db/sqlite/repository/SqliteOhlcvRepository.ts";
-import { SqliteTradeRepository } from "../infrastructure/db/sqlite/repository/SqliteTradeRepository.ts";
 import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeApi.ts";
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
@@ -33,13 +30,12 @@ import { Bot } from "./Bot.ts";
 import { MetricsRecorder } from "./MetricsRecorder.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
-import { RecordFillUseCase } from "./usecases/RecordFillUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
+import { UpdatePositionOnFillUseCase } from "./usecases/UpdatePositionOnFillUseCase.ts";
 
 interface Repositories {
-  tradeRepository: ITradeRepository;
   ohlcvRepository: IOhlcvRepository;
   metricsRepository: IMetricsRepository;
 }
@@ -69,7 +65,7 @@ export class DIContainer {
           metrics,
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
-        recordFill: new RecordFillUseCase(repositories.tradeRepository, positionRepository),
+        updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
         recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
         reduceInventory: new ReduceInventoryUseCase(
           gateway,
@@ -100,6 +96,7 @@ export class DIContainer {
       {
         inventoryScale: this.config.quoteEngine.inventoryScale,
         timeHorizonSec: this.config.quoteEngine.timeHorizonSec,
+        minSpreadBps: this.config.quoteEngine.minSpreadBps,
         slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
         defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
@@ -113,7 +110,6 @@ export class DIContainer {
     if (databaseUrl) {
       const client = createPostgresClient(databaseUrl);
       return {
-        tradeRepository: new PostgresTradeRepository(client.db),
         ohlcvRepository: new PostgresOhlcvRepository(client.db),
         metricsRepository: new PostgresMetricsRepository(client.db),
       };
@@ -121,7 +117,6 @@ export class DIContainer {
 
     const client = createSqliteClient(Bun.env.DB_PATH ?? env.DB_PATH);
     return {
-      tradeRepository: new SqliteTradeRepository(client.db),
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
       metricsRepository: new SqliteMetricsRepository(client.db),
     };

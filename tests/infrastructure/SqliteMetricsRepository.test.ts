@@ -242,6 +242,98 @@ describe("SqliteMetricsRepository", () => {
     expect(marketQuality?.observation_count).toBe(20);
   });
 
+  test("recreates analysis views when an existing sqlite database has stale view SQL", () => {
+    const client = createSqliteClient(dbPath);
+    client.sqlite.exec("DROP VIEW v_fill_markouts");
+    client.sqlite.exec("CREATE VIEW v_fill_markouts AS SELECT 1 AS stale_view");
+    client.sqlite.close();
+
+    const migrated = createSqliteClient(dbPath);
+    const viewSql = migrated.sqlite
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'v_fill_markouts'",
+      )
+      .get();
+
+    expect(viewSql?.sql).toContain("next_s5.observed_at >= f.filled_at + 5000");
+    expect(viewSql?.sql).not.toContain("stale_view");
+    migrated.sqlite.close();
+  });
+
+  test("excludes fills without enough future snapshots from markout coverage denominator", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-markout-coverage",
+      mode: "paper",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "paper",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "coverage-snapshot-fill",
+      runId: "run-markout-coverage",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1000,
+      bestBid: 99,
+      bestAsk: 101,
+      midPrice: 100,
+      microPrice: 100,
+      markPrice: 100,
+      spreadBps: 200,
+      stalenessMs: 0,
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "coverage-snapshot-5s",
+      runId: "run-markout-coverage",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 6100,
+      bestBid: 100,
+      bestAsk: 102,
+      midPrice: 101,
+      microPrice: 101,
+      markPrice: 101,
+      spreadBps: 198,
+      stalenessMs: 50,
+    });
+    for (const [id, filledAt] of [
+      ["eligible-fill", 1000],
+      ["terminal-fill", 6000],
+    ] as const) {
+      await repository.recordTradeFill({
+        id,
+        runId: "run-markout-coverage",
+        venue: "bulk",
+        market: "BTC-USD",
+        venueFillId: id,
+        side: "buy",
+        price: 99,
+        quantity: 1,
+        fee: 0.1,
+        tradePnl: 1,
+        makerTaker: "maker",
+        filledAt,
+      });
+    }
+
+    const quality = client.sqlite
+      .query<{ avg_markout_5s_bps: number; markout_5s_coverage: number }, []>(
+        "SELECT avg_markout_5s_bps, markout_5s_coverage FROM v_markout_quality WHERE run_id = 'run-markout-coverage'",
+      )
+      .get();
+
+    expect(quality?.avg_markout_5s_bps).toBeCloseTo(202.0202, 4);
+    expect(quality?.markout_5s_coverage).toBe(1);
+  });
+
   test("computes analysis views from fact tables instead of OHLCV", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
@@ -277,13 +369,27 @@ describe("SqliteMetricsRepository", () => {
       runId: "run-views",
       venue: "bulk",
       market: "BTC-USD",
-      observedAt: 6000,
+      observedAt: 6100,
       bestBid: 100,
       bestAsk: 102,
       midPrice: 101,
       microPrice: 101,
       markPrice: 101,
       spreadBps: 198,
+      stalenessMs: 50,
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "snapshot-5s-later",
+      runId: "run-views",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 6200,
+      bestBid: 119,
+      bestAsk: 121,
+      midPrice: 120,
+      microPrice: 120,
+      markPrice: 120,
+      spreadBps: 168,
       stalenessMs: 50,
     });
     await repository.recordSubmittedOrder({

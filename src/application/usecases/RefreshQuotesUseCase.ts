@@ -28,6 +28,7 @@ export class RefreshQuotesUseCase {
     );
     await this.metrics?.recordQuote(snapshot, position.qty, quote);
     await this.orderGateway.cancelAll();
+    const quoteCycleId = randomUUID();
     const bidOrder = await this.orderGateway.place({
       market: snapshot.market,
       side: "buy",
@@ -35,7 +36,7 @@ export class RefreshQuotesUseCase {
       qty: quote.bidSize,
       reduceOnly: false,
       timeInForce: quote.policy,
-      clientOrderId: randomUUID(),
+      clientOrderId: `${quoteCycleId}:bid`,
       intent: "quote",
     });
     const askOrder = await this.orderGateway.place({
@@ -45,7 +46,7 @@ export class RefreshQuotesUseCase {
       qty: quote.askSize,
       reduceOnly: false,
       timeInForce: quote.policy,
-      clientOrderId: randomUUID(),
+      clientOrderId: `${quoteCycleId}:ask`,
       intent: "quote",
     });
     logger.info(

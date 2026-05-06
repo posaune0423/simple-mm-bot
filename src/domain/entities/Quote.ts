@@ -18,6 +18,7 @@ export interface QuoteContext {
   positionQty: number;
   inventoryScale: number;
   timeHorizonSec: number;
+  minSpreadBps?: number;
   slideMarginThreshold: number;
   defaultTimeInForce: OrderTimeInForce;
   marginRatio: number | null;

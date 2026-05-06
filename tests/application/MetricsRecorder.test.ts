@@ -180,4 +180,111 @@ describe("MetricsRecorder", () => {
       }),
     ]);
   });
+
+  test("records quote diagnostics as account state observations", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-quote",
+      mode: "paper",
+      venue: "bulk",
+      capitalMode: "paper",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordQuote(
+      {
+        market: "BTC-USD",
+        bestBid: 99,
+        bestAsk: 101,
+        microPrice: 100,
+        markPrice: 100,
+        timestamp: 1234,
+        marginRatio: 0.8,
+      },
+      -0.25,
+      {
+        bid: 99.5,
+        ask: 100.5,
+        bidSize: 0.1,
+        askSize: 0.2,
+        policy: "GTC",
+        fairPrice: 100,
+        sigma: 0.01,
+      },
+    );
+
+    expect(repository.accounts).toEqual([
+      expect.objectContaining({
+        id: "run-quote:BTC-USD:1234:quote",
+        runId: "run-quote",
+        market: "BTC-USD",
+        observedAt: 1234,
+        positionQty: -0.25,
+        marginRatio: 0.8,
+        rawJson: expect.objectContaining({
+          source: "quote",
+          quotedSpreadBps: 100.50251256281408,
+          bidDistanceBps: 50.25125628140704,
+          askDistanceBps: 50,
+        }),
+      }),
+    ]);
+  });
+
+  test("computes realized trade pnl from fill sequence for metrics facts", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-pnl",
+      mode: "paper",
+      venue: "bulk",
+      capitalMode: "paper",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordFill({
+      id: "buy-open",
+      venue: "paper",
+      market: "BTC-USD",
+      side: "buy",
+      price: 100,
+      qty: 1,
+      fee: 0.01,
+      tradePnl: 0,
+      filledAt: 1000,
+    });
+    await recorder.recordFill({
+      id: "sell-reduce",
+      venue: "paper",
+      market: "BTC-USD",
+      side: "sell",
+      price: 102,
+      qty: 0.4,
+      fee: 0.01,
+      tradePnl: 0,
+      filledAt: 2000,
+    });
+    await recorder.recordFill({
+      id: "sell-flip",
+      venue: "paper",
+      market: "BTC-USD",
+      side: "sell",
+      price: 99,
+      qty: 1,
+      fee: 0.01,
+      tradePnl: 0,
+      filledAt: 3000,
+    });
+
+    expect(repository.fills).toEqual([
+      expect.objectContaining({ id: "buy-open", tradePnl: 0 }),
+      expect.objectContaining({ id: "sell-reduce", tradePnl: 0.8 }),
+      expect.objectContaining({ id: "sell-flip", tradePnl: -0.6 }),
+    ]);
+  });
 });

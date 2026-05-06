@@ -11,16 +11,26 @@ import { createAppError, formatAppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { logger } from "../src/utils/logger.ts";
+import { evaluateMetricsRun, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 
 interface BacktestPaperLoopSummary {
   verdict: "pass" | "review";
   backtest: PerformanceMetrics;
   paper: PerformanceMetrics;
+  recommendation: {
+    backtest: MetricsEvaluation["parameterAction"];
+    paper: MetricsEvaluation["parameterAction"];
+  };
   window: {
     from: string;
     to: string;
     paperDurationMin: number;
   };
+}
+
+interface LoopRunReport {
+  performance: PerformanceMetrics;
+  evaluation: MetricsEvaluation;
 }
 
 function buildBot(
@@ -46,26 +56,31 @@ function buildBot(
   );
 }
 
-function loadLatestPerformanceMetrics(
-  dbPath: string,
-  mode: "paper" | "backtest",
-): PerformanceMetrics {
+function loadLatestRunReport(dbPath: string, mode: "paper" | "backtest"): LoopRunReport {
   const client = createSqliteClient(dbPath);
   try {
     const row = client.sqlite
       .query<
         {
+          fill_count: number;
+          notional: number;
+          fee: number;
           net_pnl: number;
           trade_pnl: number;
           markout_5s: number;
           markout_30s: number;
+          avg_markout_30s: number;
           max_drawdown: number;
           fill_rate: number;
+          side_imbalance: number;
         },
         [string]
       >(
         `
           SELECT
+            COUNT(tf.id) AS fill_count,
+            COALESCE(p.notional, 0) AS notional,
+            COALESCE(p.fee, 0) AS fee,
             COALESCE(p.net_pnl, 0) AS net_pnl,
             COALESCE(p.trade_pnl, 0) AS trade_pnl,
             COALESCE((
@@ -78,13 +93,28 @@ function loadLatestPerformanceMetrics(
               FROM v_fill_markouts
               WHERE run_id = r.id
             ), 0) AS markout_30s,
+            COALESCE((
+              SELECT AVG(markout_30s_bps)
+              FROM v_fill_markouts
+              WHERE run_id = r.id
+            ), 0) AS avg_markout_30s,
             COALESCE(d.max_drawdown, 0) AS max_drawdown,
-            COALESCE(oq.fill_rate, 0) AS fill_rate
+            COALESCE(oq.fill_rate, 0) AS fill_rate,
+            CASE
+              WHEN COUNT(tf.id) > 0
+              THEN ABS(
+                SUM(CASE WHEN tf.side = 'buy' THEN 1 ELSE 0 END) -
+                SUM(CASE WHEN tf.side = 'sell' THEN 1 ELSE 0 END)
+              ) * 1.0 / COUNT(tf.id)
+              ELSE 0
+            END AS side_imbalance
           FROM trading_runs r
+          LEFT JOIN trade_fills tf ON tf.run_id = r.id
           LEFT JOIN v_run_pnl p ON p.run_id = r.id
           LEFT JOIN v_run_drawdown d ON d.run_id = r.id
           LEFT JOIN v_order_quality oq ON oq.run_id = r.id
           WHERE r.mode = ?
+          GROUP BY r.id
           ORDER BY r.started_at DESC
           LIMIT 1
         `,
@@ -95,7 +125,7 @@ function loadLatestPerformanceMetrics(
       throw new Error(`No trading run found for mode=${mode}`);
     }
 
-    return {
+    const performance = {
       netPnl: row.net_pnl,
       tradePnl: row.trade_pnl,
       markout5s: row.markout_5s,
@@ -104,6 +134,25 @@ function loadLatestPerformanceMetrics(
       sharpe: 0,
       fillRate: row.fill_rate,
     };
+    const evaluation = evaluateMetricsRun({
+      fillCount: row.fill_count,
+      markoutCoverage: row.fill_count > 0 ? 1 : 0,
+      netPnl: row.net_pnl,
+      tradePnl: row.trade_pnl,
+      fee: row.fee,
+      pnlPerNotional: row.notional > 0 ? row.net_pnl / row.notional : 0,
+      pnlPerVolumeBps: row.notional > 0 ? (row.net_pnl / row.notional) * 10_000 : 0,
+      maxDrawdown: row.max_drawdown,
+      avg5sMarkoutBps: row.fill_count > 0 ? row.markout_5s / row.fill_count : 0,
+      avg30sMarkoutBps: row.avg_markout_30s,
+      adverseSelectionRate: 0,
+      fillRate: row.fill_rate,
+      rejectRate: 0,
+      cancelRate: 0,
+      sideImbalance: row.side_imbalance,
+      minFillCount: 1,
+    });
+    return { performance, evaluation };
   } finally {
     client.sqlite.close();
   }
@@ -127,32 +176,42 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
     .andThen(() => buildBot(backtestConfigPath, "backtest", dbPath, { from, to }))
     .andThen((bot) =>
       ResultAsync.fromPromise(
-        bot.start().then(() => loadLatestPerformanceMetrics(dbPath, "backtest")),
+        bot.start().then(() => loadLatestRunReport(dbPath, "backtest")),
         (error) => createAppError("loop.backtest_failed", "Backtest execution failed", error),
       ),
     )
-    .andThen((backtestMetrics) =>
+    .andThen((backtestReport) =>
       buildBot(paperConfigPath, "paper", dbPath).andThen((bot) =>
         ResultAsync.fromPromise(
-          bot.start(paperTicks).then(() => loadLatestPerformanceMetrics(dbPath, "paper")),
+          bot.start(paperTicks).then(() => loadLatestRunReport(dbPath, "paper")),
           (error) => createAppError("loop.paper_failed", "Paper execution failed", error),
-        ).map((paperMetrics) => ({ backtestMetrics, paperMetrics })),
+        ).map((paperReport) => ({ backtestReport, paperReport })),
       ),
     )
-    .andThen(({ backtestMetrics, paperMetrics }) => {
+    .andThen(({ backtestReport, paperReport }) => {
+      const backtestMetrics = backtestReport.performance;
+      const paperMetrics = paperReport.performance;
+      const verdict =
+        backtestReport.evaluation.verdict === "pass" && paperReport.evaluation.verdict === "pass"
+          ? "pass"
+          : "review";
       const summary: BacktestPaperLoopSummary = {
-        verdict: backtestMetrics.netPnl >= 0 && paperMetrics.netPnl >= 0 ? "pass" : "review",
+        verdict,
         backtest: backtestMetrics,
         paper: paperMetrics,
+        recommendation: {
+          backtest: backtestReport.evaluation.parameterAction,
+          paper: paperReport.evaluation.parameterAction,
+        },
         window: { from, to, paperDurationMin },
       };
 
       return ResultAsync.fromPromise(
         Promise.all([
           writeJsonFile(join(outputDir, "summary.json"), summary),
-          writeJsonFile(join(outputDir, "metrics.json"), {
-            backtest: backtestMetrics,
-            paper: paperMetrics,
+          writeJsonFile(join(outputDir, "report.json"), {
+            backtest: backtestReport,
+            paper: paperReport,
           }),
           writeTextFile(
             join(outputDir, "run.md"),
@@ -160,6 +219,8 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
               "# Strategy Run",
               "",
               `- Verdict: ${summary.verdict}`,
+              `- Backtest action: ${summary.recommendation.backtest}`,
+              `- Paper action: ${summary.recommendation.paper}`,
               `- Backtest netPnl: ${backtestMetrics.netPnl}`,
               `- Paper netPnl: ${paperMetrics.netPnl}`,
               `- Output dir: ${outputDir}`,

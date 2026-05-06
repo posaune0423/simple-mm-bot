@@ -134,6 +134,42 @@ describe("QuoteEngine", () => {
     expect(quote.askSize).toBe(0.04);
   });
 
+  test("enforces configured minimum spread in basis points for high-priced markets", () => {
+    const engine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({
+        gamma: 0,
+        kappa: 8,
+        kInv: 0,
+      }),
+      new FairPriceCalculator(0.5),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.5,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "GTC",
+        positionSize: 0.05,
+        budgetUsd: 250,
+        minSpreadBps: 6,
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 81449.75,
+        bestAsk: 81450,
+        microPrice: 81449.875,
+        markPrice: 81449.875,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: 0, avgEntry: 0, unrealizedPnl: 0 },
+    );
+
+    expect(quote.ask - quote.bid).toBeCloseTo(48.869925, 6);
+  });
+
   test("uses configured default time in force for normal quote policy", () => {
     const engine = new QuoteEngine(
       new AvellanedaStoikovStrategy({

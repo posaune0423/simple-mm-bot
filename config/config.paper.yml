@@ -19,6 +19,7 @@ quoteEngine:
   markWeight: 0.5
   inventoryScale: 0.5
   timeHorizonSec: 10
+  minSpreadBps: 5.6
   slideMarginThreshold: 0.08
   defaultTimeInForce: GTC
   sizing:

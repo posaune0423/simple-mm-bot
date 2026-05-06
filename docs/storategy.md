@@ -158,10 +158,12 @@ spread = 2 / kappa
 spread = gamma * varianceTerm + (2 / gamma) * ln(1 + gamma / kappa)
 ```
 
-Bulk live config の現値は `gamma = 0`, `kappa = 8` なので、現在の spread は volatility に依存しない。
+Bulk live config は fee 負けする極細 quote を避けるため、strategy spread に bps 下限をかける。
 
 ```text
-spread = 2 / 8 = 0.25 USD
+strategySpread = 2 / 8 = 0.25 USD
+minSpread = fairPrice * minSpreadBps / 10_000
+spread = max(strategySpread, minSpread)
 ```
 
 ### Inventory Skew
@@ -183,6 +185,7 @@ Bulk live config の現値:
 ```text
 inventoryScale = 0.5
 timeHorizonSec = 10
+minSpreadBps = 5.6
 kInv = 0.05
 ```
 
@@ -218,6 +221,7 @@ defaultTimeInForce = GTC
 | fair     | `markWeight`         |     `0.5` | mark / micro blend            |
 | sizing   | `positionSize`       |    `0.05` | max quote size in BTC         |
 | sizing   | `budgetUsd`          |     `250` | per-order budget cap          |
+| engine   | `minSpreadBps`       |     `5.6` | fee-aware minimum quote width |
 | strategy | `gamma`              |       `0` | fixed-spread mode             |
 | strategy | `kappa`              |       `8` | fixed spread denominator      |
 | strategy | `kInv`               |    `0.05` | inventory skew coefficient    |

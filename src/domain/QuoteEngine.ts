@@ -8,6 +8,7 @@ import type { VolatilityEstimator } from "./VolatilityEstimator.ts";
 interface QuoteEngineConfig {
   inventoryScale: number;
   timeHorizonSec: number;
+  minSpreadBps?: number;
   slideMarginThreshold: number;
   defaultTimeInForce: OrderTimeInForce;
   positionSize: number;
@@ -37,6 +38,7 @@ export class QuoteEngine {
       positionQty: position.qty,
       inventoryScale: this.config.inventoryScale,
       timeHorizonSec: this.config.timeHorizonSec,
+      minSpreadBps: this.config.minSpreadBps,
       slideMarginThreshold: this.config.slideMarginThreshold,
       defaultTimeInForce: this.config.defaultTimeInForce,
       marginRatio: snapshot.marginRatio,
