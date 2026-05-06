@@ -31,6 +31,9 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.["metrics:report"]).toBe(
       "bun run scripts/generateMetricsReport.ts",
     );
+    expect(packageJson.scripts?.["artifacts:compact-db"]).toBe(
+      "bun run scripts/compactLocalArtifacts.ts",
+    );
     expect(packageJson.scripts?.["telemetry:evaluate"]).toBeUndefined();
     expect(packageJson.scripts?.["telemetry:tune"]).toBeUndefined();
     expect(packageJson.scripts?.["telemetry:issues"]).toBeUndefined();

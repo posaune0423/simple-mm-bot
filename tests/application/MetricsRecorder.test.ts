@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { MetricsRecorder } from "../../src/application/MetricsRecorder.ts";
 import type { Fill } from "../../src/domain/entities/Fill.ts";
@@ -179,6 +179,64 @@ describe("MetricsRecorder", () => {
         latencyMs: 25,
       }),
     ]);
+  });
+
+  test("records bare cancelAll events against tracked open orders", async () => {
+    const now = spyOn(Date, "now");
+    now.mockReturnValueOnce(1000).mockReturnValueOnce(1050).mockReturnValueOnce(2000);
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-cancel-all",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordOrder({
+      action: "submit",
+      clientOrderId: "cycle-1:bid:0",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      price: 99,
+      qty: 1,
+      timeInForce: "GTC",
+    });
+    await recorder.recordOrder({
+      action: "ack",
+      clientOrderId: "cycle-1:bid:0",
+      orderId: "venue-1",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      price: 99,
+      qty: 1,
+      timeInForce: "GTC",
+      latencyMs: 50,
+      status: "open",
+    });
+    await recorder.recordOrder({
+      action: "cancel",
+      latencyMs: 30,
+      rawSummary: { request: "cancelAll" },
+    });
+
+    expect(repository.orders.at(-1)).toMatchObject({
+      id: "run-cancel-all:cycle-1:bid:0",
+      clientOrderId: "cycle-1:bid:0",
+      venueOrderId: "venue-1",
+      finalStatus: "canceled",
+      submittedAt: 1000,
+      acceptedAt: 1050,
+      canceledAt: 2000,
+      latencyMs: 30,
+      rawJson: { request: "cancelAll", cancelSource: "cancelAll" },
+    });
+    now.mockRestore();
   });
 
   test("records quote diagnostics as account state observations", async () => {

@@ -13,6 +13,9 @@ export const SQLITE_VIEW_NAMES = [
   "v_run_pnl",
   "v_equity_curve",
   "v_run_drawdown",
+  "v_order_lifecycle",
+  "v_quote_competitiveness",
+  "v_quote_level_quality",
   "v_order_quality",
   "v_fill_markouts",
   "v_markout_quality",
@@ -131,6 +134,9 @@ export const SQLITE_BOOTSTRAP_SQL = `
   DROP VIEW IF EXISTS v_markout_quality;
   DROP VIEW IF EXISTS v_fill_markouts;
   DROP VIEW IF EXISTS v_order_quality;
+  DROP VIEW IF EXISTS v_quote_level_quality;
+  DROP VIEW IF EXISTS v_quote_competitiveness;
+  DROP VIEW IF EXISTS v_order_lifecycle;
   DROP VIEW IF EXISTS v_run_drawdown;
   DROP VIEW IF EXISTS v_equity_curve;
   DROP VIEW IF EXISTS v_run_pnl;
@@ -174,30 +180,134 @@ export const SQLITE_BOOTSTRAP_SQL = `
     SELECT run_id, MAX(peak_pnl - cumulative_net_pnl) AS max_drawdown
     FROM peaks
     GROUP BY run_id;
-  CREATE VIEW IF NOT EXISTS v_order_quality AS
-    WITH filled_orders AS (
-      SELECT DISTINCT run_id, submitted_order_id AS order_id
+  CREATE VIEW IF NOT EXISTS v_order_lifecycle AS
+    WITH fill_links AS (
+      SELECT run_id, submitted_order_id AS order_id, MIN(filled_at) AS filled_at
       FROM trade_fills
       WHERE submitted_order_id IS NOT NULL
-      UNION
-      SELECT DISTINCT f.run_id, o.id AS order_id
+      GROUP BY run_id, submitted_order_id
+      UNION ALL
+      SELECT f.run_id, o.id AS order_id, MIN(f.filled_at) AS filled_at
       FROM trade_fills f
       JOIN submitted_orders o
         ON o.run_id = f.run_id
        AND o.venue_order_id = f.venue_order_id
       WHERE f.venue_order_id IS NOT NULL
+      GROUP BY f.run_id, o.id
+    ),
+    first_fills AS (
+      SELECT run_id, order_id, MIN(filled_at) AS filled_at
+      FROM fill_links
+      GROUP BY run_id, order_id
+    ),
+    enriched AS (
+      SELECT
+        o.*,
+        CASE
+          WHEN instr(o.client_order_id, ':bid:') > 0 THEN substr(o.client_order_id, 1, instr(o.client_order_id, ':bid:') - 1)
+          WHEN instr(o.client_order_id, ':ask:') > 0 THEN substr(o.client_order_id, 1, instr(o.client_order_id, ':ask:') - 1)
+          WHEN o.client_order_id LIKE '%:bid' THEN substr(o.client_order_id, 1, length(o.client_order_id) - 4)
+          WHEN o.client_order_id LIKE '%:ask' THEN substr(o.client_order_id, 1, length(o.client_order_id) - 4)
+          ELSE o.client_order_id
+        END AS quote_cycle_id,
+        CASE
+          WHEN instr(o.client_order_id, ':bid:') > 0 THEN CAST(substr(o.client_order_id, instr(o.client_order_id, ':bid:') + 5) AS INTEGER)
+          WHEN instr(o.client_order_id, ':ask:') > 0 THEN CAST(substr(o.client_order_id, instr(o.client_order_id, ':ask:') + 5) AS INTEGER)
+          WHEN o.client_order_id LIKE '%:bid' OR o.client_order_id LIKE '%:ask' THEN 0
+          ELSE NULL
+        END AS quote_level,
+        ff.filled_at,
+        CASE
+          WHEN ff.filled_at IS NOT NULL THEN ff.filled_at
+          WHEN o.canceled_at IS NOT NULL THEN o.canceled_at
+          WHEN o.rejected_at IS NOT NULL THEN o.rejected_at
+          ELSE NULL
+        END AS terminal_at
+      FROM submitted_orders o
+      LEFT JOIN first_fills ff
+        ON ff.run_id = o.run_id
+       AND ff.order_id = o.id
     )
+    SELECT
+      *,
+      CASE
+        WHEN terminal_at IS NOT NULL THEN terminal_at - submitted_at
+        ELSE NULL
+      END AS live_ms,
+      CASE
+        WHEN final_status = 'canceled' AND filled_at IS NULL THEN 1
+        ELSE 0
+      END AS canceled_before_fill
+    FROM enriched;
+  CREATE VIEW IF NOT EXISTS v_quote_competitiveness AS
+    SELECT
+      q.id,
+      q.run_id,
+      q.venue,
+      q.market,
+      q.client_order_id,
+      q.side,
+      q.quote_cycle_id,
+      q.quote_level,
+      q.limit_price,
+      q.quantity,
+      q.submitted_at,
+      s.observed_at AS snapshot_observed_at,
+      s.best_bid,
+      s.best_ask,
+      s.mid_price,
+      s.spread_bps AS market_spread_bps,
+      CASE
+        WHEN q.limit_price IS NULL OR s.mid_price IS NULL THEN NULL
+        WHEN q.side = 'buy' THEN ((s.mid_price - q.limit_price) / s.mid_price) * 10000
+        ELSE ((q.limit_price - s.mid_price) / s.mid_price) * 10000
+      END AS distance_to_mid_bps,
+      CASE
+        WHEN q.limit_price IS NULL THEN NULL
+        WHEN q.side = 'buy' AND s.best_bid > 0 THEN ((s.best_bid - q.limit_price) / s.best_bid) * 10000
+        WHEN q.side = 'sell' AND s.best_ask > 0 THEN ((q.limit_price - s.best_ask) / s.best_ask) * 10000
+        ELSE NULL
+      END AS distance_to_best_bps
+    FROM v_order_lifecycle q
+    LEFT JOIN orderbook_snapshots s
+      ON s.id = (
+        SELECT prior.id
+        FROM orderbook_snapshots prior
+        WHERE prior.run_id = q.run_id
+          AND prior.market = q.market
+          AND prior.observed_at <= q.submitted_at
+        ORDER BY prior.observed_at DESC
+        LIMIT 1
+      )
+    WHERE q.intent = 'quote';
+  CREATE VIEW IF NOT EXISTS v_quote_level_quality AS
+    SELECT
+      q.run_id,
+      q.quote_level,
+      COUNT(*) AS submitted_count,
+      SUM(CASE WHEN q.final_status = 'rejected' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS reject_rate,
+      SUM(CASE WHEN q.final_status = 'canceled' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS cancel_rate,
+      SUM(CASE WHEN q.final_status = 'filled' OR q.filled_at IS NOT NULL THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS fill_rate,
+      AVG(q.live_ms) AS avg_live_ms,
+      AVG(c.distance_to_mid_bps) AS avg_distance_to_mid_bps,
+      AVG(c.distance_to_best_bps) AS avg_distance_to_best_bps
+    FROM v_order_lifecycle q
+    LEFT JOIN v_quote_competitiveness c
+      ON c.id = q.id
+    WHERE q.intent = 'quote'
+      AND q.quote_level IS NOT NULL
+    GROUP BY q.run_id, q.quote_level;
+  CREATE VIEW IF NOT EXISTS v_order_quality AS
     SELECT
       o.run_id,
       COUNT(*) AS submitted_count,
       SUM(CASE WHEN o.final_status = 'rejected' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS reject_rate,
       SUM(CASE WHEN o.final_status = 'canceled' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS cancel_rate,
-      SUM(CASE WHEN o.final_status = 'filled' OR fo.order_id IS NOT NULL THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS fill_rate,
+      SUM(CASE WHEN o.final_status = 'filled' OR o.filled_at IS NOT NULL THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS fill_rate,
+      SUM(o.canceled_before_fill) * 1.0 / COUNT(*) AS cancel_before_fill_rate,
+      AVG(o.live_ms) AS avg_live_ms,
       AVG(o.latency_ms) AS avg_latency_ms
-    FROM submitted_orders o
-    LEFT JOIN filled_orders fo
-      ON fo.run_id = o.run_id
-     AND fo.order_id = o.id
+    FROM v_order_lifecycle o
     GROUP BY o.run_id;
   CREATE VIEW IF NOT EXISTS v_fill_markouts AS
     SELECT
@@ -364,6 +474,8 @@ export const SQLITE_BOOTSTRAP_SQL = `
       oq.reject_rate,
       oq.cancel_rate,
       oq.fill_rate,
+      oq.cancel_before_fill_rate,
+      oq.avg_live_ms,
       oq.avg_latency_ms,
       mq.avg_markout_5s_bps,
       mq.adverse_selection_rate_5s,

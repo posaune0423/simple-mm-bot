@@ -15,6 +15,11 @@ describe("Postgres metrics migration", () => {
     expect(migration).toContain("UNIQUE (venue, venue_fill_id)");
     expect(migration).toContain("DROP TABLE IF EXISTS reports");
     expect(migration).toContain("DROP TABLE IF EXISTS telemetry_events");
+    expect(migration).toContain("CREATE OR REPLACE VIEW v_order_lifecycle");
+    expect(migration).toContain("CREATE OR REPLACE VIEW v_quote_competitiveness");
+    expect(migration).toContain("CREATE OR REPLACE VIEW v_quote_level_quality");
+    expect(migration).toContain("cancel_before_fill_rate");
+    expect(migration).toContain("avg_live_ms");
     expect(migration).toContain("CREATE OR REPLACE VIEW v_fill_markouts");
     expect(migration).toContain("LEFT JOIN LATERAL");
     expect(migration).toContain("next_s5.observed_at >= f.filled_at + 5000");

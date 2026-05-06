@@ -25,7 +25,7 @@ import {
   reportPaths,
   snapshotDateFromMs,
 } from "./paths.ts";
-import { join } from "node:path";
+import { REPORTS_DIR } from "../../runtimePaths.ts";
 
 export interface PeriodWindow {
   key: string;
@@ -445,5 +445,5 @@ export const DEFAULT_PERIODS: PeriodWindow[] = [
 ];
 
 export function defaultOutputDir(): string {
-  return join("docs", "reports");
+  return REPORTS_DIR;
 }

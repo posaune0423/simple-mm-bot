@@ -48,8 +48,12 @@ describe("evaluateMetricsRun", () => {
       fillRate: 0.5,
       rejectRate: 0.5,
       cancelRate: 0.25,
+      cancelBeforeFillRate: 0.2,
       makerRatio: 0.75,
       avgLatencyMs: 37.5,
+      avgOrderLiveMs: 850,
+      avgQuoteDistanceToMidBps: 12,
+      avgQuoteDistanceToBestBps: 8,
       positionSkew: 0.1,
       closeCost: 0.02,
       warningCount: 1,
@@ -69,8 +73,12 @@ describe("evaluateMetricsRun", () => {
     expect(result.orderQuality.sideImbalance).toBe(0.25);
     expect(result.orderQuality.fillRate).toBe(0.5);
     expect(result.orderQuality.rejectRate).toBe(0.5);
+    expect(result.orderQuality.cancelBeforeFillRate).toBe(0.2);
     expect(result.orderQuality.avgLatencyMs).toBe(37.5);
+    expect(result.orderQuality.avgLiveMs).toBe(850);
     expect(result.market.avgSpreadBps).toBe(7);
+    expect(result.market.avgQuoteDistanceToMidBps).toBe(12);
+    expect(result.market.avgQuoteDistanceToBestBps).toBe(8);
     expect(result.market.staleRate).toBe(0.1);
     expect(result.runtimeHealth.warningCount).toBe(1);
     expect(result.verdict).toBe("pass");
@@ -153,5 +161,31 @@ describe("evaluateMetricsRun", () => {
     expect(result.pnl.netPnl).toBe(0);
     expect(result.pnl.pnlPerNotional).toBe(0);
     expect(result.issueSignals).toContain("strategy_model_gap");
+  });
+
+  test("signals lifecycle and competitiveness gaps for no-fill quote churn", () => {
+    const result = evaluateMetricsRun({
+      fillCount: 0,
+      markoutCoverage: 0,
+      netPnl: 0,
+      tradePnl: 0,
+      fee: 0,
+      pnlPerNotional: 0,
+      maxDrawdown: 0,
+      avg5sMarkoutBps: 0,
+      adverseSelectionRate: 0,
+      fillRate: 0,
+      rejectRate: 0,
+      cancelRate: 0.95,
+      cancelBeforeFillRate: 0.95,
+      avgOrderLiveMs: 700,
+      avgMarketSpreadBps: 0.1,
+      avgQuoteDistanceToBestBps: 28,
+      minMarkoutCoverage: 0.8,
+    });
+
+    expect(result.issueSignals).toContain("high_cancel_churn");
+    expect(result.issueSignals).toContain("short_order_lifetime");
+    expect(result.issueSignals).toContain("quotes_far_from_touch");
   });
 });

@@ -78,6 +78,7 @@ simple-mm-bot/
 │   └── reporting/
 ├── scripts/
 │   ├── backtestPaperLoop.ts
+│   ├── compactLocalArtifacts.ts
 │   ├── evaluateLiveRun.ts
 │   ├── tuneBulkConfig.ts
 │   ├── createDesignIssues.ts
@@ -200,7 +201,7 @@ runtime source ではなく tool 用 script の実装詳細として扱う。
 
 ### `src/runtimePaths.ts`
 
-Default config、SQLite DB path、Drizzle schema / migration output、metrics artifact output の path registry。
+Default config、SQLite DB path (`data/mm.db`)、Drizzle schema / migration output、metrics artifact output の path registry。
 新しい生成先や default path を増やす場合は、まずここへ追加してから scripts / docs / tests で参照する。
 
 ### `src/reporting/`
@@ -277,7 +278,7 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 - `tests/domain/`
   - strategy、quote engine、analytics の pure unit test
 - `tests/scripts/`
-  - metrics evaluation、Bulk config tuning、design issue planning の unit test
+  - metrics evaluation、Bulk config tuning、artifact compaction、design issue planning の unit test
 - `tests/application/`
   - DI、bot loop、use case の orchestration test
 - `tests/adapters/`

@@ -123,7 +123,7 @@ Repository split:
 - `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
 - `src/adapters/hyperliquid`: legacy compatibility
 - `src/adapters/paper`: paper execution and historical feed helpers
-- `src/infrastructure`: telemetry contracts plus SQLite/Postgres repositories
+- `src/infrastructure`: metrics contracts plus SQLite/Postgres repositories
 - `scripts/lib`: external evaluation, Bulk YAML tuning, and issue planning helpers
 - `tests`: domain, scripts, application, adapter, infrastructure, and e2e smoke coverage
 
@@ -137,7 +137,7 @@ Repository split:
 - Bulk backtest preset: `config/config.backtest.yml`
 - `MODE` can override the config file mode at runtime
 - `DATABASE_URL` switches storage to PostgreSQL
-- `DB_PATH` controls the local SQLite file path
+- `DB_PATH` controls the local SQLite file path; the default is `data/mm.db`
 
 Bulk backtest currently replays historical OHLCV from `klines` and uses the paper fill model. Bulk historical L2 is not exposed by the current SDK/API, so backtest fill quality is approximate.
 

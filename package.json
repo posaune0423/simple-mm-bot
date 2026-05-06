@@ -21,6 +21,7 @@
     "metrics:issues": "bun run scripts/createDesignIssues.ts",
     "metrics:report": "bun run scripts/generateMetricsReport.ts",
     "report:generate": "bun run scripts/generateReport.ts",
+    "artifacts:compact-db": "bun run scripts/compactLocalArtifacts.ts",
     "test": "bun run test:unit && bun run test:integration",
     "test:unit": "bun test tests/domain tests/scripts tests/application tests/adapters tests/reporting tests/config.test.ts tests/package.test.ts",
     "test:integration": "bun test tests/infrastructure",

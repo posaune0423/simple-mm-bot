@@ -4,7 +4,7 @@ import type { Fill } from "../domain/entities/Fill.ts";
 import type { Quote } from "../domain/entities/Quote.ts";
 import type { MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { OrderGatewayEvent } from "../domain/ports/IOrderGateway.ts";
-import type { CapitalMode, TradingRunFact } from "../infrastructure/Metrics.ts";
+import type { CapitalMode, SubmittedOrderFact, TradingRunFact } from "../infrastructure/Metrics.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
 import type { AppMode } from "../config.ts";
 
@@ -26,9 +26,13 @@ interface PnlPosition {
   avgEntry: number;
 }
 
+type SubmittedOrderState = SubmittedOrderFact;
+
 export class MetricsRecorder {
   readonly runId: string;
   private readonly pnlPositions = new Map<string, PnlPosition>();
+  private readonly openOrders = new Map<string, SubmittedOrderState>();
+  private readonly orderAliases = new Map<string, string>();
 
   constructor(
     private readonly repository: IMetricsRepository,
@@ -119,38 +123,111 @@ export class MetricsRecorder {
   }
 
   async recordOrder(payload: OrderGatewayEvent, market = this.options.market): Promise<void> {
-    const orderKey = payload.clientOrderId ?? payload.orderId;
+    const orderKey = this.orderKeyFor(payload);
+    if (payload.action === "cancel" && orderKey === undefined) {
+      await this.recordCancelAll(payload);
+      return;
+    }
     if (
       orderKey === undefined ||
-      payload.side === undefined ||
-      payload.qty === undefined ||
-      payload.timeInForce === undefined
+      (payload.side === undefined && this.openOrders.get(orderKey)?.side === undefined) ||
+      (payload.qty === undefined && this.openOrders.get(orderKey)?.quantity === undefined) ||
+      (payload.timeInForce === undefined &&
+        this.openOrders.get(orderKey)?.timeInForce === undefined)
     ) {
       return;
     }
+    const previous = this.openOrders.get(orderKey);
     const now = Date.now();
-    await this.repository.recordSubmittedOrder({
+    const order = this.orderFactFrom(payload, orderKey, now, market, previous);
+    await this.repository.recordSubmittedOrder(order);
+    this.updateOrderState(order);
+  }
+
+  private async recordCancelAll(payload: OrderGatewayEvent, market = this.options.market) {
+    const now = Date.now();
+    const openOrders = [...this.openOrders.entries()].filter(
+      ([, order]) => order.market === market,
+    );
+    for (const [orderKey, order] of openOrders) {
+      const canceledOrder: SubmittedOrderFact = {
+        ...order,
+        canceledAt: now,
+        finalStatus: "canceled",
+        latencyMs: payload.latencyMs,
+        rawJson: rawSummary(payload, "cancelAll"),
+      };
+      await this.repository.recordSubmittedOrder(canceledOrder);
+      this.openOrders.delete(orderKey);
+      if (order.venueOrderId !== undefined) {
+        this.orderAliases.delete(order.venueOrderId);
+      }
+    }
+  }
+
+  private orderKeyFor(payload: OrderGatewayEvent): string | undefined {
+    const rawKey = payload.clientOrderId ?? payload.orderId;
+    if (rawKey === undefined) {
+      return undefined;
+    }
+    return this.orderAliases.get(rawKey) ?? rawKey;
+  }
+
+  private orderFactFrom(
+    payload: OrderGatewayEvent,
+    orderKey: string,
+    now: number,
+    market: string,
+    previous: SubmittedOrderState | undefined,
+  ): SubmittedOrderFact {
+    const submittedAt =
+      previous?.submittedAt ?? (payload.action === "submit" ? now : now - (payload.latencyMs ?? 0));
+    const acceptedAt = payload.action === "ack" ? now : previous?.acceptedAt;
+    return {
       id: submittedOrderId(this.runId, orderKey),
       runId: this.runId,
       venue: this.options.venue,
-      market,
-      clientOrderId: payload.clientOrderId ?? orderKey,
-      venueOrderId: payload.orderId,
-      intent: payload.intent ?? (payload.reduceOnly === true ? "reduce" : "quote"),
-      side: payload.side,
-      orderType: payload.orderType ?? (payload.price === undefined ? "market" : "limit"),
-      limitPrice: payload.price,
-      quantity: payload.qty,
-      timeInForce: payload.timeInForce,
-      submittedAt: payload.action === "submit" ? now : now - (payload.latencyMs ?? 0),
-      acceptedAt: payload.action === "ack" ? now : undefined,
-      rejectedAt: payload.action === "reject" ? now : undefined,
-      canceledAt: payload.action === "cancel" ? now : undefined,
+      market: previous?.market ?? market,
+      clientOrderId: previous?.clientOrderId ?? payload.clientOrderId ?? orderKey,
+      venueOrderId: payload.orderId ?? previous?.venueOrderId,
+      intent:
+        payload.intent ?? previous?.intent ?? (payload.reduceOnly === true ? "reduce" : "quote"),
+      side: payload.side ?? previous?.side ?? "buy",
+      orderType:
+        payload.orderType ??
+        previous?.orderType ??
+        (payload.price === undefined ? "market" : "limit"),
+      limitPrice: payload.price ?? previous?.limitPrice,
+      quantity: payload.qty ?? previous?.quantity ?? 0,
+      timeInForce: payload.timeInForce ?? previous?.timeInForce ?? "GTC",
+      submittedAt,
+      acceptedAt,
+      rejectedAt: payload.action === "reject" ? now : previous?.rejectedAt,
+      canceledAt: payload.action === "cancel" ? now : previous?.canceledAt,
       finalStatus: finalStatus(payload),
       rejectReason: payload.reason,
       latencyMs: payload.latencyMs,
-      rawJson: payload.rawSummary,
-    });
+      rawJson: rawSummary(payload),
+    };
+  }
+
+  private updateOrderState(order: SubmittedOrderFact): void {
+    const orderKey = order.clientOrderId;
+    if (order.venueOrderId !== undefined) {
+      this.orderAliases.set(order.venueOrderId, orderKey);
+    }
+    if (
+      order.finalStatus === "canceled" ||
+      order.finalStatus === "rejected" ||
+      order.finalStatus === "filled"
+    ) {
+      this.openOrders.delete(orderKey);
+      if (order.venueOrderId !== undefined) {
+        this.orderAliases.delete(order.venueOrderId);
+      }
+      return;
+    }
+    this.openOrders.set(orderKey, order);
   }
 
   async recordFill(fill: Fill): Promise<void> {
@@ -258,6 +335,16 @@ function finalStatus(
     return "filled";
   }
   return "accepted";
+}
+
+function rawSummary(payload: OrderGatewayEvent, cancelSource?: "cancelAll"): unknown {
+  if (cancelSource === undefined) {
+    return payload.rawSummary;
+  }
+  if (payload.rawSummary !== null && typeof payload.rawSummary === "object") {
+    return { ...payload.rawSummary, cancelSource };
+  }
+  return { rawSummary: payload.rawSummary, cancelSource };
 }
 
 function snapshotPayload(snapshot: MarketSnapshot): Record<string, unknown> {

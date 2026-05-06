@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { ResultAsync } from "neverthrow";
 
@@ -11,7 +11,12 @@ import { createAppError, formatAppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { logger } from "../src/utils/logger.ts";
-import { BACKTEST_CONFIG_PATH, PAPER_CONFIG_PATH, STRATEGY_RUNS_DIR } from "../src/runtimePaths.ts";
+import {
+  BACKTEST_CONFIG_PATH,
+  DEFAULT_SQLITE_DB_PATH,
+  PAPER_CONFIG_PATH,
+  STRATEGY_RUNS_DIR,
+} from "../src/runtimePaths.ts";
 import { evaluateMetricsRun, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 
 interface BacktestPaperLoopSummary {
@@ -32,6 +37,57 @@ interface BacktestPaperLoopSummary {
 interface LoopRunReport {
   performance: PerformanceMetrics;
   evaluation: MetricsEvaluation;
+}
+
+interface BacktestPaperLoopOptions {
+  outputDir: string;
+  backtestConfigPath: string;
+  paperConfigPath: string;
+  from: string;
+  to: string;
+  paperDurationMin: number;
+  dbPath: string;
+}
+
+export function resolveBacktestPaperLoopOptions(
+  argv: string[],
+  nowMs = Date.now(),
+): BacktestPaperLoopOptions {
+  const options = parseFlagOptions(argv);
+  const label = sanitizeRunLabel(options.label ?? "loop");
+  const outputDir =
+    options["output-dir"] ?? join(STRATEGY_RUNS_DIR, `${formatRunTimestamp(nowMs)}-${label}`);
+  return {
+    outputDir,
+    backtestConfigPath: options["backtest-config"] ?? options.config ?? BACKTEST_CONFIG_PATH,
+    paperConfigPath: options["paper-config"] ?? options.config ?? PAPER_CONFIG_PATH,
+    from: options.from ?? "2024-01-01",
+    to: options.to ?? "2024-01-07",
+    paperDurationMin: Number(options["paper-duration-min"] ?? "1"),
+    dbPath: options.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH,
+  };
+}
+
+function formatRunTimestamp(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return [
+    date.getUTCFullYear().toString(),
+    pad(date.getUTCMonth() + 1),
+    pad(date.getUTCDate()),
+    "-",
+    pad(date.getUTCHours()),
+    pad(date.getUTCMinutes()),
+    pad(date.getUTCSeconds()),
+  ].join("");
+}
+
+function sanitizeRunLabel(label: string): string {
+  const sanitized = label
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9._-]+/g, "-");
+  return sanitized.length > 0 ? sanitized : "loop";
 }
 
 function buildBot(
@@ -159,15 +215,10 @@ function loadLatestRunReport(dbPath: string, mode: "paper" | "backtest"): LoopRu
   }
 }
 
-function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
-  const options = parseFlagOptions(argv);
-  const outputDir = options["output-dir"] ?? join(STRATEGY_RUNS_DIR, `${Date.now()}`);
-  const backtestConfigPath = options["backtest-config"] ?? options.config ?? BACKTEST_CONFIG_PATH;
-  const paperConfigPath = options["paper-config"] ?? options.config ?? PAPER_CONFIG_PATH;
-  const from = options.from ?? "2024-01-01";
-  const to = options.to ?? "2024-01-07";
-  const paperDurationMin = Number(options["paper-duration-min"] ?? "1");
-  const dbPath = join(outputDir, "loop.db");
+export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
+  const options = resolveBacktestPaperLoopOptions(argv);
+  const { outputDir, backtestConfigPath, paperConfigPath, from, to, paperDurationMin, dbPath } =
+    options;
   const paperTicks = Math.max(1, Math.round(paperDurationMin * 60));
 
   return ResultAsync.fromPromise(ensureDirectory(outputDir), (error) =>
@@ -213,6 +264,7 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
             backtest: backtestReport,
             paper: paperReport,
           }),
+          writeLoopConfigArtifacts(outputDir, backtestConfigPath, paperConfigPath, dbPath),
           writeTextFile(
             join(outputDir, "run.md"),
             [
@@ -223,6 +275,7 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
               `- Paper action: ${summary.recommendation.paper}`,
               `- Backtest netPnl: ${backtestMetrics.netPnl}`,
               `- Paper netPnl: ${paperMetrics.netPnl}`,
+              `- DB path: ${dbPath}`,
               `- Output dir: ${outputDir}`,
             ].join("\n"),
           ),
@@ -233,12 +286,45 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
     });
 }
 
-void runBacktestPaperLoop(Bun.argv.slice(2)).match(
-  (outputDir) => {
-    logger.info(outputDir);
-  },
-  (error) => {
-    logger.error(formatAppError(error));
-    process.exitCode = 1;
-  },
-);
+async function writeLoopConfigArtifacts(
+  outputDir: string,
+  backtestConfigPath: string,
+  paperConfigPath: string,
+  dbPath: string,
+): Promise<void> {
+  const metadata = [
+    `dbPath: ${JSON.stringify(dbPath)}`,
+    `backtestConfig: ${JSON.stringify(backtestConfigPath)}`,
+    `paperConfig: ${JSON.stringify(paperConfigPath)}`,
+  ].join("\n");
+  const writes = [writeTextFile(join(outputDir, "config.yml"), `${metadata}\n`)];
+  if (backtestConfigPath === paperConfigPath) {
+    writes.push(
+      writeTextFile(
+        join(outputDir, basename(backtestConfigPath)),
+        await Bun.file(backtestConfigPath).text(),
+      ),
+    );
+  } else {
+    writes.push(
+      writeTextFile(
+        join(outputDir, "backtest-config.yml"),
+        await Bun.file(backtestConfigPath).text(),
+      ),
+      writeTextFile(join(outputDir, "paper-config.yml"), await Bun.file(paperConfigPath).text()),
+    );
+  }
+  await Promise.all(writes);
+}
+
+if (import.meta.main) {
+  void runBacktestPaperLoop(Bun.argv.slice(2)).match(
+    (outputDir) => {
+      logger.info(outputDir);
+    },
+    (error) => {
+      logger.error(formatAppError(error));
+      process.exitCode = 1;
+    },
+  );
+}

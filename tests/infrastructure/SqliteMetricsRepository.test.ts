@@ -494,4 +494,131 @@ describe("SqliteMetricsRepository", () => {
     expect(viewSql?.sql.toLowerCase()).toContain("orderbook_snapshots");
     expect(viewSql?.sql.toLowerCase()).not.toContain("ohlcv");
   });
+
+  test("computes order lifecycle and quote competitiveness diagnostics", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-lifecycle",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "snapshot-lifecycle",
+      runId: "run-lifecycle",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1000,
+      bestBid: 99.95,
+      bestAsk: 100.05,
+      midPrice: 100,
+      microPrice: 100,
+      markPrice: 100,
+      spreadBps: 10,
+      stalenessMs: 0,
+    });
+    await repository.recordSubmittedOrder({
+      id: "order-level-0",
+      runId: "run-lifecycle",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle-1:bid:0",
+      venueOrderId: "venue-level-0",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 99.9,
+      quantity: 1,
+      timeInForce: "GTC",
+      submittedAt: 1100,
+      acceptedAt: 1150,
+      canceledAt: 2100,
+      finalStatus: "canceled",
+      latencyMs: 50,
+    });
+    await repository.recordSubmittedOrder({
+      id: "order-level-1",
+      runId: "run-lifecycle",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle-1:ask:1",
+      venueOrderId: "venue-level-1",
+      intent: "quote",
+      side: "sell",
+      orderType: "limit",
+      limitPrice: 101.5,
+      quantity: 1,
+      timeInForce: "GTC",
+      submittedAt: 1100,
+      acceptedAt: 1160,
+      finalStatus: "accepted",
+      latencyMs: 60,
+    });
+    await repository.recordTradeFill({
+      id: "fill-level-1",
+      runId: "run-lifecycle",
+      submittedOrderId: "order-level-1",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "fill-level-1",
+      venueOrderId: "venue-level-1",
+      side: "sell",
+      price: 101.5,
+      quantity: 1,
+      fee: 0.1,
+      tradePnl: 1,
+      makerTaker: "maker",
+      filledAt: 1600,
+    });
+
+    const orderQuality = client.sqlite
+      .query<
+        {
+          cancel_rate: number;
+          fill_rate: number;
+          avg_live_ms: number;
+          cancel_before_fill_rate: number;
+        },
+        []
+      >(
+        "SELECT cancel_rate, fill_rate, avg_live_ms, cancel_before_fill_rate FROM v_order_quality WHERE run_id = 'run-lifecycle'",
+      )
+      .get();
+    const competitiveness = client.sqlite
+      .query<
+        {
+          quote_level: number;
+          distance_to_mid_bps: number;
+          distance_to_best_bps: number;
+          market_spread_bps: number;
+        },
+        []
+      >(
+        "SELECT quote_level, distance_to_mid_bps, distance_to_best_bps, market_spread_bps FROM v_quote_competitiveness WHERE id = 'order-level-0'",
+      )
+      .get();
+    const levelQuality = client.sqlite
+      .query<{ quote_level: number; submitted_count: number; fill_rate: number }, []>(
+        "SELECT quote_level, submitted_count, fill_rate FROM v_quote_level_quality WHERE run_id = 'run-lifecycle' AND quote_level = 1",
+      )
+      .get();
+
+    expect(orderQuality?.cancel_rate).toBe(0.5);
+    expect(orderQuality?.fill_rate).toBe(0.5);
+    expect(orderQuality?.avg_live_ms).toBe(750);
+    expect(orderQuality?.cancel_before_fill_rate).toBe(0.5);
+    expect(competitiveness?.quote_level).toBe(0);
+    expect(competitiveness?.distance_to_mid_bps).toBeCloseTo(10);
+    expect(competitiveness?.distance_to_best_bps).toBeCloseTo(5.0025, 4);
+    expect(competitiveness?.market_spread_bps).toBe(10);
+    expect(levelQuality).toEqual({ quote_level: 1, submitted_count: 1, fill_rate: 1 });
+  });
 });

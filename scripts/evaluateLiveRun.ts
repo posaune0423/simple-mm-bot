@@ -31,6 +31,8 @@ interface PerformanceRow {
   reject_rate: number | null;
   cancel_rate: number | null;
   fill_rate: number | null;
+  cancel_before_fill_rate: number | null;
+  avg_live_ms: number | null;
   avg_latency_ms: number | null;
   avg_markout_5s_bps: number | null;
   adverse_selection_rate_5s: number | null;
@@ -55,6 +57,11 @@ interface OrderDiagnosticsRow {
   quoted_spread_bps: number | null;
   realized_spread_bps: number | null;
   side_imbalance: number | null;
+}
+
+interface QuoteCompetitivenessRow {
+  avg_distance_to_mid_bps: number | null;
+  avg_distance_to_best_bps: number | null;
 }
 
 function latestRunId(dbPath: string): string | null {
@@ -193,6 +200,17 @@ function loadEvaluationArtifact(dbPath: string, runId: string) {
         `,
       )
       .get(runId, runId, runId);
+    const quoteCompetitiveness = db
+      .query<QuoteCompetitivenessRow, [string]>(
+        `
+          SELECT
+            AVG(distance_to_mid_bps) AS avg_distance_to_mid_bps,
+            AVG(distance_to_best_bps) AS avg_distance_to_best_bps
+          FROM v_quote_competitiveness
+          WHERE run_id = ?
+        `,
+      )
+      .get(runId);
 
     const run: TradingRunFact = {
       id: row.run_id,
@@ -230,7 +248,11 @@ function loadEvaluationArtifact(dbPath: string, runId: string) {
       fillRate: row.fill_rate ?? 0,
       rejectRate: row.reject_rate ?? 0,
       cancelRate: row.cancel_rate ?? 0,
+      cancelBeforeFillRate: row.cancel_before_fill_rate ?? 0,
       avgLatencyMs: row.avg_latency_ms ?? 0,
+      avgOrderLiveMs: row.avg_live_ms ?? undefined,
+      avgQuoteDistanceToMidBps: quoteCompetitiveness?.avg_distance_to_mid_bps ?? 0,
+      avgQuoteDistanceToBestBps: quoteCompetitiveness?.avg_distance_to_best_bps ?? 0,
       positionSkew: row.avg_position ?? 0,
     });
     return { run, evaluation };

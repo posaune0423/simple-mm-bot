@@ -223,7 +223,7 @@ Default path と生成先は `src/runtimePaths.ts` に集約する。script や 
 - `MODE`
 - `CONFIG_PATH`
 - `DATABASE_URL`
-- `DB_PATH`
+- `DB_PATH` (default: `data/mm.db`)
 - `LOG_LEVEL`
 - `BULK_PRIVATE_KEY`
 - Hyperliquid env vars are kept only for legacy compatibility paths

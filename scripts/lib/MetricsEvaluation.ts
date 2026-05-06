@@ -22,9 +22,13 @@ export interface MetricsEvaluationInput {
   fillRate: number;
   rejectRate: number;
   cancelRate: number;
+  cancelBeforeFillRate?: number;
   makerRatio?: number;
   avgLatencyMs?: number;
+  avgOrderLiveMs?: number;
   positionSkew?: number;
+  avgQuoteDistanceToMidBps?: number;
+  avgQuoteDistanceToBestBps?: number;
   closeCost?: number;
   warningCount?: number;
   errorCount?: number;
@@ -75,8 +79,10 @@ export interface MetricsEvaluation {
     fillRate: number;
     rejectRate: number;
     cancelRate: number;
+    cancelBeforeFillRate: number;
     makerRatio: number;
     avgLatencyMs: number;
+    avgLiveMs: number;
     sideImbalance: number;
   };
   inventory: {
@@ -85,6 +91,8 @@ export interface MetricsEvaluation {
   };
   market: {
     avgSpreadBps: number;
+    avgQuoteDistanceToMidBps: number;
+    avgQuoteDistanceToBestBps: number;
     staleRate: number;
   };
   runtimeHealth: {
@@ -137,8 +145,10 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       fillRate: input.fillRate,
       rejectRate: input.rejectRate,
       cancelRate: input.cancelRate,
+      cancelBeforeFillRate: input.cancelBeforeFillRate ?? 0,
       makerRatio: input.makerRatio ?? 0,
       avgLatencyMs: input.avgLatencyMs ?? 0,
+      avgLiveMs: input.avgOrderLiveMs ?? 0,
       sideImbalance: input.sideImbalance ?? 0,
     },
     inventory: {
@@ -147,6 +157,8 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
     },
     market: {
       avgSpreadBps: input.avgMarketSpreadBps ?? 0,
+      avgQuoteDistanceToMidBps: input.avgQuoteDistanceToMidBps ?? 0,
+      avgQuoteDistanceToBestBps: input.avgQuoteDistanceToBestBps ?? 0,
       staleRate: input.staleRate ?? 0,
     },
     runtimeHealth: {
@@ -217,6 +229,15 @@ function issueSignalsFor(
   }
   if (input.markoutCoverage < minMarkoutCoverage) {
     signals.add("low_markout_coverage");
+  }
+  if ((input.cancelBeforeFillRate ?? input.cancelRate) >= 0.8) {
+    signals.add("high_cancel_churn");
+  }
+  if ((input.avgOrderLiveMs ?? Number.POSITIVE_INFINITY) < 1000) {
+    signals.add("short_order_lifetime");
+  }
+  if ((input.avgQuoteDistanceToBestBps ?? 0) > Math.max((input.avgMarketSpreadBps ?? 0) * 5, 5)) {
+    signals.add("quotes_far_from_touch");
   }
   if (
     input.fillCount >= minFillCount &&

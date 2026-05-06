@@ -2,9 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
 
 import { ConfigLoader } from "../src/config.ts";
-import { DEFAULT_BULK_BETA_CONFIG_PATH, DEFAULT_CONFIG_PATH } from "../src/runtimePaths.ts";
+import {
+  DEFAULT_BULK_BETA_CONFIG_PATH,
+  DEFAULT_CONFIG_PATH,
+  DEFAULT_SQLITE_DB_PATH,
+} from "../src/runtimePaths.ts";
 
 describe("ConfigLoader", () => {
+  test("uses data/mm.db as the default SQLite database path", () => {
+    expect(DEFAULT_SQLITE_DB_PATH).toBe("data/mm.db");
+  });
+
+  test("keeps the sample env file aligned with the default SQLite database path", async () => {
+    const envExample = await Bun.file(".env.example").text();
+
+    expect(envExample).toContain(`DB_PATH=${DEFAULT_SQLITE_DB_PATH}`);
+    expect(envExample).not.toContain("DB_PATH=data/mmbot.db");
+  });
+
   test("loads quote sizing from committed config", async () => {
     const config = await ConfigLoader.load({ configPath: "config/config.paper.yml" });
 
