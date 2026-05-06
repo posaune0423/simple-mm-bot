@@ -22,20 +22,20 @@ quoteEngine:
   markWeight: 1
   inventoryScale: 0.2
   timeHorizonSec: 10
-  minSpreadBps: 16
+  minSpreadBps: 2
   slideMarginThreshold: 0.06
   defaultTimeInForce: GTC
   sizing:
     positionSize: 1.25
     budgetUsd: 50000
   levels:
-    - halfSpreadBps: 8
+    - halfSpreadBps: 1
       sizeUsd: 9400
-    - halfSpreadBps: 15
+    - halfSpreadBps: 2
       sizeUsd: 18800
-    - halfSpreadBps: 30
+    - halfSpreadBps: 4
       sizeUsd: 31300
-    - halfSpreadBps: 60
+    - halfSpreadBps: 8
       sizeUsd: 50000
   strategy:
     type: avellaneda-stoikov

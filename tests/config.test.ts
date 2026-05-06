@@ -46,12 +46,12 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.nlevels).toBe(20);
     expect(config.connections.bulk.maxLeverage).toBe(25);
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
-    expect(config.quoteEngine.minSpreadBps).toBe(16);
+    expect(config.quoteEngine.minSpreadBps).toBe(2);
     expect(config.quoteEngine.levels).toEqual([
-      { halfSpreadBps: 8, sizeUsd: 9400 },
-      { halfSpreadBps: 15, sizeUsd: 18800 },
-      { halfSpreadBps: 30, sizeUsd: 31300 },
-      { halfSpreadBps: 60, sizeUsd: 50000 },
+      { halfSpreadBps: 1, sizeUsd: 9400 },
+      { halfSpreadBps: 2, sizeUsd: 18800 },
+      { halfSpreadBps: 4, sizeUsd: 31300 },
+      { halfSpreadBps: 8, sizeUsd: 50000 },
     ]);
     expect(config.quoteEngine.strategy.params).toEqual({
       gamma: 0,
