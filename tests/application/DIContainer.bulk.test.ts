@@ -98,7 +98,7 @@ describe("DIContainer Bulk venue", () => {
     expect(
       (internals.orderGateway as { params: { maxLeverage?: number } }).params.maxLeverage,
     ).toBe(5);
-    (internals.orderGateway as BulkOrderGateway).dispose();
+    await (internals.orderGateway as BulkOrderGateway).dispose();
   });
 
   test("rejects bulk live without BULK_PRIVATE_KEY", async () => {

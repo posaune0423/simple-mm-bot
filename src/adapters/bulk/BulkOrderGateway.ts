@@ -52,6 +52,11 @@ type BulkFullAccount = {
   leverageSettings?: BulkLeverageEntry[];
   positions?: BulkPositionEntry[];
 };
+type BulkHttpErrorLike = {
+  status?: unknown;
+  data?: unknown;
+  message?: unknown;
+};
 
 interface BulkTradeClient {
   placeLimitOrder?(params: unknown): Promise<BulkOrderResponse>;
@@ -156,11 +161,39 @@ function isCrossPosition(entry: BulkPositionEntry, market: string): boolean {
   return entry.symbol === market && (entry.iso ?? false) === false;
 }
 
+function isBulkHttpOrderRejection(error: unknown): error is BulkHttpErrorLike {
+  return typeof error === "object" && error !== null && (error as BulkHttpErrorLike).status === 422;
+}
+
+function orderRejectionReason(error: BulkHttpErrorLike): string {
+  if (error.data !== undefined) {
+    return JSON.stringify(error.data);
+  }
+  return typeof error.message === "string" && error.message.length > 0
+    ? error.message
+    : "HTTP error 422";
+}
+
+function summarizeOrderError(error: BulkHttpErrorLike): unknown {
+  return {
+    status: error.status,
+    data: error.data,
+    message: error.message,
+  };
+}
+
+function isRejectedOrderResult(
+  response: BulkOrderResponse | undefined | { rejectedOrder: PlacedOrder },
+): response is { rejectedOrder: PlacedOrder } {
+  return typeof response === "object" && "rejectedOrder" in response;
+}
+
 export class BulkOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
   private readonly orderListeners = new Set<OrderEventListener>();
   private readonly seenFillIds = new Set<string>();
   private rulesPromise: Promise<BulkMarketRules | null> | null = null;
+  private pollInFlight: Promise<void> | null = null;
   private leverageChecked = false;
   private fillTimer: Timer | null = null;
 
@@ -170,9 +203,7 @@ export class BulkOrderGateway implements IOrderGateway {
   ) {
     if (params.pollIntervalMs !== undefined) {
       this.fillTimer = setInterval(() => {
-        void this.pollFillsOnce().catch((error) => {
-          logger.error(`BulkOrderGateway.pollFillsOnce failed: ${String(error)}`);
-        });
+        void this.pollFillsFromTimer();
       }, params.pollIntervalMs);
     }
   }
@@ -193,7 +224,40 @@ export class BulkOrderGateway implements IOrderGateway {
       reduceOnly: normalizedOrder.reduceOnly,
       timeInForce: normalizedOrder.timeInForce,
     });
-    const response = await this.submitOrder(normalizedOrder, type);
+    const response = await this.submitOrder(normalizedOrder, type).catch(async (error) => {
+      if (!isBulkHttpOrderRejection(error)) {
+        throw error;
+      }
+      const orderId = normalizedOrder.clientOrderId ?? randomUUID();
+      const reason = orderRejectionReason(error);
+      logger.warn(
+        `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=http_422 reason=${reason}`,
+      );
+      await this.publishOrderEvent({
+        action: "reject",
+        orderId,
+        side: normalizedOrder.side,
+        price: normalizedOrder.price,
+        qty: normalizedOrder.qty,
+        reduceOnly: normalizedOrder.reduceOnly,
+        timeInForce: normalizedOrder.timeInForce,
+        latencyMs: Date.now() - submittedAt,
+        status: "rejected",
+        statusKey: "http_422",
+        reason,
+        rawSummary: summarizeOrderError(error),
+      });
+      return {
+        rejectedOrder: {
+          id: orderId,
+          request: normalizedOrder,
+          status: "rejected" as const,
+        },
+      };
+    });
+    if (isRejectedOrderResult(response)) {
+      return response.rejectedOrder;
+    }
 
     const firstStatus = statusEntries(response ?? {})[0] ?? {};
     const orderId = orderIdFrom(firstStatus) ?? normalizedOrder.clientOrderId ?? randomUUID();
@@ -371,7 +435,7 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async syncFills(): Promise<void> {
-    await this.pollFillsOnce();
+    await this.pollFillsSerialized();
   }
 
   async getPosition(): Promise<Position> {
@@ -388,10 +452,40 @@ export class BulkOrderGateway implements IOrderGateway {
     };
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     if (this.fillTimer !== null) {
       clearInterval(this.fillTimer);
       this.fillTimer = null;
+    }
+    await this.pollInFlight?.catch((error) => {
+      logger.warn(
+        `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${String(error)}`,
+      );
+    });
+  }
+
+  private async pollFillsFromTimer(): Promise<void> {
+    if (this.pollInFlight !== null) {
+      return;
+    }
+    await this.pollFillsSerialized().catch((error) => {
+      logger.error(`BulkOrderGateway.pollFillsOnce failed: ${String(error)}`);
+    });
+  }
+
+  private async pollFillsSerialized(): Promise<void> {
+    if (this.pollInFlight !== null) {
+      await this.pollInFlight;
+      return;
+    }
+    const task = this.pollFillsOnce();
+    this.pollInFlight = task;
+    try {
+      await task;
+    } finally {
+      if (this.pollInFlight === task) {
+        this.pollInFlight = null;
+      }
     }
   }
 
