@@ -1,6 +1,6 @@
 import type { Fill } from "../../domain/entities/Fill.ts";
 
-export interface HourlyAdverseRate {
+interface HourlyAdverseRate {
   hour: number;
   fillCount: number;
   adverseRate: number;

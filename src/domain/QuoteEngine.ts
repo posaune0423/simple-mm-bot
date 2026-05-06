@@ -5,7 +5,7 @@ import type { IQuotingStrategy } from "./strategy/IQuotingStrategy.ts";
 import type { FairPriceCalculator } from "./FairPriceCalculator.ts";
 import type { VolatilityEstimator } from "./VolatilityEstimator.ts";
 
-export interface QuoteEngineConfig {
+interface QuoteEngineConfig {
   inventoryScale: number;
   timeHorizonSec: number;
   slideMarginThreshold: number;

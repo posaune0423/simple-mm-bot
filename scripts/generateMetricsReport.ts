@@ -1,22 +1,22 @@
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
 
-import type { TelemetryEvaluation } from "./lib/TelemetryEvaluation.ts";
-import type { TelemetryRun } from "../src/infrastructure/Telemetry.ts";
+import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
+import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
 interface EvaluationArtifact {
-  run: TelemetryRun;
-  evaluation: TelemetryEvaluation;
+  run: TradingRunFact;
+  evaluation: MetricsEvaluation;
 }
 
 function markdown(artifact: EvaluationArtifact): string {
   const { run, evaluation } = artifact;
   return [
-    "# Telemetry Run Report",
+    "# Metrics Run Report",
     "",
     `- Run: ${run.id}`,
     `- Mode: ${run.mode}`,
@@ -62,26 +62,25 @@ function markdown(artifact: EvaluationArtifact): string {
 
 function generate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const evaluationPath = options.evaluation ?? "artifacts/telemetry/latest/evaluation.json";
-  const outputDir = options["output-dir"] ?? "artifacts/telemetry/latest";
+  const evaluationPath = options.evaluation ?? "artifacts/metrics/latest/evaluation.json";
+  const outputDir = options["output-dir"] ?? "artifacts/metrics/latest";
 
   return ResultAsync.fromPromise(
     (async () => {
       const artifact = (await Bun.file(evaluationPath).json()) as EvaluationArtifact;
-      const reportPath = join(outputDir, "telemetry-report.md");
+      const reportPath = join(outputDir, "metrics-report.md");
       await Promise.all([
         writeTextFile(reportPath, markdown(artifact)),
-        writeJsonFile(join(outputDir, "telemetry-report.json"), artifact),
+        writeJsonFile(join(outputDir, "metrics-report.json"), artifact),
       ]);
       return reportPath;
     })(),
-    (error) =>
-      createAppError("telemetry.report_failed", "Failed to generate telemetry report", error),
+    (error) => createAppError("metrics.report_failed", "Failed to generate metrics report", error),
   );
 }
 
 void generate(Bun.argv.slice(2)).match(
-  (reportPath) => logger.info(`telemetry report written to ${reportPath}`),
+  (reportPath) => logger.info(`metrics report written to ${reportPath}`),
   (error) => {
     logger.error(formatAppError(error));
     process.exitCode = 1;

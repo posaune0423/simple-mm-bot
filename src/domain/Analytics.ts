@@ -1,14 +1,14 @@
 import type { Fill } from "./entities/Fill.ts";
-import type { FillAnalysis, ReportMetrics } from "./entities/Report.ts";
+import type { FillAnalysis, PerformanceMetrics } from "./entities/PerformanceMetrics.ts";
 
-export interface AnalyticsInput {
+interface AnalyticsInput {
   fills: Fill[];
   quotedCount: number;
 }
 
 export class Analytics {
   build({ fills, quotedCount }: AnalyticsInput): {
-    metrics: ReportMetrics;
+    metrics: PerformanceMetrics;
     fillAnalysis: FillAnalysis;
     equityCurve: Array<{ timestamp: number; value: number }>;
   } {

@@ -35,6 +35,50 @@ function captureLogs() {
 }
 
 describe("Bot", () => {
+  test("does not build or persist a legacy report after a successful run", async () => {
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: { execute: async () => {} },
+        recordFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "ETH",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place(order) {
+          return { id: "quote", request: order, status: "open" as const };
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    await bot.start(1);
+  });
+
   test("stops immediately on emergency risk state", async () => {
     const calls: string[] = [];
     const bot = new Bot(
@@ -56,26 +100,6 @@ describe("Bot", () => {
           execute: async () => {
             calls.push("closePosition");
           },
-        },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "paper" as const,
-            venue: "hyperliquid",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
         },
       },
       {
@@ -133,26 +157,6 @@ describe("Bot", () => {
           execute: async () => {
             calls.push("closePosition");
           },
-        },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "paper" as const,
-            venue: "bulk",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
         },
       },
       {
@@ -219,26 +223,6 @@ describe("Bot", () => {
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "live" as const,
-            venue: "bulk",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
-        },
       },
       {
         async connect() {
@@ -297,26 +281,6 @@ describe("Bot", () => {
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "paper" as const,
-            venue: "bulk",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
-        },
       },
       {
         async connect() {},
@@ -377,12 +341,6 @@ describe("Bot", () => {
           execute: async () => {
             calls.push("closePosition");
             throw new Error("close failed");
-          },
-        },
-        buildReport: {
-          execute: async () => {
-            calls.push("buildReport");
-            throw new Error("should not build report");
           },
         },
       },
@@ -472,11 +430,6 @@ describe("Bot", () => {
           execute: async () => {
             calls.push("closePosition");
             throw new Error("close failed");
-          },
-        },
-        buildReport: {
-          execute: async () => {
-            throw new Error("report should not be built");
           },
         },
       },
@@ -589,26 +542,6 @@ describe("Bot", () => {
         },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "paper" as const,
-            venue: "bulk",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
-        },
       },
       marketFeed,
       {
@@ -696,26 +629,6 @@ describe("Bot", () => {
           },
         },
         closePosition: { execute: async () => {} },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "paper" as const,
-            venue: "bulk",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
-        },
       },
       {
         async connect() {},
@@ -771,26 +684,6 @@ describe("Bot", () => {
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
-        buildReport: {
-          execute: async () => ({
-            id: "r1",
-            mode: "paper" as const,
-            venue: "bulk",
-            periodStart: 0,
-            periodEnd: 1,
-            metrics: {
-              netPnl: 0,
-              tradePnl: 0,
-              markout5s: 0,
-              markout30s: 0,
-              maxDrawdown: 0,
-              sharpe: 0,
-              fillRate: 0,
-            },
-            equityCurve: [],
-            fillAnalysis: { adverseSelectionCount: 0, fillCount: 0 },
-          }),
-        },
       },
       {
         async connect() {},

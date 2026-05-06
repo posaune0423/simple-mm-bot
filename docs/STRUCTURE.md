@@ -16,10 +16,9 @@ simple-mm-bot/
 │   ├── application/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
-│   │   ├── TelemetryRecorder.ts
+│   │   ├── MetricsRecorder.ts
 │   │   ├── shutdown.ts
 │   │   └── usecases/
-│   │       ├── BuildReportUseCase.ts
 │   │       ├── ClosePositionUseCase.ts
 │   │       ├── GuardRiskUseCase.ts
 │   │       ├── RecordFillUseCase.ts
@@ -46,8 +45,8 @@ simple-mm-bot/
 │   │       ├── HistoricalMarketFeed.ts
 │   │       └── PaperOrderGateway.ts
 │   ├── infrastructure/
-│   │   ├── Telemetry.ts
-│   │   ├── TelemetryRepository.ts
+│   │   ├── Metrics.ts
+│   │   ├── MetricsRepository.ts
 │   │   └── db/
 │   │       ├── postgres/
 │   │       └── sqlite/
@@ -78,9 +77,9 @@ simple-mm-bot/
 │   ├── evaluateLiveRun.ts
 │   ├── tuneBulkConfig.ts
 │   ├── createDesignIssues.ts
-│   ├── generateTelemetryReport.ts
+│   ├── generateMetricsReport.ts
 │   └── lib/
-│       ├── TelemetryEvaluation.ts
+│       ├── MetricsEvaluation.ts
 │       ├── BulkConfigTuning.ts
 │       └── DesignIssuePlanner.ts
 ├── docs/
@@ -110,7 +109,7 @@ simple-mm-bot/
 `QuoteEngine` は strategy、fair price、volatility、risk sizing を組み合わせて quote を生成する。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
-telemetry evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
+metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
 
 ### `src/application/`
 
@@ -118,7 +117,7 @@ bot runtime と use case orchestration を置く。
 
 - tick loop を管理する
 - domain service を組み合わせる
-- live / paper の market snapshot を 1m OHLCV として保存する
+- market snapshot / order / fill / account risk を metrics fact として保存する
 - `di.ts` で mode / venue / repository を解決する
 - venue protocol や SQL を直接書かない
 
@@ -165,27 +164,28 @@ DB など外部 storage の詳細を置く。
 
 - SQLite は local / lightweight operation 用
 - Postgres は production 用
-- repository は domain ports と telemetry repository contract を実装し、schema 都合を上位層に漏らさない
-- `Telemetry.ts` は mode 非依存の run/event contract を定義する
-- `TelemetryRepository.ts` は telemetry repository port を定義する
-- telemetry は `telemetry_runs` と `telemetry_events` に mode 非依存で保存し、live / paper / backtest の評価入力を共通化する
+- repository は domain ports と metrics repository contract を実装し、schema 都合を上位層に漏らさない
+- `Metrics.ts` は core metrics fact contract を定義する
+- `MetricsRepository.ts` は metrics repository port を定義する
+- metrics は `trading_runs`, `orderbook_snapshots`, `submitted_orders`, `trade_fills`, `account_state_observations` に保存する
+- `telemetry_events`, `markouts`, `quote_decisions`, `runtime_incidents` は作らず、分析結果は view で計算する
 
-### `src/application/TelemetryRecorder.ts`
+### `src/application/MetricsRecorder.ts`
 
-Bot runtime から run metadata、market snapshot、quote、order、fill、markout、runtime health を保存する。
-Bulk beta live は runtime mode は `live` のまま、telemetry 上の `capitalMode` を `beta_mock` として明示する。
+Bot runtime から run metadata、orderbook snapshot、submitted order、trade fill、account state observation を保存する。
+Bulk beta live は runtime mode は `live` のまま、metrics 上の `capitalMode` を `beta_mock` として明示する。
 
 ### `scripts/lib/`
 
 Bot の外側で agent や operator が使う評価・tuning・issue planning logic を置く。
 runtime source ではなく tool 用 script の実装詳細として扱う。
 
-- `TelemetryEvaluation.ts`
-  - 保存済み telemetry / fills から data health、PnL、markout、order quality、runtime health を評価する
+- `MetricsEvaluation.ts`
+  - 保存済み metrics facts / views から data health、PnL、markout、order quality、runtime health を評価する
 - `BulkConfigTuning.ts`
   - `config/config.bulk.yml` への最小YAML tuningだけを扱うBulk固有tool logic
 - `DesignIssuePlanner.ts`
-  - SDK/API/code/design修正が必要な telemetry signal をGitHub issue案へ変換する
+  - SDK/API/code/design修正が必要な metrics signal をGitHub issue案へ変換する
 
 `scripts/lib/` は bot runtime の意思決定に import しない。
 
@@ -254,8 +254,8 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 - application は domain、infrastructure contracts、DI 対象の具体実装だけを組み合わせる
 - Bulk SDK import は `src/adapters/bulk/` に閉じる
 - Hyperliquid SDK import は `src/lib/hyperliquid/` と `src/adapters/hyperliquid/` に閉じる
-- infrastructure は domain ports / telemetry repository contract と storage library に依存する
-- scripts は domain entities と infrastructure telemetry contract を読めるが、bot runtime からは参照しない
+- infrastructure は domain ports / metrics repository contract と storage library に依存する
+- scripts は domain entities と infrastructure metrics contract を読めるが、bot runtime からは参照しない
 - secret env は `src/env.ts` と config expansion 以外で直接読まない
 
 ## テスト構成
@@ -263,7 +263,7 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 - `tests/domain/`
   - strategy、quote engine、analytics の pure unit test
 - `tests/scripts/`
-  - telemetry evaluation、Bulk config tuning、design issue planning の unit test
+  - metrics evaluation、Bulk config tuning、design issue planning の unit test
 - `tests/application/`
   - DI、bot loop、use case の orchestration test
 - `tests/adapters/`

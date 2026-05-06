@@ -1,6 +1,6 @@
-import type { EquityPoint } from "../../domain/entities/Report.ts";
+import type { EquityPoint } from "../../domain/entities/PerformanceMetrics.ts";
 
-export interface DrawdownPoint {
+interface DrawdownPoint {
   timestamp: number;
   drawdown: number;
 }

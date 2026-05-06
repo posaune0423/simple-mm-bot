@@ -6,12 +6,12 @@ import { theme } from "../theme.ts";
 import type { ChartOutput } from "./lineChart.ts";
 import { emptyChart, renderTitle } from "./lineChart.ts";
 
-export interface ScatterPoint {
+interface ScatterPoint {
   x: number;
   y: number;
 }
 
-export interface ScatterChartOptions {
+interface ScatterChartOptions {
   title?: string;
   width?: number;
   height?: number;

@@ -51,7 +51,7 @@ const commonConfigSchema = z.object({
   }),
 });
 
-export const appConfigSchema = z.discriminatedUnion("venue", [
+const appConfigSchema = z.discriminatedUnion("venue", [
   commonConfigSchema.extend({
     venue: z.literal("hyperliquid"),
     connections: z.object({
@@ -81,9 +81,8 @@ export const appConfigSchema = z.discriminatedUnion("venue", [
 
 export type AppConfig = z.infer<typeof appConfigSchema>;
 export type AppMode = AppConfig["mode"];
-export type OrderTimeInForce = z.infer<typeof timeInForceSchema>;
 
-export interface LoadConfigOptions {
+interface LoadConfigOptions {
   configPath?: string;
 }
 
@@ -125,7 +124,7 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
   };
 }
 
-export function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, AppError> {
+function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, AppError> {
   const configPath = options.configPath ?? env.CONFIG_PATH;
 
   return tryCatchAsync(Bun.file(configPath).text(), (error) =>

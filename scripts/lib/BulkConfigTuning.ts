@@ -1,6 +1,6 @@
 import { parse, stringify } from "yaml";
 
-import type { TelemetryEvaluation } from "./TelemetryEvaluation.ts";
+import type { MetricsEvaluation } from "./MetricsEvaluation.ts";
 
 export interface TuneResult {
   changed: boolean;
@@ -27,7 +27,7 @@ type MutableConfig = {
 export function tuneBulkConfigDocument(
   yamlText: string,
   evaluation: Pick<
-    TelemetryEvaluation,
+    MetricsEvaluation,
     "tuningAllowed" | "markouts" | "orderQuality" | "pnl" | "inventory"
   >,
 ): TuneResult {

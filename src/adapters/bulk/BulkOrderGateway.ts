@@ -70,13 +70,13 @@ interface BulkAccountClient {
   fills(user: string): Promise<BulkFill[]>;
 }
 
-export interface BulkOrderGatewayClient {
+interface BulkOrderGatewayClient {
   market?: { exchangeInfo?(): Promise<BulkMarketInfo[]> };
   trade: BulkTradeClient;
   account: BulkAccountClient;
 }
 
-export interface BulkOrderGatewayParams {
+interface BulkOrderGatewayParams {
   market: string;
   accountId: string;
   maxLeverage?: number;
@@ -218,7 +218,10 @@ export class BulkOrderGateway implements IOrderGateway {
     );
     await this.publishOrderEvent({
       action: "submit",
+      clientOrderId: normalizedOrder.clientOrderId,
+      intent: normalizedOrder.intent,
       side: normalizedOrder.side,
+      orderType: type,
       price: normalizedOrder.price,
       qty: normalizedOrder.qty,
       reduceOnly: normalizedOrder.reduceOnly,
@@ -235,8 +238,11 @@ export class BulkOrderGateway implements IOrderGateway {
       );
       await this.publishOrderEvent({
         action: "reject",
+        clientOrderId: normalizedOrder.clientOrderId,
         orderId,
+        intent: normalizedOrder.intent,
         side: normalizedOrder.side,
+        orderType: type,
         price: normalizedOrder.price,
         qty: normalizedOrder.qty,
         reduceOnly: normalizedOrder.reduceOnly,
@@ -272,8 +278,11 @@ export class BulkOrderGateway implements IOrderGateway {
     }
     await this.publishOrderEvent({
       action: status === "rejected" ? "reject" : "ack",
+      clientOrderId: normalizedOrder.clientOrderId,
       orderId,
+      intent: normalizedOrder.intent,
       side: normalizedOrder.side,
+      orderType: type,
       price: normalizedOrder.price,
       qty: normalizedOrder.qty,
       reduceOnly: normalizedOrder.reduceOnly,
@@ -404,6 +413,7 @@ export class BulkOrderGateway implements IOrderGateway {
     await this.publishOrderEvent({
       action: "cancel",
       orderId: id,
+      intent: "quote",
       latencyMs: Date.now() - submittedAt,
       rawSummary: { request: "cancelOrder" },
     });
@@ -506,7 +516,9 @@ export class BulkOrderGateway implements IOrderGateway {
       await this.publishOrderEvent({
         action: "fill",
         orderId: normalized.quoteId,
+        intent: "quote",
         side: normalized.side,
+        orderType: "limit",
         price: normalized.price,
         qty: normalized.qty,
         status: "filled",

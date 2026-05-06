@@ -35,13 +35,13 @@ interface BulkWsClient {
   close(): Promise<void>;
 }
 
-export interface BulkMarketFeedClient {
+interface BulkMarketFeedClient {
   market: BulkMarketClient;
   account: BulkAccountClient;
   ws: BulkWsClient;
 }
 
-export interface BulkMarketFeedParams {
+interface BulkMarketFeedParams {
   market: string;
   nlevels?: number;
   accountId?: string;

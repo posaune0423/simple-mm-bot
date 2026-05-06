@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
@@ -30,6 +32,8 @@ export class ReduceInventoryUseCase {
       qty,
       reduceOnly: true,
       timeInForce: "IOC",
+      clientOrderId: randomUUID(),
+      intent: "reduce",
     });
     logger.info(
       `reduce_inventory.order_submitted market=${this.market} side=${side} qty=${qty} price=${price} maxPositionQty=${this.maxPositionQty}`,

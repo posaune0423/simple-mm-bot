@@ -6,12 +6,12 @@ import { theme } from "../theme.ts";
 import type { ChartOutput } from "./lineChart.ts";
 import { emptyChart, renderTitle } from "./lineChart.ts";
 
-export interface BarChartDatum {
+interface BarChartDatum {
   category: string;
   value: number;
 }
 
-export interface BarChartOptions {
+interface BarChartOptions {
   title?: string;
   width?: number;
   height?: number;

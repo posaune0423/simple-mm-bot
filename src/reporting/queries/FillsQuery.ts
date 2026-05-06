@@ -7,7 +7,7 @@ type SqliteDb = ReturnType<
   typeof import("../../infrastructure/db/sqlite/client.ts").createSqliteClient
 >["db"];
 
-export interface FetchFillsInput {
+interface FetchFillsInput {
   db: SqliteDb;
   venue?: string;
   periodStart: number;

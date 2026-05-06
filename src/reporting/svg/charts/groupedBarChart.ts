@@ -6,13 +6,13 @@ import { theme } from "../theme.ts";
 import type { ChartOutput } from "./lineChart.ts";
 import { emptyChart, renderTitle } from "./lineChart.ts";
 
-export interface GroupedBarSeries {
+interface GroupedBarSeries {
   name: string;
   color: string;
   values: ReadonlyArray<number>;
 }
 
-export interface GroupedBarChartOptions {
+interface GroupedBarChartOptions {
   title?: string;
   width?: number;
   height?: number;

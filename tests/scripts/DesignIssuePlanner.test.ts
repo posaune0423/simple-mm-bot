@@ -16,9 +16,9 @@ describe("planDesignIssues", () => {
     });
 
     expect(issues.map((issue) => issue.label)).toEqual([
-      "telemetry-sdk-field-gap",
-      "telemetry-runtime-health",
-      "telemetry-strategy-design",
+      "metrics-sdk-field-gap",
+      "metrics-runtime-health",
+      "metrics-strategy-design",
     ]);
     expect(issues[0]?.title).toContain("Bulk SDK/API field coverage");
     expect(issues[0]?.body).toContain("run-1");

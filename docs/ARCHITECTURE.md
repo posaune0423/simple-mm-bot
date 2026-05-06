@@ -27,7 +27,7 @@ flowchart LR
 
     subgraph App["Application layer"]
         Bot["Bot (tick loop)"]
-        UC["UseCases\n- GuardRisk\n- RefreshQuotes\n- RecordFill\n- ReduceInventory\n- BuildReport"]
+        UC["UseCases\n- GuardRisk\n- RefreshQuotes\n- RecordFill\n- ReduceInventory"]
     end
 
     subgraph Domain["Domain layer (pure)"]
@@ -36,7 +36,7 @@ flowchart LR
         Fair["FairPriceCalculator"]
         Vol["VolatilityEstimator"]
         Ana["Analytics"]
-        Ports[["Ports\nIMarketFeed / IOrderGateway\nITradeRepository / IReportRepository\nIOhlcvRepository / IPositionRepository"]]
+        Ports[["Ports\nIMarketFeed / IOrderGateway\nITradeRepository\nIOhlcvRepository / IPositionRepository"]]
     end
 
     subgraph Adapters["Adapters"]
@@ -46,7 +46,7 @@ flowchart LR
     end
 
     subgraph Infra["Infrastructure"]
-        Repos["sqlite / postgres\nTrade / Report / Ohlcv repositories\nInMemoryPositionRepository"]
+        Repos["sqlite / postgres\nTrade / Metrics / Ohlcv repositories\nInMemoryPositionRepository"]
     end
 
     ENV --> Cfg --> DI --> Bot
@@ -92,9 +92,9 @@ src/
 ├── application/
 │   ├── Bot.ts              # tick loop 本体
 │   ├── di.ts               # venue × mode → 具体 adapter を解決
-│   └── usecases/           # GuardRisk / RefreshQuotes / RecordFill / ReduceInventory / BuildReport
+│   └── usecases/           # GuardRisk / RefreshQuotes / RecordFill / ReduceInventory
 ├── domain/
-│   ├── entities/           # Quote / Fill / Position / Report
+│   ├── entities/           # Quote / Fill / Position / PerformanceMetrics
 │   ├── ports/              # IMarketFeed / IOrderGateway / I*Repository
 │   ├── strategy/           # IQuotingStrategy + Avellaneda-Stoikov
 │   ├── QuoteEngine.ts      # 戦略 + fair + vol + sizing の合成点
@@ -167,7 +167,7 @@ sequenceDiagram
     Record->>Pos: update(fill)
 
     Bot->>Feed: disconnect()
-    Bot->>Bot: BuildReportUseCase.execute() → Report
+    Bot->>Metrics: finish run
 ```
 
 ---
@@ -214,8 +214,8 @@ DB は `DATABASE_URL` の有無で解決される。
 ```mermaid
 flowchart TD
     Start["DIContainer.buildBot()"] --> CR{DATABASE_URL?}
-    CR -- yes --> PG["Postgres\n{Trade,Report,Ohlcv}Repository"]
-    CR -- no  --> SL["SQLite\n{Trade,Report,Ohlcv}Repository"]
+    CR -- yes --> PG["Postgres\n{Trade,Metrics,Ohlcv}Repository"]
+    CR -- no  --> SL["SQLite\n{Trade,Metrics,Ohlcv}Repository"]
 
     Start --> V{venue?}
     V -- bulk --> M1{mode?}
@@ -243,11 +243,11 @@ flowchart LR
         IMF[/"IMarketFeed"/]
         IOG[/"IOrderGateway"/]
         ITR[/"ITradeRepository"/]
-        IRR[/"IReportRepository"/]
+        IMR[/"IMetricsRepository"/]
         IOR[/"IOhlcvRepository"/]
         IPR[/"IPositionRepository"/]
         QE --- IMF & IOG & IPR
-        QE --- ITR & IRR & IOR
+        QE --- ITR & IOR
     end
 
     subgraph Outside["Adapters / Infrastructure"]
@@ -261,8 +261,8 @@ flowchart LR
 
         SqTrade["SqliteTradeRepository"] --> ITR
         PgTrade["PostgresTradeRepository"] --> ITR
-        SqRep["SqliteReportRepository"] --> IRR
-        PgRep["PostgresReportRepository"] --> IRR
+        SqMetrics["SqliteMetricsRepository"] --> IMR
+        PgMetrics["PostgresMetricsRepository"] --> IMR
         SqOhlcv["SqliteOhlcvRepository"] --> IOR
         PgOhlcv["PostgresOhlcvRepository"] --> IOR
         Mem["InMemoryPositionRepository"] --> IPR
@@ -309,7 +309,7 @@ stateDiagram-v2
 
 ---
 
-## 10. データフロー (Fill → Analytics)
+## 10. データフロー (Fill → Metrics Views)
 
 ```mermaid
 flowchart LR
@@ -319,12 +319,12 @@ flowchart LR
     RFU --> TradeRepo[("ITradeRepository")]
     RFU --> PosRepo[("IPositionRepository")]
 
-    BR["BuildReportUseCase\n(終了時)"] --> TradeRepo
-    BR --> Ana["Analytics\nnetPnl / tradePnl /\nmarkout5s / markout30s /\nmaxDrawdown / sharpe / fillRate"]
-    Ana --> ReportRepo[("IReportRepository")]
+    Listener --> Metrics["MetricsRecorder"]
+    Metrics --> FactRepo[("IMetricsRepository")]
+    FactRepo --> Views["v_run_pnl / v_equity_curve /\nv_fill_markouts / v_run_performance"]
 ```
 
-`Fill` には `markPriceAtFill` / `markPrice5s` / `markPrice30s` を保持し、markout 分析まで一気通貫で扱える。
+runtime は report JSON を保存しない。PnL、markout、order quality は保存済み fact から view で計算する。
 
 ---
 

@@ -1,12 +1,12 @@
 import type { Fill } from "../../domain/entities/Fill.ts";
 
-export interface HourlyMarkoutBucket {
+interface HourlyMarkoutBucket {
   hour: number;
   fillCount: number;
   markoutBpsAvg: number;
 }
 
-export interface HourlySideCount {
+interface HourlySideCount {
   hour: number;
   buy: number;
   sell: number;

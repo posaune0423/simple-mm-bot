@@ -1,6 +1,6 @@
 import type { Fill } from "../../domain/entities/Fill.ts";
 
-export interface RollingSharpePoint {
+interface RollingSharpePoint {
   timestamp: number;
   sharpe: number;
 }

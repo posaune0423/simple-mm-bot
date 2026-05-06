@@ -22,15 +22,15 @@ bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と 
 ## アーキテクチャ方針
 
 Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
-telemetry contract と agent/operator tool logic は core market making domain から分離する。
+metrics fact contract と agent/operator tool logic は core market making domain から分離する。
 
-| 層             | 責務                                                   | 依存可能先                             |
-| -------------- | ------------------------------------------------------ | -------------------------------------- |
-| Domain         | 純粋なビジネスロジック、entity、port、strategy         | 外部依存なし                           |
-| Application    | use case の実行順序、bot ループ、DI 構成               | domain                                 |
-| Adapters       | venue / mode ごとの port 実装                          | domain ports + venue SDK               |
-| Infrastructure | telemetry contract、DB client、schema、repository 実装 | domain ports + storage library         |
-| Scripts        | 保存済み telemetry の評価、YAML tuning、issue planning | domain entities + infrastructure types |
+| 層             | 責務                                                               | 依存可能先                             |
+| -------------- | ------------------------------------------------------------------ | -------------------------------------- |
+| Domain         | 純粋なビジネスロジック、entity、port、strategy                     | 外部依存なし                           |
+| Application    | use case の実行順序、bot ループ、DI 構成                           | domain                                 |
+| Adapters       | venue / mode ごとの port 実装                                      | domain ports + venue SDK               |
+| Infrastructure | metrics fact contract、DB client、schema、repository 実装          | domain ports + storage library         |
+| Scripts        | 保存済み metrics facts / views の評価、YAML tuning、issue planning | domain entities + infrastructure types |
 
 ## ランタイム全体像
 
@@ -42,7 +42,7 @@ bot の 1 tick は以下の責務順で動作する。
 2. `OK` の場合のみ `RefreshQuotesUseCase` を実行する
 3. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
 4. fill event は `RecordFillUseCase` で保存する
-5. 必要に応じて `BuildReportUseCase` で report を生成する
+5. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
 
 この流れにより、mode や venue を知らない共通の bot ループを維持する。
 
@@ -60,10 +60,8 @@ bot の 1 tick は以下の責務順で動作する。
   - unrealized PnL
 - `Fill`
   - 約定イベントの正規化表現
-- `Report`
-  - metrics
-  - equity curve
-  - fill analysis
+- `PerformanceMetrics`
+  - script / docs report 用の集計型
 
 ### Ports
 
@@ -76,7 +74,6 @@ bot の 1 tick は以下の責務順で動作する。
   - `cancelAll()`
 - `IPositionRepository`
 - `ITradeRepository`
-- `IReportRepository`
 - `IOhlcvRepository`
 
 ### Strategy / Quote Engine
@@ -192,13 +189,23 @@ Bulk の現行 exchange info は `GTC` と `IOC` を扱う前提のため、Bulk
 - production 推奨は PostgreSQL
 - 切り替え条件は `DATABASE_URL` の有無に一本化する
 
-### テーブル
+### Metrics tables
 
-| テーブル  | 用途                                               | 主なカラム                                                           |
-| --------- | -------------------------------------------------- | -------------------------------------------------------------------- |
-| `fills`   | fill 履歴、PnL、execution quality 分析             | venue, market, side, price, qty, fee, trade_pnl, filled_at           |
-| `reports` | session 集計結果                                   | mode, venue, period range, net_pnl, markout_5s, max_drawdown, sharpe |
-| `ohlcv`   | live / paper の 1m candle と backtest 用履歴 cache | market, timeframe, ts, open, high, low, close, volume                |
+core metrics DB は「後から評価できる fact」だけを保存する。
+分析結果は table ではなく view で計算する。
+
+| テーブル                     | 用途                              | 主なカラム                                                     |
+| ---------------------------- | --------------------------------- | -------------------------------------------------------------- |
+| `trading_runs`               | run 単位の分析軸                  | mode, venue, market, capital_mode, strategy_name, git metadata |
+| `orderbook_snapshots`        | spread / staleness / markout join | best_bid, best_ask, mid_price, mark_price, spread_bps          |
+| `submitted_orders`           | order quality                     | client_order_id, venue_order_id, intent, status, latency       |
+| `trade_fills`                | PnL / fee / volume / fill quality | venue_fill_id, venue_order_id, price, quantity, fee, trade_pnl |
+| `account_state_observations` | inventory / margin / equity risk  | equity, realized_pnl, unrealized_pnl, position_qty, margin     |
+
+`telemetry_events`, `markouts`, `quote_decisions`, `runtime_incidents` は作らない。
+`v_run_performance` を run 評価の入口にし、PnL、drawdown、order quality、markout、market quality、inventory risk は view で集計する。
+
+`ohlcv` は backtest / historical cache 用の別枠として残す。Bulk live / paper の成績評価では OHLCV ではなく `orderbook_snapshots` を使う。
 
 ## 設定管理
 
@@ -237,7 +244,7 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 | Domain unit                | strategy、quote engine、analytics | 外部依存なし              |
 | Application unit           | use case、DI                      | ports を mock             |
 | Adapter unit               | Bulk feed/order mapping           | SDK shape を test double  |
-| Scripts unit               | telemetry evaluation / tuning     | 保存済み入力を fixture 化 |
+| Scripts unit               | metrics evaluation / tuning       | 保存済み入力を fixture 化 |
 | Infrastructure integration | repository                        | 実 SQLite を使用          |
 | Paper E2E                  | bot 全体                          | live feed + sim execution |
 

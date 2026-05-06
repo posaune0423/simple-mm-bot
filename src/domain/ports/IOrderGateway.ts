@@ -10,6 +10,7 @@ export interface OrderRequest {
   reduceOnly: boolean;
   timeInForce: OrderTimeInForce;
   clientOrderId?: string;
+  intent?: "quote" | "reduce" | "close";
 }
 
 export interface PlacedOrder {
@@ -20,8 +21,11 @@ export interface PlacedOrder {
 
 export interface OrderGatewayEvent {
   action: "submit" | "ack" | "cancel" | "reject" | "fill";
+  clientOrderId?: string;
   orderId?: string;
+  intent?: "quote" | "reduce" | "close";
   side?: OrderSide;
+  orderType?: "limit" | "market";
   price?: number;
   qty?: number;
   reduceOnly?: boolean;

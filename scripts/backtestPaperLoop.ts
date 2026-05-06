@@ -4,7 +4,8 @@ import { ResultAsync } from "neverthrow";
 
 import { DIContainer } from "../src/application/di.ts";
 import { ConfigLoader } from "../src/config.ts";
-import type { ReportMetrics } from "../src/domain/entities/Report.ts";
+import type { PerformanceMetrics } from "../src/domain/entities/PerformanceMetrics.ts";
+import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
 import type { AppError } from "../src/utils/errors.ts";
 import { createAppError, formatAppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
@@ -13,8 +14,8 @@ import { logger } from "../src/utils/logger.ts";
 
 interface BacktestPaperLoopSummary {
   verdict: "pass" | "review";
-  backtest: ReportMetrics;
-  paper: ReportMetrics;
+  backtest: PerformanceMetrics;
+  paper: PerformanceMetrics;
   window: {
     from: string;
     to: string;
@@ -45,6 +46,69 @@ function buildBot(
   );
 }
 
+function loadLatestPerformanceMetrics(
+  dbPath: string,
+  mode: "paper" | "backtest",
+): PerformanceMetrics {
+  const client = createSqliteClient(dbPath);
+  try {
+    const row = client.sqlite
+      .query<
+        {
+          net_pnl: number;
+          trade_pnl: number;
+          markout_5s: number;
+          markout_30s: number;
+          max_drawdown: number;
+          fill_rate: number;
+        },
+        [string]
+      >(
+        `
+          SELECT
+            COALESCE(p.net_pnl, 0) AS net_pnl,
+            COALESCE(p.trade_pnl, 0) AS trade_pnl,
+            COALESCE((
+              SELECT SUM(markout_5s_bps)
+              FROM v_fill_markouts
+              WHERE run_id = r.id
+            ), 0) AS markout_5s,
+            COALESCE((
+              SELECT SUM(markout_30s_bps)
+              FROM v_fill_markouts
+              WHERE run_id = r.id
+            ), 0) AS markout_30s,
+            COALESCE(d.max_drawdown, 0) AS max_drawdown,
+            COALESCE(oq.fill_rate, 0) AS fill_rate
+          FROM trading_runs r
+          LEFT JOIN v_run_pnl p ON p.run_id = r.id
+          LEFT JOIN v_run_drawdown d ON d.run_id = r.id
+          LEFT JOIN v_order_quality oq ON oq.run_id = r.id
+          WHERE r.mode = ?
+          ORDER BY r.started_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(mode);
+
+    if (row === null) {
+      throw new Error(`No trading run found for mode=${mode}`);
+    }
+
+    return {
+      netPnl: row.net_pnl,
+      tradePnl: row.trade_pnl,
+      markout5s: row.markout_5s,
+      markout30s: row.markout_30s,
+      maxDrawdown: row.max_drawdown,
+      sharpe: 0,
+      fillRate: row.fill_rate,
+    };
+  } finally {
+    client.sqlite.close();
+  }
+}
+
 function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
   const outputDir = options["output-dir"] ?? join("artifacts", "strategy-runs", `${Date.now()}`);
@@ -62,38 +126,42 @@ function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
   )
     .andThen(() => buildBot(backtestConfigPath, "backtest", dbPath, { from, to }))
     .andThen((bot) =>
-      ResultAsync.fromPromise(bot.start(), (error) =>
-        createAppError("loop.backtest_failed", "Backtest execution failed", error),
+      ResultAsync.fromPromise(
+        bot.start().then(() => loadLatestPerformanceMetrics(dbPath, "backtest")),
+        (error) => createAppError("loop.backtest_failed", "Backtest execution failed", error),
       ),
     )
-    .andThen((backtestReport) =>
+    .andThen((backtestMetrics) =>
       buildBot(paperConfigPath, "paper", dbPath).andThen((bot) =>
-        ResultAsync.fromPromise(bot.start(paperTicks), (error) =>
-          createAppError("loop.paper_failed", "Paper execution failed", error),
-        ).map((paperReport) => ({ backtestReport, paperReport })),
+        ResultAsync.fromPromise(
+          bot.start(paperTicks).then(() => loadLatestPerformanceMetrics(dbPath, "paper")),
+          (error) => createAppError("loop.paper_failed", "Paper execution failed", error),
+        ).map((paperMetrics) => ({ backtestMetrics, paperMetrics })),
       ),
     )
-    .andThen(({ backtestReport, paperReport }) => {
+    .andThen(({ backtestMetrics, paperMetrics }) => {
       const summary: BacktestPaperLoopSummary = {
-        verdict:
-          backtestReport.metrics.netPnl >= 0 && paperReport.metrics.netPnl >= 0 ? "pass" : "review",
-        backtest: backtestReport.metrics,
-        paper: paperReport.metrics,
+        verdict: backtestMetrics.netPnl >= 0 && paperMetrics.netPnl >= 0 ? "pass" : "review",
+        backtest: backtestMetrics,
+        paper: paperMetrics,
         window: { from, to, paperDurationMin },
       };
 
       return ResultAsync.fromPromise(
         Promise.all([
           writeJsonFile(join(outputDir, "summary.json"), summary),
-          writeJsonFile(join(outputDir, "report.json"), { backtestReport, paperReport }),
+          writeJsonFile(join(outputDir, "metrics.json"), {
+            backtest: backtestMetrics,
+            paper: paperMetrics,
+          }),
           writeTextFile(
             join(outputDir, "run.md"),
             [
               "# Strategy Run",
               "",
               `- Verdict: ${summary.verdict}`,
-              `- Backtest netPnl: ${backtestReport.metrics.netPnl}`,
-              `- Paper netPnl: ${paperReport.metrics.netPnl}`,
+              `- Backtest netPnl: ${backtestMetrics.netPnl}`,
+              `- Paper netPnl: ${paperMetrics.netPnl}`,
               `- Output dir: ${outputDir}`,
             ].join("\n"),
           ),

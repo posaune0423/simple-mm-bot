@@ -1,9 +1,8 @@
-import type { Report } from "../domain/entities/Report.ts";
 import type { Fill } from "../domain/entities/Fill.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { logger } from "../utils/logger.ts";
-import type { TelemetryRecorder } from "./TelemetryRecorder.ts";
+import type { MetricsRecorder } from "./MetricsRecorder.ts";
 import type { RiskState } from "./usecases/GuardRiskUseCase.ts";
 
 interface UseCases {
@@ -13,9 +12,6 @@ interface UseCases {
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
   reduceInventory: { executeIfNeeded(): Promise<boolean> };
   closePosition: { execute(): Promise<void> };
-  buildReport: {
-    execute(periodStart: number, periodEnd: number, quotedCount: number): Promise<Report>;
-  };
 }
 
 type TickResult = "continue" | "stop";
@@ -31,26 +27,25 @@ export class Bot {
     private readonly marketFeed: IMarketFeed,
     private readonly orderGateway: IOrderGateway,
     private readonly intervalMs: number,
-    private readonly telemetry?: TelemetryRecorder,
+    private readonly metrics?: MetricsRecorder,
   ) {}
 
-  async start(maxTicks?: number): Promise<Report> {
+  async start(maxTicks?: number): Promise<void> {
     this.running = true;
-    const startedAt = Date.now();
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(`bot.start intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`);
 
     try {
-      await this.telemetry?.start(startedAt);
+      await this.metrics?.start(Date.now());
       await this.connectAndSubscribe();
       await this.runLoop(maxTicks);
     } catch (err) {
       runError = err;
-      await this.telemetry?.recordRuntimeHealth("error", "runtime_error", String(err));
+      await this.metrics?.recordRuntimeHealth("error", "runtime_error", String(err));
     } finally {
       closePositionError = await this.cleanup();
-      await this.telemetry?.finish(
+      await this.metrics?.finish(
         Date.now(),
         runError === undefined && closePositionError === undefined ? "completed" : "failed",
       );
@@ -62,8 +57,6 @@ export class Bot {
     if (closePositionError !== undefined) {
       throw closePositionError;
     }
-
-    return this.useCases.buildReport.execute(startedAt, Date.now(), this.quotedCount);
   }
 
   stop(): void {
@@ -87,7 +80,7 @@ export class Bot {
           `bot.fill_received market=${fill.market} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
         );
         this.enqueueEventTask(async () => {
-          await this.telemetry?.recordFill(fill);
+          await this.metrics?.recordFill(fill);
           await this.useCases.recordFill.execute(fill);
         });
       }),
@@ -96,7 +89,7 @@ export class Bot {
       this.unsubscribers.push(
         this.orderGateway.subscribeOrderEvents((event) => {
           this.enqueueEventTask(async () => {
-            await this.telemetry?.recordOrder(event);
+            await this.metrics?.recordOrder(event);
           });
         }),
       );
@@ -189,17 +182,15 @@ export class Bot {
   }
 
   private async recordOhlcv(snapshot: MarketSnapshot): Promise<void> {
-    await this.telemetry?.recordMarketSnapshot(snapshot);
+    await this.metrics?.recordMarketSnapshot(snapshot);
     await this.useCases.recordOhlcv.execute(snapshot).catch((err) => {
       logger.warn(
         `bot.market_snapshot_record_failed market=${snapshot.market} ts=${snapshot.timestamp} error=${String(err)}`,
       );
-      void this.telemetry?.recordRuntimeHealth(
-        "warn",
-        "market_snapshot_record_failed",
-        String(err),
-        { market: snapshot.market, ts: snapshot.timestamp },
-      );
+      void this.metrics?.recordRuntimeHealth("warn", "market_snapshot_record_failed", String(err), {
+        market: snapshot.market,
+        ts: snapshot.timestamp,
+      });
     });
   }
 

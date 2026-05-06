@@ -7,7 +7,7 @@ import { theme } from "../theme.ts";
 import type { ChartOutput } from "./lineChart.ts";
 import { emptyChart, renderTitle } from "./lineChart.ts";
 
-export interface HistogramChartOptions {
+interface HistogramChartOptions {
   title?: string;
   width?: number;
   height?: number;

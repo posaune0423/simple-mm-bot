@@ -5,6 +5,7 @@ import type { IMarketFeed, MarketSnapshot } from "../../domain/ports/IMarketFeed
 import type {
   FillListener,
   IOrderGateway,
+  OrderEventListener,
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
@@ -16,6 +17,7 @@ interface PaperOrderState extends PlacedOrder {
 
 export class PaperOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
+  private readonly orderListeners = new Set<OrderEventListener>();
   private readonly openOrders = new Map<string, PaperOrderState>();
   private latestSnapshot: MarketSnapshot | null = null;
   private readonly unsubscribe: () => void;
@@ -32,9 +34,21 @@ export class PaperOrderGateway implements IOrderGateway {
 
   async place(order: OrderRequest): Promise<PlacedOrder> {
     const id = order.clientOrderId ?? randomUUID();
+    const orderType = order.price === undefined ? "market" : "limit";
     logger.info(
       `paper_order_gateway.place_submitted market=${order.market} orderId=${id} side=${order.side} qty=${order.qty} price=${order.price ?? "market"} tif=${order.timeInForce} reduceOnly=${order.reduceOnly}`,
     );
+    await this.publishOrderEvent({
+      action: "submit",
+      clientOrderId: id,
+      intent: order.intent,
+      side: order.side,
+      orderType,
+      price: order.price,
+      qty: order.qty,
+      reduceOnly: order.reduceOnly,
+      timeInForce: order.timeInForce,
+    });
     const placed: PaperOrderState = {
       id,
       request: order,
@@ -48,12 +62,38 @@ export class PaperOrderGateway implements IOrderGateway {
         await this.fillOrder(placed, snapshot);
       } else {
         placed.status = "cancelled";
+        await this.publishOrderEvent({
+          action: "cancel",
+          clientOrderId: id,
+          orderId: id,
+          intent: order.intent,
+          side: order.side,
+          orderType,
+          price: order.price,
+          qty: order.qty,
+          reduceOnly: order.reduceOnly,
+          timeInForce: order.timeInForce,
+          status: "cancelled",
+        });
         logger.info(`paper_order_gateway.ioc_cancelled market=${order.market} orderId=${id}`);
       }
       return placed;
     }
 
     this.openOrders.set(id, placed);
+    await this.publishOrderEvent({
+      action: "ack",
+      clientOrderId: id,
+      orderId: id,
+      intent: order.intent,
+      side: order.side,
+      orderType,
+      price: order.price,
+      qty: order.qty,
+      reduceOnly: order.reduceOnly,
+      timeInForce: order.timeInForce,
+      status: "open",
+    });
     logger.debug(`paper_order_gateway.order_opened market=${order.market} orderId=${id}`);
     if (this.latestSnapshot !== null) {
       this.evaluateSnapshot(this.latestSnapshot);
@@ -64,6 +104,12 @@ export class PaperOrderGateway implements IOrderGateway {
   async cancel(id: string): Promise<void> {
     this.openOrders.delete(id);
     logger.info(`paper_order_gateway.cancel_submitted orderId=${id}`);
+    await this.publishOrderEvent({
+      action: "cancel",
+      clientOrderId: id,
+      orderId: id,
+      status: "cancelled",
+    });
   }
 
   async cancelAll(): Promise<void> {
@@ -75,6 +121,13 @@ export class PaperOrderGateway implements IOrderGateway {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  subscribeOrderEvents(listener: OrderEventListener): () => void {
+    this.orderListeners.add(listener);
+    return () => {
+      this.orderListeners.delete(listener);
     };
   }
 
@@ -142,8 +195,27 @@ export class PaperOrderGateway implements IOrderGateway {
     logger.info(
       `paper_order_gateway.fill_created market=${fill.market} orderId=${fill.id} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
     );
+    await this.publishOrderEvent({
+      action: "fill",
+      clientOrderId: order.id,
+      orderId: order.id,
+      intent: order.request.intent,
+      side: order.request.side,
+      orderType: order.request.price === undefined ? "market" : "limit",
+      price: fillPrice,
+      qty: order.request.qty,
+      reduceOnly: order.request.reduceOnly,
+      timeInForce: order.request.timeInForce,
+      status: "filled",
+    });
     for (const listener of this.listeners) {
       await listener(fill);
+    }
+  }
+
+  private async publishOrderEvent(event: Parameters<OrderEventListener>[0]): Promise<void> {
+    for (const listener of this.orderListeners) {
+      await listener(event);
     }
   }
 }
