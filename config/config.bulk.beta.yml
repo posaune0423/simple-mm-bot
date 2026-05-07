@@ -30,7 +30,7 @@ quoteEngine:
     budgetUsd: 9600
   levels:
     - halfSpreadBps: 1.5
-      sizeUsd: 9600
+      sizeUsd: 14400
   strategy:
     type: bulk-beta-leaderboard
     params:

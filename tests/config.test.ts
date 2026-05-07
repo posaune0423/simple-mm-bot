@@ -48,7 +48,7 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
     expect(config.quoteEngine.markWeight).toBe(0.25);
     expect(config.quoteEngine.minSpreadBps).toBe(3);
-    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 1.5, sizeUsd: 9600 }]);
+    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 1.5, sizeUsd: 14400 }]);
     expect(config.quoteEngine.strategy).toEqual({
       type: "bulk-beta-leaderboard",
       params: {

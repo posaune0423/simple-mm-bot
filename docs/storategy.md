@@ -237,7 +237,7 @@ defaultTimeInForce = GTC
 | sizing   | `positionSize`          |                  `1.25` | fallback max quote size BTC   |
 | sizing   | `budgetUsd`             |                  `9600` | fallback per-order budget cap |
 | ladder   | `halfSpreadBps`         |                   `1.5` | level half-spread             |
-| ladder   | `sizeUsd`               |                  `9600` | level notional                |
+| ladder   | `sizeUsd`               |                 `14400` | level notional                |
 | engine   | `minSpreadBps`          |                     `3` | minimum full quote width      |
 | strategy | `type`                  | `bulk-beta-leaderboard` | Bulk beta live strategy       |
 | strategy | `baseHalfSpreadBps`     |                   `2.5` | base half spread              |
