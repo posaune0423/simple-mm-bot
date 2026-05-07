@@ -7,6 +7,7 @@ import type { RiskState } from "./usecases/GuardRiskUseCase.ts";
 
 interface UseCases {
   guardRisk: { execute(): Promise<RiskState> };
+  initializePosition?: { execute(): Promise<void> };
   refreshQuotes: { execute(): Promise<void> };
   updatePositionOnFill: { execute(fill: Fill): Promise<void> };
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
@@ -78,6 +79,7 @@ export class Bot {
     await this.marketFeed.connect();
     logger.info("bot.market_feed_connected");
     await this.orderGateway.syncFills?.();
+    await this.useCases.initializePosition?.execute();
     this.unsubscribers.push(
       this.marketFeed.subscribe((snapshot) => {
         this.enqueueEventTask(async () => this.recordOhlcv(snapshot));

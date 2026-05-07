@@ -32,6 +32,7 @@ import { MetricsRecorder } from "./MetricsRecorder.ts";
 import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
+import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
@@ -67,6 +68,7 @@ export class DIContainer {
           metrics,
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
+        initializePosition: new InitializePositionUseCase(gateway, positionRepository),
         updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
         recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
         reduceInventory: new ReduceInventoryUseCase(

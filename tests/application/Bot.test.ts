@@ -140,6 +140,67 @@ describe("Bot", () => {
     expect(calls).toEqual(["cancelAll", "closePosition"]);
   });
 
+  test("initializes the live position before placing the first quote", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        initializePosition: {
+          execute: async () => {
+            calls.push("initializePosition");
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "ETH",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place(order) {
+          return { id: "quote", request: order, status: "open" as const };
+        },
+        async cancel() {},
+        async cancelAll() {},
+        async syncFills() {
+          calls.push("syncFills");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    await bot.start(1);
+
+    expect(calls.slice(0, 4)).toEqual(["connect", "syncFills", "initializePosition", "refresh"]);
+  });
+
   test("cleans up subscriptions and order gateway lifecycle after stopping", async () => {
     const calls: string[] = [];
     const bot = new Bot(
