@@ -186,12 +186,17 @@ describe("Bot", () => {
           throw new Error("unused");
         },
         async cancel() {},
-        async cancelAll() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
         subscribeFills() {
           calls.push("subscribe");
           return () => {
             calls.push("unsubscribe");
           };
+        },
+        stopBackgroundSync() {
+          calls.push("stopBackgroundSync");
         },
         dispose() {
           calls.push("dispose");
@@ -206,11 +211,127 @@ describe("Bot", () => {
       "connect",
       "subscribe",
       "refresh",
+      "stopBackgroundSync",
+      "cancelAll",
       "closePosition",
       "disconnect",
       "unsubscribe",
       "dispose",
     ]);
+  });
+
+  test("skips normal-stop market close when shutdown policy is emergency only", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["refresh", "cancelAll"]);
+  });
+
+  test("still closes positions on emergency stop with emergency-only shutdown policy", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
+        refreshQuotes: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: 0.01,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["cancelAll", "closePosition"]);
   });
 
   test("syncs existing fills before subscribing to live fill events", async () => {
@@ -371,12 +492,17 @@ describe("Bot", () => {
           throw new Error("unused");
         },
         async cancel() {},
-        async cancelAll() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
         subscribeFills() {
           calls.push("subscribe");
           return () => {
             calls.push("unsubscribe");
           };
+        },
+        stopBackgroundSync() {
+          calls.push("stopBackgroundSync");
         },
         dispose() {
           calls.push("dispose");
@@ -403,6 +529,8 @@ describe("Bot", () => {
       "connect",
       "subscribe",
       "refresh",
+      "stopBackgroundSync",
+      "cancelAll",
       "closePosition",
       "disconnect",
       "unsubscribe",

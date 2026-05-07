@@ -15,6 +15,8 @@ export interface Quote {
   ask: number;
   bidSize: number;
   askSize: number;
+  bidSizeMultiplier?: number;
+  askSizeMultiplier?: number;
   levels?: QuoteLevel[];
   policy: OrderTimeInForce;
   fairPrice: number;

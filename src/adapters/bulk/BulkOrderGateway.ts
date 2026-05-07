@@ -465,6 +465,10 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async dispose(): Promise<void> {
+    await this.stopBackgroundSync();
+  }
+
+  async stopBackgroundSync(): Promise<void> {
     if (this.fillTimer !== null) {
       clearInterval(this.fillTimer);
       this.fillTimer = null;
@@ -557,6 +561,7 @@ export class BulkOrderGateway implements IOrderGateway {
       filledAt: nsToMs(timestamp),
       quoteId: orderId,
       markPriceAtFill: fill.price,
+      makerTaker: fill.maker === this.params.accountId ? "maker" : "taker",
     };
   }
 

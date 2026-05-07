@@ -10,7 +10,13 @@ import { PaperOrderGateway } from "../../src/adapters/paper/PaperOrderGateway.ts
 import { DIContainer, resolveCapitalMode } from "../../src/application/di.ts";
 import type { AppConfig } from "../../src/config.ts";
 
-function config(mode: "live" | "paper" | "backtest"): AppConfig {
+function config(
+  mode: "live" | "paper" | "backtest",
+  strategy: AppConfig["quoteEngine"]["strategy"] = {
+    type: "avellaneda-stoikov",
+    params: { gamma: 0.02, kappa: 1.5, kInv: 0.3 },
+  },
+): AppConfig {
   return {
     mode,
     venue: "bulk",
@@ -31,10 +37,11 @@ function config(mode: "live" | "paper" | "backtest"): AppConfig {
       slideMarginThreshold: 0.12,
       defaultTimeInForce: "GTC",
       sizing: { positionSize: 0.01, budgetUsd: 100 },
-      strategy: { type: "avellaneda-stoikov", params: { gamma: 0.02, kappa: 1.5, kInv: 0.3 } },
+      strategy,
     },
     risk: { imrBuffer: 0.15, mmrBuffer: 0.08, maxPositionQty: 0.05 },
     bot: { intervalMs: 1000 },
+    shutdown: { closePositionPolicy: "always" },
     paper: { touchFillRatio: 0.5 },
     backtest: {
       market: "ETH",
@@ -135,5 +142,28 @@ describe("DIContainer Bulk venue", () => {
 
     expect(internals.marketFeed).toBeInstanceOf(HistoricalMarketFeed);
     expect(internals.orderGateway).toBeInstanceOf(PaperOrderGateway);
+  });
+
+  test("passes the selected strategy name into metrics run metadata", async () => {
+    const bot = await new DIContainer(
+      config("paper", {
+        type: "bulk-beta-leaderboard",
+        params: {
+          baseHalfSpreadBps: 2.5,
+          minHalfSpreadBps: 1.2,
+          maxHalfSpreadBps: 8,
+          volatilitySpreadMultiplier: 1.5,
+          inventorySoftLimitQty: 0.08,
+          inventoryHardLimitQty: 0.18,
+          sameSideSizeMultiplierAtSoft: 0.25,
+          reduceSideSizeMultiplierAtSoft: 1.8,
+        },
+      }),
+    ).buildBot();
+    const internals = bot as unknown as {
+      metrics: { options: { strategyName: string } };
+    };
+
+    expect(internals.metrics.options.strategyName).toBe("bulk-beta-leaderboard");
   });
 });

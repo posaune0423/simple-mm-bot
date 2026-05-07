@@ -17,7 +17,6 @@ import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
 import type { CapitalMode } from "../infrastructure/Metrics.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
-import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
@@ -30,6 +29,7 @@ import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
 import { MetricsRecorder } from "./MetricsRecorder.ts";
+import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
@@ -87,12 +87,14 @@ export class DIContainer {
       gateway,
       this.config.bot.intervalMs,
       metrics,
+      { closePositionPolicy: this.config.shutdown.closePositionPolicy },
     );
   }
 
   private buildQuoteEngine(): QuoteEngine {
+    const strategy = buildQuotingStrategy(this.config.quoteEngine.strategy);
     return new QuoteEngine(
-      new AvellanedaStoikovStrategy(this.config.quoteEngine.strategy.params),
+      strategy,
       new FairPriceCalculator(this.config.quoteEngine.markWeight),
       new VolatilityEstimator(),
       {
@@ -131,7 +133,7 @@ export class DIContainer {
       venue: this.config.venue,
       capitalMode: resolveCapitalMode(this.config),
       market: this.marketName(),
-      strategyName: "avellaneda-stoikov",
+      strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
       configJson: redactConfig(this.config),
       ...gitMetadata(),
     });

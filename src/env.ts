@@ -9,6 +9,7 @@ export const env = createEnv({
     MODE: z.enum(["live", "paper", "backtest"]).optional(),
     DATABASE_URL: z.url().optional(),
     DB_PATH: z.string().min(1).default(DEFAULT_SQLITE_DB_PATH),
+    SLACK_WEBHOOK_URL: z.url().optional(),
     HL_WS_URL: z.url().optional(),
     HL_HTTP_URL: z.url().optional(),
     HL_SECRET_KEY: z.string().min(1).optional(),

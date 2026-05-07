@@ -264,7 +264,7 @@ export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppErr
             backtest: backtestReport,
             paper: paperReport,
           }),
-          writeLoopConfigArtifacts(outputDir, backtestConfigPath, paperConfigPath, dbPath),
+          writeLoopConfigSnapshot(outputDir, backtestConfigPath, paperConfigPath, dbPath),
           writeTextFile(
             join(outputDir, "run.md"),
             [
@@ -281,12 +281,12 @@ export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppErr
           ),
         ]),
         (error) =>
-          createAppError("loop.write_failed", "Failed to write backtest/paper artifacts", error),
+          createAppError("loop.write_failed", "Failed to write backtest/paper results", error),
       ).map(() => outputDir);
     });
 }
 
-async function writeLoopConfigArtifacts(
+async function writeLoopConfigSnapshot(
   outputDir: string,
   backtestConfigPath: string,
   paperConfigPath: string,

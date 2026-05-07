@@ -12,7 +12,7 @@ describe("planDesignIssues", () => {
         "strategy_model_gap",
       ],
       runId: "run-1",
-      reportPath: "artifacts/live-runs/run-1/report.md",
+      reportPath: "data/metrics/run-1/metrics-report.md",
     });
 
     expect(issues.map((issue) => issue.label)).toEqual([
@@ -22,6 +22,6 @@ describe("planDesignIssues", () => {
     ]);
     expect(issues[0]?.title).toContain("Bulk SDK/API field coverage");
     expect(issues[0]?.body).toContain("run-1");
-    expect(issues[0]?.body).toContain("artifacts/live-runs/run-1/report.md");
+    expect(issues[0]?.body).toContain("data/metrics/run-1/metrics-report.md");
   });
 });

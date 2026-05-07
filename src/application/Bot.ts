@@ -15,10 +15,16 @@ interface UseCases {
 }
 
 type TickResult = "continue" | "stop";
+type ShutdownClosePositionPolicy = "always" | "emergency_only";
+
+interface BotOptions {
+  closePositionPolicy: ShutdownClosePositionPolicy;
+}
 
 export class Bot {
   private running = false;
   private quotedCount = 0;
+  private emergencyStopRequested = false;
   private eventTasks: Promise<void> = Promise.resolve();
   private readonly unsubscribers: Array<() => void> = [];
 
@@ -28,6 +34,7 @@ export class Bot {
     private readonly orderGateway: IOrderGateway,
     private readonly intervalMs: number,
     private readonly metrics?: MetricsRecorder,
+    private readonly options: BotOptions = { closePositionPolicy: "always" },
   ) {}
 
   async start(maxTicks?: number): Promise<void> {
@@ -121,6 +128,7 @@ export class Bot {
 
     if (riskState === "EMERGENCY_STOP") {
       logger.warn(`bot.stopping reason=emergency_stop tick=${tick}`);
+      this.emergencyStopRequested = true;
       return "stop";
     }
 
@@ -160,13 +168,16 @@ export class Bot {
     let closePositionError: unknown;
     this.running = false;
     logger.info("bot.cleanup_started");
+    await this.orderGateway.stopBackgroundSync?.();
     await this.orderGateway
       .cancelAll()
       .catch((err) => logger.error(`bot.cleanup.cancel_all_failed: ${err}`));
-    await this.useCases.closePosition.execute().catch((err) => {
-      closePositionError = err;
-      logger.error(`bot.cleanup.close_position_failed: ${err}`);
-    });
+    if (this.shouldClosePositionOnCleanup()) {
+      await this.useCases.closePosition.execute().catch((err) => {
+        closePositionError = err;
+        logger.error(`bot.cleanup.close_position_failed: ${err}`);
+      });
+    }
     await this.marketFeed.disconnect();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
       unsubscribe();
@@ -179,6 +190,10 @@ export class Bot {
       logger.error(`bot.cleanup_failed quotedCount=${this.quotedCount} closePositionFailed=true`);
     }
     return closePositionError;
+  }
+
+  private shouldClosePositionOnCleanup(): boolean {
+    return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
   }
 
   private async recordOhlcv(snapshot: MarketSnapshot): Promise<void> {

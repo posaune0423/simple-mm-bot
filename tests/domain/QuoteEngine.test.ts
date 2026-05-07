@@ -3,7 +3,27 @@ import { describe, expect, test } from "bun:test";
 import { FairPriceCalculator } from "../../src/domain/FairPriceCalculator.ts";
 import { QuoteEngine } from "../../src/domain/QuoteEngine.ts";
 import { VolatilityEstimator } from "../../src/domain/VolatilityEstimator.ts";
+import type { Quote, QuoteContext } from "../../src/domain/entities/Quote.ts";
+import type { IQuotingStrategy } from "../../src/domain/strategy/IQuotingStrategy.ts";
 import { AvellanedaStoikovStrategy } from "../../src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
+
+class FixedMultiplierStrategy implements IQuotingStrategy {
+  readonly name = "fixed-multiplier";
+
+  computeQuote(context: QuoteContext): Quote {
+    return {
+      bid: context.fairPrice - 10,
+      ask: context.fairPrice + 10,
+      bidSize: context.quoteSize * 0.25,
+      askSize: context.quoteSize * 1.8,
+      bidSizeMultiplier: 0.25,
+      askSizeMultiplier: 1.8,
+      policy: context.defaultTimeInForce,
+      fairPrice: context.fairPrice,
+      sigma: context.sigma,
+    };
+  }
+}
 
 describe("QuoteEngine", () => {
   test("skews quotes lower on the bid side when inventory is long", () => {
@@ -192,6 +212,153 @@ describe("QuoteEngine", () => {
     ]);
     expect(quote.bid).toBe(99_920);
     expect(quote.ask).toBe(100_080);
+  });
+
+  test("applies strategy side size multipliers to configured ladder levels", () => {
+    const engine = new QuoteEngine(
+      new FixedMultiplierStrategy(),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.5,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "GTC",
+        positionSize: 0.02,
+        budgetUsd: 800,
+        levels: [{ halfSpreadBps: 3, sizeUsd: 1_000 }],
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 99_990,
+        bestAsk: 100_010,
+        microPrice: 100_000,
+        markPrice: 100_000,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: 0, avgEntry: 0, unrealizedPnl: 0 },
+    );
+
+    expect(quote.bidSize).toBe(0.0025);
+    expect(quote.askSize).toBeCloseTo(0.018);
+    expect(quote.levels?.[0]?.bidSize).toBe(0.0025);
+    expect(quote.levels?.[0]?.askSize).toBeCloseTo(0.018);
+  });
+
+  test("lets ladder bid size fade near zero when long inventory is saturated", () => {
+    const engine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({
+        gamma: 0,
+        kappa: 625,
+        kInv: 0,
+      }),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.2,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "GTC",
+        positionSize: 1,
+        budgetUsd: 1_000,
+        minSpreadBps: 6,
+        levels: [{ halfSpreadBps: 3, sizeUsd: 1_000 }],
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 99_990,
+        bestAsk: 100_010,
+        microPrice: 100_000,
+        markPrice: 100_000,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: 0.6, avgEntry: 100_000, unrealizedPnl: 0 },
+    );
+
+    expect(quote.bidSize).toBeLessThan(0.001);
+    expect(quote.askSize).toBeGreaterThan(0.017);
+  });
+
+  test("keeps long inventory exit asks at or above the average entry", () => {
+    const engine = new QuoteEngine(
+      new AvellanedaStoikovStrategy({
+        gamma: 0,
+        kappa: 625,
+        kInv: 0,
+      }),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.2,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "GTC",
+        positionSize: 1,
+        budgetUsd: 1_000,
+        minSpreadBps: 5,
+        levels: [{ halfSpreadBps: 2.5, sizeUsd: 1_000 }],
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 99_490,
+        bestAsk: 99_510,
+        microPrice: 99_500,
+        markPrice: 99_500,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: 0.05, avgEntry: 100_000, unrealizedPnl: -25 },
+    );
+
+    expect(quote.ask).toBeGreaterThanOrEqual(100_000);
+  });
+
+  test("moves short inventory buyback levels closer than flat quotes", () => {
+    const config = {
+      inventoryScale: 0.2,
+      timeHorizonSec: 10,
+      slideMarginThreshold: 0.08,
+      defaultTimeInForce: "GTC" as const,
+      positionSize: 1,
+      budgetUsd: 1_000,
+      minSpreadBps: 6,
+      levels: [{ halfSpreadBps: 3, sizeUsd: 1_000 }],
+    };
+    const snapshot = {
+      market: "BTC-USD",
+      bestBid: 99_990,
+      bestAsk: 100_010,
+      microPrice: 100_000,
+      markPrice: 100_000,
+      timestamp: 1,
+      marginRatio: 1,
+    };
+    const flat = new QuoteEngine(
+      new AvellanedaStoikovStrategy({ gamma: 0, kappa: 625, kInv: 0 }),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      config,
+    ).compute(snapshot, { qty: 0, avgEntry: 0, unrealizedPnl: 0 });
+    const short = new QuoteEngine(
+      new AvellanedaStoikovStrategy({ gamma: 0, kappa: 625, kInv: 0 }),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      config,
+    ).compute(snapshot, { qty: -0.12, avgEntry: 100_100, unrealizedPnl: 12 });
+
+    expect(short.fairPrice - short.bid).toBeLessThan(flat.fairPrice - flat.bid);
+    expect(short.ask - short.fairPrice).toBeGreaterThan(flat.ask - flat.fairPrice);
   });
 
   test("enforces configured minimum spread in basis points for high-priced markets", () => {

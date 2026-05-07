@@ -18,6 +18,8 @@ simple-mm-bot/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
 │   │   ├── MetricsRecorder.ts
+│   │   ├── OrderManager.ts
+│   │   ├── QuotingStrategyFactory.ts
 │   │   ├── shutdown.ts
 │   │   └── usecases/
 │   │       ├── ClosePositionUseCase.ts
@@ -78,7 +80,6 @@ simple-mm-bot/
 │   └── reporting/
 ├── scripts/
 │   ├── backtestPaperLoop.ts
-│   ├── compactLocalArtifacts.ts
 │   ├── evaluateLiveRun.ts
 │   ├── tuneBulkConfig.ts
 │   ├── createDesignIssues.ts
@@ -97,6 +98,10 @@ simple-mm-bot/
 │   │   └── bulk/
 │   │       └── README.md
 │   └── specs/
+├── data/
+│   ├── mm.db
+│   ├── metrics/
+│   └── strategy-runs/
 └── package.json
 ```
 
@@ -112,6 +117,7 @@ simple-mm-bot/
 - adapter payload を entity に持ち込まない
 
 `QuoteEngine` は strategy、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
+Strategy は `src/domain/strategy/*` に pure domain code として置き、`QuotingStrategyFactory` が config の `quoteEngine.strategy.type` から具象実装を組み立てる。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
 metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
@@ -127,6 +133,7 @@ bot runtime と use case orchestration を置く。
 - venue protocol や SQL を直接書かない
 
 `di.ts` が具体実装を知る唯一の application 境界。
+`OrderManager.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
 
 `shutdown.ts` は runtime shutdown の共通処理を持つ。position close などの取引処理は use case 経由で実行し、signal handling から venue protocol を直接触らない。
 
@@ -201,8 +208,27 @@ runtime source ではなく tool 用 script の実装詳細として扱う。
 
 ### `src/runtimePaths.ts`
 
-Default config、SQLite DB path (`data/mm.db`)、Drizzle schema / migration output、metrics artifact output の path registry。
+Default config、SQLite DB path (`data/mm.db`)、Drizzle schema / migration output、metrics result output の path registry。
 新しい生成先や default path を増やす場合は、まずここへ追加してから scripts / docs / tests で参照する。
+
+## Data Layout
+
+生成データは原則 `data/` 配下へ置く。`src/`、`scripts/`、`docs/` の source file 生成とは分け、local runtime / agent loop が読む state として扱う。
+
+- `data/mm.db`
+  - default SQLite DB。`DATABASE_URL` がなく、`DB_PATH` も未指定の場合に live / paper / backtest / metrics scripts が読む。
+  - 通常の backtest、paper、live optimization はこの同一 DB を共有する。`trading_runs.id` と mode / venue / market / capitalMode で run を分離し、複数 run の比較や latest run 評価を DB 内で行う。
+  - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `--db data/tmp/<label>.db` や一時 path を明示する。
+- `data/metrics/`
+  - bot 性能評価結果の格納先。
+  - `bun run metrics:evaluate` は `evaluation.json` を `data/metrics/<run_id>/`、または明示した `--output-dir` に書く。
+  - agent が直近 run を続けて扱う場合は `--output-dir data/metrics/latest` を使い、`metrics:report` / `metrics:tune` / `metrics:issues` は `data/metrics/latest/evaluation.json` を読む。
+  - `metrics-report.md`、`metrics-report.json`、`issues.json`、tuning の dry-run JSON などもここへ置く。
+- `data/strategy-runs/`
+  - `bun run loop:backtest-paper` の run summary 置き場。
+  - `summary.json`、`report.json`、`run.md`、使用 config snapshot を `data/strategy-runs/<timestamp>-<label>/` に保存する。
+- `docs/reports/`
+  - 人間が review / commit する performance dashboard。`report:generate` の default 出力であり、runtime state ではなく git 管理可能な report snapshot として扱う。
 
 ### `src/reporting/`
 
@@ -278,7 +304,7 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 - `tests/domain/`
   - strategy、quote engine、analytics の pure unit test
 - `tests/scripts/`
-  - metrics evaluation、Bulk config tuning、artifact compaction、design issue planning の unit test
+  - metrics evaluation、Bulk config tuning、design issue planning の unit test
 - `tests/application/`
   - DI、bot loop、use case の orchestration test
 - `tests/adapters/`

@@ -1,6 +1,6 @@
 # Strategy
 
-この文書は現在の market making strategy の実装仕様をまとめる。コード上の primary path は Bulk Trade `BTC-USD` の live / paper 実行で、戦略は `AvellanedaStoikovStrategy` を使う。
+この文書は現在の market making strategy の実装仕様をまとめる。コード上の primary path は Bulk Trade `BTC-USD` の live / paper 実行で、strategy は YAML の `quoteEngine.strategy.type` で切り替える。Bulk beta live は `bulk-beta-leaderboard`、paper/mainnet/backtest の既存 preset は `AvellanedaStoikovStrategy` を使う。
 
 > ファイル名は現状の依頼に合わせて `storategy.md` とする。
 
@@ -42,7 +42,7 @@ sequenceDiagram
             Refresh->>Pos: get()
             Refresh->>QE: compute(snapshot, position)
             QE-->>Refresh: Quote
-            Refresh->>GW: cancelAll()
+            Refresh->>GW: cancel/replace changed quote orders
             loop each ladder level
                 Refresh->>GW: place(buy, reduceOnly=false)
                 Refresh->>GW: place(sell, reduceOnly=false)
@@ -81,7 +81,7 @@ flowchart LR
 
     Fair --> QE
     Vol --> QE
-    QE --> Strategy["AvellanedaStoikovStrategy"]
+    QE --> Strategy["Configured IQuotingStrategy"]
     Strategy --> Quote["Quote<br/>top bid/ask, ladder levels<br/>policy, fairPrice, sigma"]
 ```
 
@@ -96,10 +96,10 @@ fairPrice = markWeight * markPrice + (1 - markWeight) * microPrice
 Bulk beta live config の現値:
 
 ```text
-markWeight = 1
+markWeight = 0.25
 ```
 
-つまり現在は Bulk orderbook mid ではなく mark price を fair price として優先する。micro price は `markWeight` を下げた場合の blend input として残す。
+つまり現在は Bulk orderbook micro price を主に使い、mark price を 25% 混ぜる。
 
 ### Volatility
 
@@ -227,25 +227,26 @@ defaultTimeInForce = GTC
 
 `config/config.bulk.beta.yml` の current strategy parameters。
 
-| Group    | Parameter            |                    Value | Meaning                       |
-| -------- | -------------------- | -----------------------: | ----------------------------- |
-| market   | `market`             |                `BTC-USD` | Bulk target market            |
-| env      | `environment`        |                   `beta` | mock-capital Bulk environment |
-| loop     | `intervalMs`         |                   `1000` | tick interval                 |
-| venue    | `maxLeverage`        |                     `25` | Bulk account leverage target  |
-| fair     | `markWeight`         |                      `1` | mark-price fair weight        |
-| sizing   | `positionSize`       |                   `1.25` | fallback max quote size BTC   |
-| sizing   | `budgetUsd`          |                  `50000` | fallback per-order budget cap |
-| ladder   | `halfSpreadBps`      |             `8/15/30/60` | level half-spreads            |
-| ladder   | `sizeUsd`            | `9400/18800/31300/50000` | level notionals               |
-| engine   | `minSpreadBps`       |                     `16` | minimum full quote width      |
-| strategy | `gamma`              |                      `0` | fixed-spread mode             |
-| strategy | `kappa`              |                    `625` | fixed spread denominator      |
-| strategy | `kInv`               |                      `2` | inventory skew coefficient    |
-| risk     | `maxPositionQty`     |                   `0.85` | inventory reduction threshold |
-| risk     | `imrBuffer`          |                   `0.06` | pause quoting threshold       |
-| risk     | `mmrBuffer`          |                   `0.03` | emergency stop threshold      |
-| policy   | `defaultTimeInForce` |                    `GTC` | normal quote policy           |
+| Group    | Parameter               |                   Value | Meaning                       |
+| -------- | ----------------------- | ----------------------: | ----------------------------- |
+| market   | `market`                |               `BTC-USD` | Bulk target market            |
+| env      | `environment`           |                  `beta` | mock-capital Bulk environment |
+| loop     | `intervalMs`            |                  `1000` | tick interval                 |
+| venue    | `maxLeverage`           |                    `10` | Bulk account leverage guard   |
+| fair     | `markWeight`            |                  `0.25` | mark-price fair weight        |
+| sizing   | `positionSize`          |                  `1.25` | fallback max quote size BTC   |
+| sizing   | `budgetUsd`             |                  `9600` | fallback per-order budget cap |
+| ladder   | `halfSpreadBps`         |                   `1.5` | level half-spread             |
+| ladder   | `sizeUsd`               |                  `8000` | level notional                |
+| engine   | `minSpreadBps`          |                     `3` | minimum full quote width      |
+| strategy | `type`                  | `bulk-beta-leaderboard` | Bulk beta live strategy       |
+| strategy | `baseHalfSpreadBps`     |                   `2.5` | base half spread              |
+| strategy | `inventorySoftLimitQty` |                  `0.08` | inventory soft limit          |
+| strategy | `inventoryHardLimitQty` |                  `0.18` | inventory hard limit          |
+| risk     | `maxPositionQty`        |                   `0.3` | inventory reduction threshold |
+| risk     | `imrBuffer`             |                  `0.06` | pause quoting threshold       |
+| risk     | `mmrBuffer`             |                  `0.03` | emergency stop threshold      |
+| policy   | `defaultTimeInForce`    |                   `GTC` | normal quote policy           |
 
 ## Inventory Reduction
 
@@ -285,12 +286,12 @@ PnL-first で扱うため、parameter tuning では以下の順に見る。
 
 - `src/application/Bot.ts`: tick loop、risk state 分岐、quote count、cleanup
 - `src/application/usecases/GuardRiskUseCase.ts`: margin risk state 判定
-- `src/application/usecases/RefreshQuotesUseCase.ts`: snapshot / position 取得、quote 計算、cancel / place
+- `src/application/usecases/RefreshQuotesUseCase.ts`: snapshot / position 取得、quote 計算、order reconcile
 - `src/application/usecases/ReduceInventoryUseCase.ts`: max inventory 超過時の reduce-only IOC
 - `src/domain/QuoteEngine.ts`: fair price、volatility、quote sizing、strategy context 合成
 - `src/domain/FairPriceCalculator.ts`: mark / micro blended fair price
 - `src/domain/VolatilityEstimator.ts`: EWMA volatility
-- `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts`: spread、skew、reservation price、policy
-- `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts`: strategy parameter schema
+- `src/domain/strategy/*/*Strategy.ts`: spread、skew、side multiplier、policy
+- `src/domain/strategy/*/*Params.ts`: strategy parameter schema
 - `config/config.bulk.beta.yml`: aggressive Bulk beta live parameters
 - `config/config.bulk.mainnet.yml`: conservative Bulk mainnet live parameters

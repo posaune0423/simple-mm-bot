@@ -44,25 +44,30 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.wsUrl).toBe("wss://exchange-ws1.bulk.trade");
     expect(config.connections.bulk.market).toBe("BTC-USD");
     expect(config.connections.bulk.nlevels).toBe(20);
-    expect(config.connections.bulk.maxLeverage).toBe(25);
+    expect(config.connections.bulk.maxLeverage).toBe(10);
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
-    expect(config.quoteEngine.minSpreadBps).toBe(2);
-    expect(config.quoteEngine.levels).toEqual([
-      { halfSpreadBps: 1, sizeUsd: 9400 },
-      { halfSpreadBps: 2, sizeUsd: 18800 },
-      { halfSpreadBps: 4, sizeUsd: 31300 },
-      { halfSpreadBps: 8, sizeUsd: 50000 },
-    ]);
-    expect(config.quoteEngine.strategy.params).toEqual({
-      gamma: 0,
-      kappa: 625,
-      kInv: 2,
+    expect(config.quoteEngine.markWeight).toBe(0.25);
+    expect(config.quoteEngine.minSpreadBps).toBe(3);
+    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 1.5, sizeUsd: 8000 }]);
+    expect(config.quoteEngine.strategy).toEqual({
+      type: "bulk-beta-leaderboard",
+      params: {
+        baseHalfSpreadBps: 2.5,
+        minHalfSpreadBps: 1.2,
+        maxHalfSpreadBps: 8,
+        volatilitySpreadMultiplier: 1.5,
+        inventorySoftLimitQty: 0.08,
+        inventoryHardLimitQty: 0.18,
+        sameSideSizeMultiplierAtSoft: 0.25,
+        reduceSideSizeMultiplierAtSoft: 1.8,
+      },
     });
-    expect(config.quoteEngine.inventoryScale).toBe(0.2);
+    expect(config.quoteEngine.inventoryScale).toBe(0.08);
     expect(config.quoteEngine.sizing.positionSize).toBe(1.25);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(50000);
-    expect(config.risk.maxPositionQty).toBe(0.85);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(9600);
+    expect(config.risk.maxPositionQty).toBe(0.3);
     expect(config.bot.intervalMs).toBe(1000);
+    expect(config.shutdown.closePositionPolicy).toBe("emergency_only");
   });
 
   test("loads Bulk beta config as the default live config before mainnet launch", async () => {
@@ -79,13 +84,81 @@ describe("ConfigLoader", () => {
         throw new Error("Expected bulk config");
       }
       expect(config.connections.bulk.environment).toBe("beta");
-      expect(config.quoteEngine.sizing.budgetUsd).toBe(50000);
+      expect(config.quoteEngine.sizing.budgetUsd).toBe(9600);
+      expect(config.quoteEngine.strategy.type).toBe("bulk-beta-leaderboard");
     } finally {
       if (previousMode === undefined) {
         delete Bun.env.MODE;
       } else {
         Bun.env.MODE = previousMode;
       }
+    }
+  });
+
+  test("loads a standalone Bulk beta leaderboard strategy config", async () => {
+    const configFile = Bun.file("config/config.bulk-leaderboard-test.yml");
+    await Bun.write(
+      configFile,
+      `
+mode: paper
+venue: bulk
+
+connections:
+  bulk:
+    wsUrl: wss://api.bulk.trade/ws
+    httpUrl: https://api.bulk.trade
+    market: BTC-USD
+    environment: beta
+
+quoteEngine:
+  markWeight: 0.5
+  inventoryScale: 0.08
+  timeHorizonSec: 10
+  slideMarginThreshold: 0.06
+  defaultTimeInForce: GTC
+  sizing:
+    positionSize: 1
+  strategy:
+    type: bulk-beta-leaderboard
+    params:
+      baseHalfSpreadBps: 2.5
+      minHalfSpreadBps: 1.2
+      maxHalfSpreadBps: 8
+      volatilitySpreadMultiplier: 1.5
+      inventorySoftLimitQty: 0.08
+      inventoryHardLimitQty: 0.18
+      sameSideSizeMultiplierAtSoft: 0.25
+      reduceSideSizeMultiplierAtSoft: 1.8
+
+risk:
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxPositionQty: 0.85
+
+bot:
+  intervalMs: 1000
+
+backtest:
+  market: BTC-USD
+  timeframe: 1m
+  from: "2026-05-06"
+  to: "2026-05-07"
+`,
+    );
+
+    try {
+      const config = await ConfigLoader.load({
+        configPath: "config/config.bulk-leaderboard-test.yml",
+      });
+
+      expect(config.quoteEngine.strategy.type).toBe("bulk-beta-leaderboard");
+      if (config.quoteEngine.strategy.type !== "bulk-beta-leaderboard") {
+        throw new Error("Expected Bulk beta leaderboard strategy");
+      }
+      expect(config.quoteEngine.strategy.params.inventoryHardLimitQty).toBe(0.18);
+      expect(config.shutdown.closePositionPolicy).toBe("always");
+    } finally {
+      await configFile.delete();
     }
   });
 

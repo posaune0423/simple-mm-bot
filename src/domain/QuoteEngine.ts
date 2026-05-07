@@ -49,7 +49,7 @@ export class QuoteEngine {
       defaultTimeInForce: this.config.defaultTimeInForce,
       marginRatio: snapshot.marginRatio,
     });
-    return this.withConfiguredLevels(quote, position.qty);
+    return this.withConfiguredLevels(quote, position);
   }
 
   private computeQuoteSize(fairPrice: number): number {
@@ -60,13 +60,13 @@ export class QuoteEngine {
     return Math.min(this.config.positionSize, this.config.budgetUsd / fairPrice);
   }
 
-  private withConfiguredLevels(quote: Quote, positionQty: number): Quote {
+  private withConfiguredLevels(quote: Quote, position: Position): Quote {
     if (this.config.levels === undefined) {
       return quote;
     }
 
     const levels = this.config.levels.map((level, index) =>
-      this.configuredLevel(quote, positionQty, level, index),
+      this.configuredLevel(quote, position, level, index),
     );
     const top = levels[0];
     if (top === undefined) {
@@ -85,24 +85,29 @@ export class QuoteEngine {
 
   private configuredLevel(
     quote: Quote,
-    positionQty: number,
+    position: Position,
     levelConfig: QuoteLadderLevelConfig,
     index: number,
   ): QuoteLevel {
     const reservationPrice = (quote.bid + quote.ask) / 2;
     const minHalfSpreadBps = (this.config.minSpreadBps ?? 0) / 2;
     const halfSpreadBps = Math.max(levelConfig.halfSpreadBps, minHalfSpreadBps);
-    const distance = quote.fairPrice * (halfSpreadBps / 10_000);
     const size = levelConfig.sizeUsd / quote.fairPrice;
-    const inventoryRatio = Math.tanh(positionQty / this.config.inventoryScale);
-    const bidSize = size * clamp(1 - inventoryRatio, 0.25, 1.75);
-    const askSize = size * clamp(1 + inventoryRatio, 0.25, 1.75);
+    const inventoryRatio = Math.tanh(position.qty / this.config.inventoryScale);
+    const bidSize = size * clamp(1 - inventoryRatio, 0, 1.75) * (quote.bidSizeMultiplier ?? 1);
+    const askSize = size * clamp(1 + inventoryRatio, 0, 1.75) * (quote.askSizeMultiplier ?? 1);
+    const bidDistance =
+      quote.fairPrice * ((halfSpreadBps * clamp(1 + inventoryRatio, 0.35, 1.75)) / 10_000);
+    const askDistance =
+      quote.fairPrice * ((halfSpreadBps * clamp(1 - inventoryRatio, 0.35, 1.75)) / 10_000);
+    const bid = reservationPrice - bidDistance;
+    const ask = reservationPrice + askDistance;
 
     return {
       level: index,
       halfSpreadBps,
-      bid: reservationPrice - distance,
-      ask: reservationPrice + distance,
+      bid: position.qty < 0 && position.avgEntry > 0 ? Math.min(bid, position.avgEntry) : bid,
+      ask: position.qty > 0 && position.avgEntry > 0 ? Math.max(ask, position.avgEntry) : ask,
       bidSize,
       askSize,
     };

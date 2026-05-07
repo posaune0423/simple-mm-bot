@@ -91,11 +91,13 @@ src/
 ├── application/
 │   ├── Bot.ts              # tick loop 本体
 │   ├── di.ts               # venue × mode → 具体 adapter を解決
+│   ├── OrderManager.ts     # quote order reconcile
+│   ├── QuotingStrategyFactory.ts
 │   └── usecases/           # GuardRisk / RefreshQuotes / RecordFill / ReduceInventory
 ├── domain/
 │   ├── entities/           # Quote / Fill / Position / PerformanceMetrics
 │   ├── ports/              # IMarketFeed / IOrderGateway / I*Repository
-│   ├── strategy/           # IQuotingStrategy + Avellaneda-Stoikov
+│   ├── strategy/           # IQuotingStrategy + strategy implementations
 │   ├── QuoteEngine.ts      # 戦略 + fair + vol + sizing の合成点
 │   ├── FairPriceCalculator.ts
 │   └── VolatilityEstimator.ts
@@ -143,9 +145,8 @@ sequenceDiagram
             Refresh->>Pos: get()
             Refresh->>QE: compute(snapshot, position)
             QE-->>Refresh: Quote{bid, ask, sizes, policy}
-            Refresh->>GW: cancelAll()
-            Refresh->>GW: place(buy)
-            Refresh->>GW: place(sell)
+            Refresh->>GW: cancel/replace changed quote orders only
+            Refresh->>GW: place missing buy/sell quote orders
         else EMERGENCY_STOP
             Bot->>GW: cancelAll()
             Bot->>Bot: stop()
@@ -298,7 +299,7 @@ stateDiagram-v2
 ```
 
 - `PAUSE_QUOTING` 中は新規 quote を出さない (= refreshQuotes をスキップ)。
-- `EMERGENCY_STOP` で `cancelAll()` 後 bot を停止。
+- `EMERGENCY_STOP` で bot を停止し、cleanup で `cancelAll()` を実行する。
 
 ---
 

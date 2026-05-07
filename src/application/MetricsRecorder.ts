@@ -246,7 +246,7 @@ export class MetricsRecorder {
       quantity: fill.qty,
       fee: fill.fee,
       tradePnl,
-      makerTaker: "unknown",
+      makerTaker: fill.makerTaker ?? "unknown",
       filledAt: fill.filledAt,
       rawJson: { ...fill, computedTradePnl: tradePnl },
     });

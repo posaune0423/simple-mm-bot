@@ -14,4 +14,5 @@ export interface Fill {
   markPriceAtFill?: number;
   markPrice5s?: number;
   markPrice30s?: number;
+  makerTaker?: "maker" | "taker" | "unknown";
 }

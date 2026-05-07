@@ -22,7 +22,7 @@ New features should add or extend **use cases** in the application layer, keep *
 - Do not use `console.log` in production code. Use the repository logger from `src/utils/logger.ts`.
 - Keep Bulk-specific API details inside `src/adapters/bulk` or `bulk-ts-sdk` boundaries.
 - Do not add Bullet support unless explicitly requested; current docs define Bulk Trade as the active target.
-- Generated outputs belong in `artifacts/` or `data/`, not in source directories.
+- Generated outputs belong in `data/`, not in source directories.
 - Capture lessons after corrections by updating `.agents/memory/lessons.md`.
 - If a bug belongs outside this bot's responsibility, do not add forced workarounds here; fix the owning dependency instead.
 - Do not modify other local projects or repositories unless the user explicitly asks, even when related dependencies exist on disk.

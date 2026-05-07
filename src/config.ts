@@ -3,6 +3,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import { avellanedaStoikovParamsSchema } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
+import { bulkBetaLeaderboardParamsSchema } from "./domain/strategy/bulk-beta-leaderboard/BulkBetaLeaderboardParams.ts";
 import { env } from "./env.ts";
 import type { AppError } from "./utils/errors.ts";
 import { createAppError } from "./utils/errors.ts";
@@ -18,10 +19,22 @@ const quoteLevelSchema = z.object({
   sizeUsd: z.number().positive(),
 });
 
-const strategySchema = z.object({
-  type: z.literal("avellaneda-stoikov"),
-  params: avellanedaStoikovParamsSchema,
-});
+const strategySchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("avellaneda-stoikov"),
+    params: avellanedaStoikovParamsSchema,
+  }),
+  z.object({
+    type: z.literal("bulk-beta-leaderboard"),
+    params: bulkBetaLeaderboardParamsSchema,
+  }),
+]);
+
+const shutdownSchema = z
+  .object({
+    closePositionPolicy: z.enum(["always", "emergency_only"]).default("always"),
+  })
+  .default({ closePositionPolicy: "always" as const });
 
 const commonConfigSchema = z.object({
   mode: z.enum(["live", "paper", "backtest"]),
@@ -44,6 +57,7 @@ const commonConfigSchema = z.object({
   bot: z.object({
     intervalMs: z.number().int().positive(),
   }),
+  shutdown: shutdownSchema,
   paper: z
     .object({
       touchFillRatio: z.number().min(0).max(1).default(0.5),

@@ -13,39 +13,41 @@ connections:
     nlevels: 20
     # Bulk accounts may default to 50x. The bot verifies the account setting
     # before live orders and fails closed if the UI/API leverage is higher.
-    maxLeverage: 25
+    maxLeverage: 10
     privateKey: ${BULK_PRIVATE_KEY}
 
 quoteEngine:
-  markWeight: 1
-  inventoryScale: 0.2
+  markWeight: 0.25
+  inventoryScale: 0.08
   timeHorizonSec: 10
-  minSpreadBps: 2
+  minSpreadBps: 3
   slideMarginThreshold: 0.06
   defaultTimeInForce: GTC
   sizing:
     positionSize: 1.25
-    budgetUsd: 50000
+    budgetUsd: 9600
   levels:
-    - halfSpreadBps: 1
-      sizeUsd: 9400
-    - halfSpreadBps: 2
-      sizeUsd: 18800
-    - halfSpreadBps: 4
-      sizeUsd: 31300
-    - halfSpreadBps: 8
-      sizeUsd: 50000
+    - halfSpreadBps: 1.5
+      sizeUsd: 8000
   strategy:
-    type: avellaneda-stoikov
+    type: bulk-beta-leaderboard
     params:
-      gamma: 0
-      kappa: 625
-      kInv: 2
+      baseHalfSpreadBps: 2.5
+      minHalfSpreadBps: 1.2
+      maxHalfSpreadBps: 8
+      volatilitySpreadMultiplier: 1.5
+      inventorySoftLimitQty: 0.08
+      inventoryHardLimitQty: 0.18
+      sameSideSizeMultiplierAtSoft: 0.25
+      reduceSideSizeMultiplierAtSoft: 1.8
 
 risk:
   imrBuffer: 0.06
   mmrBuffer: 0.03
-  maxPositionQty: 0.85
+  maxPositionQty: 0.3
+
+shutdown:
+  closePositionPolicy: emergency_only
 
 bot:
   intervalMs: 1000

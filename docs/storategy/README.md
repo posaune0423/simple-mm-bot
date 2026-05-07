@@ -1,9 +1,9 @@
 # Current MM Strategy
 
-この文書は、現在の `simple-mm-bot` が実際に使っている market making strategy を、実装に沿って説明する。
+この文書は、`simple-mm-bot` の market making strategy を、実装に沿って説明する。
 
-対象は `config/config.bulk.beta.yml` の Bulk beta live 設定と、`src/domain/QuoteEngine.ts` / `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts` の現行ロジック。
-ここでは leaderboard volume ではなく、PnL を作るための quote 生成と risk control の流れに絞る。
+Bulk beta live の current config は `bulk-beta-leaderboard` を使う。Avellaneda-Stoikov は `config/config.paper.yml`、`config/config.bulk.mainnet.yml`、backtest path で引き続き選択できる。
+ここでは quote 生成と risk control の流れに絞る。
 
 ## 全体像
 
@@ -19,11 +19,11 @@ flowchart LR
     Fair["FairPriceCalculator<br/>fairPrice"]
     Vol["VolatilityEstimator<br/>sigma"]
     Size["QuoteEngine sizing<br/>quoteSize"]
-    AS["Avellaneda-Stoikov<br/>spread + inventory skew"]
+    AS["Configured strategy<br/>spread + side size multipliers"]
   end
 
   subgraph Orders["Order refresh"]
-    Cancel["cancelAll"]
+    Reconcile["OrderManager<br/>cancel/replace changed orders"]
     Bid["place bid"]
     Ask["place ask"]
   end
@@ -35,33 +35,34 @@ flowchart LR
   Fair --> AS
   Vol --> AS
   Size --> AS
-  AS --> Cancel --> Bid --> Ask
+  AS --> Reconcile --> Bid --> Ask
 ```
 
 1 tick ごとに `RefreshQuotesUseCase` が market snapshot と現在 position を読み、`QuoteEngine` で bid / ask を作る。
-その後、既存注文を全キャンセルしてから、新しい buy quote と sell quote を 1 本ずつ出す。
+その後、`OrderManager` が既存 quote と新 quote を比較し、価格/サイズ差分が閾値以上の order だけ cancel/replace する。
 
 ## 現在の設定
 
 `config/config.bulk.beta.yml` の現在値:
 
-| 項目                   |    現在値 | 役割                                         |
-| ---------------------- | --------: | -------------------------------------------- |
-| `market`               | `BTC-USD` | quote 対象 market                            |
-| `environment`          |    `beta` | mock-capital Bulk environment                |
-| `intervalMs`           |     `200` | tick 間隔                                    |
-| `markWeight`           |     `0.5` | mark price と micro price の混合比           |
-| `inventoryScale`       |     `0.2` | inventory skew の正規化幅                    |
-| `timeHorizonSec`       |       `8` | spread / skew が見る短期 horizon             |
-| `slideMarginThreshold` |    `0.06` | margin ratio が低いとき IOC に切り替える閾値 |
-| `defaultTimeInForce`   |     `GTC` | 通常 quote の time in force                  |
-| `positionSize`         |     `0.2` | 片側 quote の最大 base size                  |
-| `budgetUsd`            |    `5000` | 片側 quote の USD 上限                       |
-| `minSpreadBps`         |     `4.2` | fee 負けを避ける最小 quote 幅                |
-| `gamma`                |       `0` | risk aversion。現在は fixed-spread fallback  |
-| `kappa`                |      `12` | spread の基準。`gamma=0` では `2 / kappa`    |
-| `kInv`                 |    `0.12` | inventory skew の強さ                        |
-| `maxPositionQty`       |     `0.2` | これを超える在庫は reduce-only IOC で削る    |
+| 項目                    |                  現在値 | 役割                                         |
+| ----------------------- | ----------------------: | -------------------------------------------- |
+| `market`                |               `BTC-USD` | quote 対象 market                            |
+| `environment`           |                  `beta` | mock-capital Bulk environment                |
+| `intervalMs`            |                  `1000` | tick 間隔                                    |
+| `markWeight`            |                  `0.25` | mark price と micro price の混合比           |
+| `inventoryScale`        |                  `0.08` | inventory skew の正規化幅                    |
+| `timeHorizonSec`        |                    `10` | spread / skew が見る短期 horizon             |
+| `slideMarginThreshold`  |                  `0.06` | margin ratio が低いとき IOC に切り替える閾値 |
+| `defaultTimeInForce`    |                   `GTC` | 通常 quote の time in force                  |
+| `positionSize`          |                  `1.25` | 片側 quote の最大 base size                  |
+| `budgetUsd`             |                  `9600` | 片側 quote の USD 上限                       |
+| `minSpreadBps`          |                     `3` | fee 負けを避ける最小 quote 幅                |
+| `strategy.type`         | `bulk-beta-leaderboard` | Bulk beta live strategy                      |
+| `baseHalfSpreadBps`     |                   `2.5` | strategy base half spread                    |
+| `inventorySoftLimitQty` |                  `0.08` | side multiplier soft limit                   |
+| `inventoryHardLimitQty` |                  `0.18` | quote stop hard limit                        |
+| `maxPositionQty`        |                   `0.3` | これを超える在庫は reduce-only IOC で削る    |
 
 ## Quote 生成フロー
 
@@ -70,12 +71,12 @@ flowchart TD
   S["MarketSnapshot"] --> F["fairPrice = markWeight * markPrice<br/>+ (1 - markWeight) * microPrice"]
   S --> V["sigma = EWMA(log return variance)^0.5"]
   F --> Q["quoteSize = min(positionSize, budgetUsd / fairPrice)"]
-  V --> A["Avellaneda-Stoikov"]
+  V --> A["Configured strategy"]
   Q --> A
   P["Position.qty"] --> A
-  A --> R["reservationPrice = fairPrice - inventorySkew"]
-  R --> B["bid = max(0, reservationPrice - spread / 2)"]
-  R --> C["ask = max(0, reservationPrice + spread / 2)"]
+  A --> R["strategy quote<br/>prices + side size multipliers"]
+  R --> B["bid ladder"]
+  R --> C["ask ladder"]
 ```
 
 ### 1. Fair price
@@ -237,7 +238,7 @@ flowchart TD
   Need -->|yes| IOC["reduce-only IOC at best bid/ask"]
   Need -->|no| Refresh["RefreshQuotesUseCase"]
   IOC --> Refresh
-  Refresh --> Orders["cancelAll + place bid/ask"]
+  Refresh --> Orders["reconcile + place changed bid/ask"]
 ```
 
 Risk thresholds:
@@ -282,16 +283,16 @@ Guideline:
 
 ## 実装対応表
 
-| 内容                   | 実装                                                                  |
-| ---------------------- | --------------------------------------------------------------------- |
-| tick orchestration     | `src/application/Bot.ts`                                              |
-| quote refresh          | `src/application/usecases/RefreshQuotesUseCase.ts`                    |
-| risk gate              | `src/application/usecases/GuardRiskUseCase.ts`                        |
-| inventory reduction    | `src/application/usecases/ReduceInventoryUseCase.ts`                  |
-| quote composition      | `src/domain/QuoteEngine.ts`                                           |
-| fair price             | `src/domain/FairPriceCalculator.ts`                                   |
-| volatility             | `src/domain/VolatilityEstimator.ts`                                   |
-| strategy formula       | `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts` |
-| strategy params schema | `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts`   |
-| Bulk beta live params  | `config/config.bulk.beta.yml`                                         |
-| Bulk mainnet params    | `config/config.bulk.mainnet.yml`                                      |
+| 内容                   | 実装                                                 |
+| ---------------------- | ---------------------------------------------------- |
+| tick orchestration     | `src/application/Bot.ts`                             |
+| quote refresh          | `src/application/usecases/RefreshQuotesUseCase.ts`   |
+| risk gate              | `src/application/usecases/GuardRiskUseCase.ts`       |
+| inventory reduction    | `src/application/usecases/ReduceInventoryUseCase.ts` |
+| quote composition      | `src/domain/QuoteEngine.ts`                          |
+| fair price             | `src/domain/FairPriceCalculator.ts`                  |
+| volatility             | `src/domain/VolatilityEstimator.ts`                  |
+| strategy formula       | `src/domain/strategy/*/*Strategy.ts`                 |
+| strategy params schema | `src/domain/strategy/*/*Params.ts`                   |
+| Bulk beta live params  | `config/config.bulk.beta.yml`                        |
+| Bulk mainnet params    | `config/config.bulk.mainnet.yml`                     |

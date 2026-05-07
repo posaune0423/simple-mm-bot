@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { ResultAsync } from "neverthrow";
 
 import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
-import { DEFAULT_SQLITE_DB_PATH, METRICS_ARTIFACTS_DIR } from "../src/runtimePaths.ts";
+import { DEFAULT_SQLITE_DB_PATH, METRICS_RESULTS_DIR } from "../src/runtimePaths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";
@@ -64,6 +64,22 @@ interface QuoteCompetitivenessRow {
   avg_distance_to_best_bps: number | null;
 }
 
+export function normalizeQuoteCycleId(clientOrderId: string): string {
+  if (clientOrderId.includes(":bid:")) {
+    return clientOrderId.replace(":bid:", ":");
+  }
+  if (clientOrderId.includes(":ask:")) {
+    return clientOrderId.replace(":ask:", ":");
+  }
+  if (clientOrderId.endsWith(":bid")) {
+    return clientOrderId.slice(0, -4);
+  }
+  if (clientOrderId.endsWith(":ask")) {
+    return clientOrderId.slice(0, -4);
+  }
+  return clientOrderId;
+}
+
 function latestRunId(dbPath: string): string | null {
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -76,7 +92,7 @@ function latestRunId(dbPath: string): string | null {
   }
 }
 
-function loadEvaluationArtifact(dbPath: string, runId: string) {
+export function loadEvaluationResult(dbPath: string, runId: string) {
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db
@@ -132,6 +148,8 @@ function loadEvaluationArtifact(dbPath: string, runId: string) {
             SELECT
               run_id,
               CASE
+                WHEN client_order_id LIKE '%:bid:%' THEN replace(client_order_id, ':bid:', ':')
+                WHEN client_order_id LIKE '%:ask:%' THEN replace(client_order_id, ':ask:', ':')
                 WHEN client_order_id LIKE '%:bid' THEN substr(client_order_id, 1, length(client_order_id) - 4)
                 WHEN client_order_id LIKE '%:ask' THEN substr(client_order_id, 1, length(client_order_id) - 4)
                 ELSE client_order_id
@@ -281,7 +299,7 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
   const dbPath = options.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH;
   const runId = options["run-id"] ?? latestRunId(dbPath);
-  const outputDir = options["output-dir"] ?? join(METRICS_ARTIFACTS_DIR, runId ?? "unknown");
+  const outputDir = options["output-dir"] ?? join(METRICS_RESULTS_DIR, runId ?? "unknown");
 
   if (runId === null) {
     return ResultAsync.fromPromise(
@@ -295,8 +313,8 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
   ).andThen(() =>
     ResultAsync.fromPromise(
       (async () => {
-        const artifact = loadEvaluationArtifact(dbPath, runId);
-        await writeJsonFile(join(outputDir, "evaluation.json"), artifact);
+        const result = loadEvaluationResult(dbPath, runId);
+        await writeJsonFile(join(outputDir, "evaluation.json"), result);
         return outputDir;
       })(),
       (error) => createAppError("metrics.evaluate_failed", "Failed to evaluate metrics", error),
@@ -304,10 +322,12 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
   );
 }
 
-void evaluate(Bun.argv.slice(2)).match(
-  (outputDir) => logger.info(`metrics evaluation written to ${outputDir}`),
-  (error) => {
-    logger.error(formatAppError(error));
-    process.exitCode = 1;
-  },
-);
+if (import.meta.main) {
+  void evaluate(Bun.argv.slice(2)).match(
+    (outputDir) => logger.info(`metrics evaluation written to ${outputDir}`),
+    (error) => {
+      logger.error(formatAppError(error));
+      process.exitCode = 1;
+    },
+  );
+}

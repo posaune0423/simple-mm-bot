@@ -13,7 +13,7 @@ import { createAppError, formatAppError, type AppError } from "../src/utils/erro
 import { writeJsonFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
-interface EvaluationArtifact {
+interface EvaluationResult {
   run: TradingRunFact;
   evaluation: MetricsEvaluation;
 }
@@ -40,10 +40,10 @@ function createIssues(argv: string[]): ResultAsync<string, AppError> {
 
   return ResultAsync.fromPromise(
     (async () => {
-      const artifact = (await Bun.file(evaluationPath).json()) as EvaluationArtifact;
+      const result = (await Bun.file(evaluationPath).json()) as EvaluationResult;
       const issues = planDesignIssues({
-        issueSignals: artifact.evaluation.issueSignals,
-        runId: artifact.run.id,
+        issueSignals: result.evaluation.issueSignals,
+        runId: result.run.id,
         reportPath,
       });
       if (!dryRun) {

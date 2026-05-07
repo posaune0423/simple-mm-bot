@@ -48,5 +48,6 @@ export interface IOrderGateway {
   subscribeOrderEvents?(listener: OrderEventListener): () => void;
   syncFills?(): Promise<void>;
   getPosition?(): Promise<Position>;
+  stopBackgroundSync?(): void | Promise<void>;
   dispose?(): void | Promise<void>;
 }

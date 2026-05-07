@@ -122,8 +122,41 @@ describe("MetricsRecorder", () => {
         venueOrderId: "order-1",
         price: 100,
         quantity: 1,
+        makerTaker: "unknown",
       }),
     ]);
+  });
+
+  test("preserves maker/taker classification from venue fills", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-maker",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "bulk-beta-leaderboard",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordFill({
+      id: "fill-maker",
+      venue: "bulk",
+      market: "BTC-USD",
+      side: "sell",
+      price: 100,
+      qty: 1,
+      fee: -0.01,
+      tradePnl: 0,
+      filledAt: 1000,
+      makerTaker: "maker",
+    });
+
+    expect(repository.fills[0]).toMatchObject({
+      id: "fill-maker",
+      makerTaker: "maker",
+    });
   });
 
   test("records submitted order lifecycle facts", async () => {

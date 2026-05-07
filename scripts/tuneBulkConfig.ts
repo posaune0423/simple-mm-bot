@@ -11,7 +11,7 @@ import { createAppError, formatAppError, type AppError } from "../src/utils/erro
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
-interface EvaluationArtifact {
+interface EvaluationResult {
   evaluation: MetricsEvaluation;
 }
 
@@ -24,11 +24,11 @@ function tune(argv: string[]): ResultAsync<string, AppError> {
 
   return ResultAsync.fromPromise(
     (async () => {
-      const [configText, artifact] = await Promise.all([
+      const [configText, result] = await Promise.all([
         Bun.file(configPath).text(),
-        Bun.file(evaluationPath).json() as Promise<EvaluationArtifact>,
+        Bun.file(evaluationPath).json() as Promise<EvaluationResult>,
       ]);
-      const tuned = tuneBulkConfigDocument(configText, artifact.evaluation);
+      const tuned = tuneBulkConfigDocument(configText, result.evaluation);
       if (!dryRun && tuned.changed) {
         await writeTextFile(outputPath, tuned.content);
       }

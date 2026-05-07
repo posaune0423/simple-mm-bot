@@ -23,20 +23,27 @@ telemetryはmode非依存で保存し、将来のBulk mainnet後に`paper`/`back
 
 ```bash
 # Bulk beta liveを通常runtimeで起動し、通常shutdownで止める
-CONFIG_PATH=config/config.bulk.yml MODE=live bun run src/main.ts
+bun run start
 
 # 最新runを評価
-bun run telemetry:evaluate --db data/mmbot.db --output-dir artifacts/telemetry/latest
+bun run metrics:evaluate --db data/mm.db --output-dir data/metrics/latest
 
 # Markdown/JSON report生成
-bun run telemetry:report --evaluation artifacts/telemetry/latest/evaluation.json --output-dir artifacts/telemetry/latest
+bun run metrics:report --evaluation data/metrics/latest/evaluation.json --output-dir data/metrics/latest
 
-# data healthが十分なときだけconfig/config.bulk.ymlを最小変更
-bun run telemetry:tune --evaluation artifacts/telemetry/latest/evaluation.json --config config/config.bulk.yml
+# data healthが十分なときだけconfig/config.bulk.beta.ymlを最小変更
+bun run metrics:tune --evaluation data/metrics/latest/evaluation.json --config config/config.bulk.beta.yml
 
 # code/SDK/design issue化。実作成前はdry-runする
-bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json --report artifacts/telemetry/latest/telemetry-report.md --dry-run=true
+bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report data/metrics/latest/metrics-report.md --output data/metrics/latest/issues.json --dry-run=true
 ```
+
+## データ方針 / Data Policy
+
+- live / paper / backtest telemetry は既定で共有 SQLite `data/mm.db` を使う。
+- runごとにDBを分けない。`trading_runs.id` でrunを分離し、同一DBで複数run比較を可能にする。
+- 破壊的検証、再現fixture、既存DBを汚したくない isolated experiment のときだけ `--db data/tmp/<label>.db` を明示する。
+- 評価結果は `data/metrics/<run_id>/` または `data/metrics/latest/` に保存する。optimization結果を `artifacts/` に書かない。
 
 ## ワークフロー / Workflow
 
@@ -45,8 +52,8 @@ bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json
    - telemetry runが`capitalMode: beta_mock`になっていることを確認する。
 
 1. **Fact Check**
-   - `telemetry:evaluate`を実行する。
-   - `telemetry:report`でreportを生成する。
+   - `metrics:evaluate`を実行する。
+   - `metrics:report`でreportを生成する。
    - markout coverageやdata healthが不足している場合はtuningしない。
    - run id、mode、venue、capitalMode、git sha/dirty、config snapshot、fills/orders/markoutsのcoverageを確認する。
    - PnL、fee/rebate、maker/taker比率、14日volume推定、maker fee tier到達状況を確認する。
@@ -87,5 +94,5 @@ bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json
 ## 安全策 / Safety Guardrails
 
 - 最初は短いlive windowで試す。
-- `config/config.bulk.yml`の変更は最小にし、次run前にdiffを見る。
+- `config/config.bulk.beta.yml`の変更は最小にし、次run前にdiffを見る。
 - Net PnL、PnL per notional、Markout、runtime healthが良い状態になるまで`budgetUsd`を増やさない。

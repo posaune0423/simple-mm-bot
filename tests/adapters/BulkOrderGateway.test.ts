@@ -756,6 +756,7 @@ describe("BulkOrderGateway", () => {
         filledAt: 1_700_000_000_000,
         quoteId: "maker-sell",
         markPriceAtFill: 100,
+        makerTaker: "maker",
       },
       {
         id: "taker-sell:1700000001000000000",
@@ -769,6 +770,7 @@ describe("BulkOrderGateway", () => {
         filledAt: 1_700_000_001_000,
         quoteId: "taker-sell",
         markPriceAtFill: 99,
+        makerTaker: "taker",
       },
     ]);
   });

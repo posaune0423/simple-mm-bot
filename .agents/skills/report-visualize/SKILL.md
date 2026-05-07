@@ -7,7 +7,7 @@ description: SQLiteのfillsから主要MM指標 (Equity, Drawdown, Markout, Adve
 
 ## Objective
 
-Generate a self-contained, git-trackable performance dashboard for the trading bot from `data/mmbot.db`. The report contains 24h and 7d windows side-by-side and is regenerated each run. Past snapshots accumulate under `docs/reports/history/`.
+Generate a self-contained, git-trackable performance dashboard for the trading bot from `data/mm.db`. The report contains 24h and 7d windows side-by-side and is regenerated each run. Past snapshots accumulate under `docs/reports/history/`.
 
 ## Primary Command
 
@@ -23,7 +23,7 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 - `--venue` venue name (e.g. `hyperliquid`, `bulk`). Omit to include all venues.
 - `--period` `24h` | `7d` | `both` (default: `both`).
 - `--output` output directory (default: `docs/reports`).
-- `--db` SQLite path (default: `Bun.env.DB_PATH ?? "data/mmbot.db"`).
+- `--db` SQLite path (default: `Bun.env.DB_PATH ?? "data/mm.db"`).
 - `--now` epoch ms — for deterministic runs/tests; omit in production.
 
 ## Outputs

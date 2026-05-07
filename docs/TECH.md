@@ -77,8 +77,9 @@ bot の 1 tick は以下の責務順で動作する。
 
 ### Strategy / Quote Engine
 
-初期実装は `AvellanedaStoikovStrategy` とする。
+Strategy は `quoteEngine.strategy.type` で切り替える。現在は `avellaneda-stoikov` と `bulk-beta-leaderboard` を持つ。
 `QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce` を統合して最終 quote を生成する。
+`QuoteEngine` は `IQuotingStrategy` のみへ依存し、具体 strategy を import しない。
 
 主要パラメータ:
 
@@ -93,6 +94,7 @@ bot の 1 tick は以下の責務順で動作する。
 
 Bulk の初期 `defaultTimeInForce` は `GTC` とする。
 Hyperliquid path では既存の `ALO` default を維持する。
+Bulk beta leaderboard strategy は在庫が soft limit に近づくほど同方向 quote size を薄くし、反対方向 quote size を厚くする。hard limit 超過時は在庫を増やす側の quote size を 0 にする。
 
 ## Application 設計
 
@@ -116,6 +118,12 @@ Bullet の DI path は持たない。
 
 - `DATABASE_URL` あり -> PostgreSQL repository 群
 - `DATABASE_URL` なし -> SQLite repository 群
+
+#### Quote Order Reconcile
+
+`RefreshQuotesUseCase` は通常 tick で blanket `cancelAll()` を行わない。
+`OrderManager` が前回の quote order と今回の target order を比較し、価格/サイズ差分が閾値以上の order だけ cancel/replace する。
+`Bot` cleanup は open order cleanup のため `cancelAll()` を実行し、`shutdown.closePositionPolicy` が `emergency_only` の場合は通常停止で market close を行わず、emergency stop 時だけ close use case を実行する。
 
 ## Adapter 設計
 

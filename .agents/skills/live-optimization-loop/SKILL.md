@@ -23,21 +23,28 @@ Use these as the "Pass/Fail" criteria during optimization:
 ## Primary Commands
 
 ```bash
-# Run live directly. Stop with the normal shutdown path after the chosen window.
-CONFIG_PATH=config/config.bulk.yml MODE=live bun run src/main.ts
+# Run Bulk beta live directly. Stop with the normal shutdown path after the chosen window.
+bun run start
 
 # Evaluate the latest telemetry run.
-bun run telemetry:evaluate --db data/mmbot.db --output-dir artifacts/telemetry/latest
+bun run metrics:evaluate --db data/mm.db --output-dir data/metrics/latest
 
 # Generate human-readable and JSON reports.
-bun run telemetry:report --evaluation artifacts/telemetry/latest/evaluation.json --output-dir artifacts/telemetry/latest
+bun run metrics:report --evaluation data/metrics/latest/evaluation.json --output-dir data/metrics/latest
 
 # Apply minimal YAML tuning only when data health allows it.
-bun run telemetry:tune --evaluation artifacts/telemetry/latest/evaluation.json --config config/config.bulk.yml
+bun run metrics:tune --evaluation data/metrics/latest/evaluation.json --config config/config.bulk.beta.yml
 
 # Create code/SDK/design issues. Use --dry-run=true before creating GitHub issues.
-bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json --report artifacts/telemetry/latest/telemetry-report.md --dry-run=true
+bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report data/metrics/latest/metrics-report.md --output data/metrics/latest/issues.json --dry-run=true
 ```
+
+## Data Policy
+
+- Use shared SQLite `data/mm.db` by default for live / paper / backtest telemetry.
+- Do not create a DB per run by default. `trading_runs.id` separates runs and keeps multi-run analysis possible.
+- Use a separate DB only for destructive, reproducible, or isolated experiments with an explicit `--db data/tmp/<label>.db`.
+- Store evaluation results under `data/metrics/<run_id>/` or `data/metrics/latest/`. Do not write optimization results under `artifacts/`.
 
 ## Workflow
 
@@ -46,7 +53,7 @@ bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json
    - Confirm the telemetry run has `capitalMode: beta_mock`.
 
 2. **Telemetry Check**
-   - Run `telemetry:evaluate`.
+   - Run `metrics:evaluate`.
    - Do not tune when markout coverage or data health is insufficient.
 
 3. **Evaluate**
@@ -68,5 +75,5 @@ bun run telemetry:issues --evaluation artifacts/telemetry/latest/evaluation.json
 ## Safety Guardrails
 
 - Start with short live windows.
-- Keep `config/config.bulk.yml` tuning minimal and review the diff before the next run.
+- Keep `config/config.bulk.beta.yml` tuning minimal and review the diff before the next run.
 - Do not increase `budgetUsd` unless Net PnL, PnL per notional, markout, and runtime health are acceptable.
