@@ -568,6 +568,71 @@ describe("Bot", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  test("does not propagate an in-flight tick failure after shutdown is requested", async () => {
+    const calls: string[] = [];
+    let stopBot = () => {};
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            stopBot();
+            calls.push("reduce");
+            throw new Error("HTTP error 408");
+          },
+        },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+    stopBot = () => bot.stop();
+
+    await bot.start();
+
+    expect(calls).toEqual(["connect", "reduce", "cancelAll", "closePosition", "disconnect"]);
+  });
+
   test("propagates close-position cleanup failures after disconnecting and disposing", async () => {
     const logs = captureLogs();
     const calls: string[] = [];

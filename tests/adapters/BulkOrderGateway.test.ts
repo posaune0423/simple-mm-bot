@@ -666,6 +666,37 @@ describe("BulkOrderGateway", () => {
     expect(calls).toBe(callsAfterDispose);
   });
 
+  test("stops scheduled fill polling without waiting for the in-flight poll", async () => {
+    let release: (() => void) | undefined;
+    const startedPromise = Promise.withResolvers<void>();
+    const releasePromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            startedPromise.resolve();
+            await releasePromise;
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account", pollIntervalMs: 1 },
+    );
+
+    await startedPromise.promise;
+
+    const stopped = Promise.resolve(gateway.stopBackgroundSync()).then(() => "stopped" as const);
+    const result = await Promise.race([stopped, Bun.sleep(10).then(() => "blocked" as const)]);
+    release?.();
+    await stopped;
+    await gateway.dispose();
+
+    expect(result).toBe("stopped");
+  });
+
   test("does not report Bulk partial fills as fully filled orders", async () => {
     const gateway = new BulkOrderGateway(
       {

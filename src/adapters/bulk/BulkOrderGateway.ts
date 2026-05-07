@@ -466,6 +466,7 @@ export class BulkOrderGateway implements IOrderGateway {
 
   async dispose(): Promise<void> {
     await this.stopBackgroundSync();
+    await this.waitForInFlightPoll();
   }
 
   async stopBackgroundSync(): Promise<void> {
@@ -473,6 +474,9 @@ export class BulkOrderGateway implements IOrderGateway {
       clearInterval(this.fillTimer);
       this.fillTimer = null;
     }
+  }
+
+  private async waitForInFlightPoll(): Promise<void> {
     await this.pollInFlight?.catch((error) => {
       logger.warn(
         `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${String(error)}`,

@@ -25,6 +25,7 @@ interface BotOptions {
 export class Bot {
   private running = false;
   private quotedCount = 0;
+  private stopRequested = false;
   private emergencyStopRequested = false;
   private eventTasks: Promise<void> = Promise.resolve();
   private readonly unsubscribers: Array<() => void> = [];
@@ -40,6 +41,7 @@ export class Bot {
 
   async start(maxTicks?: number): Promise<void> {
     this.running = true;
+    this.stopRequested = false;
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(`bot.start intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`);
@@ -49,8 +51,12 @@ export class Bot {
       await this.connectAndSubscribe();
       await this.runLoop(maxTicks);
     } catch (err) {
-      runError = err;
-      await this.metrics?.recordRuntimeHealth("error", "runtime_error", String(err));
+      if (this.wasStopRequested()) {
+        logger.warn(`bot.run_error_ignored_after_stop error=${String(err)}`);
+      } else {
+        runError = err;
+        await this.metrics?.recordRuntimeHealth("error", "runtime_error", String(err));
+      }
     } finally {
       closePositionError = await this.cleanup();
       await this.metrics?.finish(
@@ -68,11 +74,16 @@ export class Bot {
   }
 
   stop(): void {
+    this.stopRequested = true;
     this.running = false;
   }
 
   private isRunning(): boolean {
     return this.running;
+  }
+
+  private wasStopRequested(): boolean {
+    return this.stopRequested;
   }
 
   private async connectAndSubscribe(): Promise<void> {
