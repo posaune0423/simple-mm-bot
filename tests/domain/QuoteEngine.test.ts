@@ -200,6 +200,8 @@ describe("QuoteEngine", () => {
         ask: 100_080,
         bidSize: 0.0015,
         askSize: 0.0015,
+        bidIntent: "open_quote",
+        askIntent: "open_quote",
       },
       {
         level: 1,
@@ -208,6 +210,8 @@ describe("QuoteEngine", () => {
         ask: 100_300,
         bidSize: 0.006,
         askSize: 0.006,
+        bidIntent: "open_quote",
+        askIntent: "open_quote",
       },
     ]);
     expect(quote.bid).toBe(99_920);
@@ -359,6 +363,81 @@ describe("QuoteEngine", () => {
 
     expect(short.fairPrice - short.bid).toBeLessThan(flat.fairPrice - flat.bid);
     expect(short.ask - short.fairPrice).toBeGreaterThan(flat.ask - flat.fairPrice);
+  });
+
+  test("marks short inventory bids as reduce-only intent and caps buyback size", () => {
+    const engine = new QuoteEngine(
+      new FixedMultiplierStrategy(),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.2,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "GTC",
+        positionSize: 1,
+        budgetUsd: 20_000,
+        levels: [
+          { halfSpreadBps: 3, sizeUsd: 100_000 },
+          { halfSpreadBps: 4, sizeUsd: 100_000 },
+        ],
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 99_990,
+        bestAsk: 100_010,
+        microPrice: 100_000,
+        markPrice: 100_000,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: -0.3, avgEntry: 100_100, unrealizedPnl: 12 },
+    );
+
+    expect(quote.bidIntent).toBe("reduce_inventory");
+    expect(quote.askIntent).toBe("open_quote");
+    expect(quote.levels?.map((level) => level.bidIntent)).toEqual(["reduce_inventory", "disabled"]);
+    const totalBidQty =
+      quote.levels?.reduce((sum, level) => sum + level.bidSize, 0) ?? quote.bidSize;
+    expect(totalBidQty).toBeCloseTo(0.3);
+  });
+
+  test("treats floating-point residual inventory as flat when assigning side intents", () => {
+    const engine = new QuoteEngine(
+      new FixedMultiplierStrategy(),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 0.2,
+        timeHorizonSec: 10,
+        slideMarginThreshold: 0.08,
+        defaultTimeInForce: "GTC",
+        positionSize: 1,
+        budgetUsd: 20_000,
+        levels: [{ halfSpreadBps: 3, sizeUsd: 1_000 }],
+      },
+    );
+
+    const quote = engine.compute(
+      {
+        market: "BTC-USD",
+        bestBid: 99_990,
+        bestAsk: 100_010,
+        microPrice: 100_000,
+        markPrice: 100_000,
+        timestamp: 1,
+        marginRatio: 1,
+      },
+      { qty: 1.3877787807814457e-17, avgEntry: 100_000, unrealizedPnl: 0 },
+    );
+
+    expect(quote.bidIntent).toBe("open_quote");
+    expect(quote.askIntent).toBe("open_quote");
+    expect(quote.bidSize).toBeCloseTo(0.0025);
+    expect(quote.askSize).toBeCloseTo(0.018);
   });
 
   test("enforces configured minimum spread in basis points for high-priced markets", () => {

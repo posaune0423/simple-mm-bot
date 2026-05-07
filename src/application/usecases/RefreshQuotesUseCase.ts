@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { QuoteEngine } from "../../domain/QuoteEngine.ts";
-import type { OrderSide, QuoteLevel } from "../../domain/entities/Quote.ts";
+import type { OrderSide, QuoteLevel, QuoteSideIntent } from "../../domain/entities/Quote.ts";
 import type { IMarketFeed, MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
@@ -52,7 +52,7 @@ export class RefreshQuotesUseCase {
     const targetOrders: ManagedOrderRequest[] = [];
     for (const level of quoteLevels(quote)) {
       const suffix = quote.levels === undefined ? "" : `:${level.level}`;
-      if (level.bidSize > 0) {
+      if (shouldSubmitSide(level.bidSize, level.bidIntent)) {
         targetOrders.push(
           await this.guardedOrderRequest({
             key: `bid${suffix}`,
@@ -60,15 +60,15 @@ export class RefreshQuotesUseCase {
             side: "buy",
             price: level.bid,
             qty: level.bidSize,
-            reduceOnly: false,
+            reduceOnly: level.bidIntent === "reduce_inventory",
             timeInForce: quote.policy,
             clientOrderId: `${quoteCycleId}:bid${suffix}`,
-            intent: "quote",
+            intent: orderIntent(level.bidIntent),
             trendBps,
           }),
         );
       }
-      if (level.askSize > 0) {
+      if (shouldSubmitSide(level.askSize, level.askIntent)) {
         targetOrders.push(
           await this.guardedOrderRequest({
             key: `ask${suffix}`,
@@ -76,10 +76,10 @@ export class RefreshQuotesUseCase {
             side: "sell",
             price: level.ask,
             qty: level.askSize,
-            reduceOnly: false,
+            reduceOnly: level.askIntent === "reduce_inventory",
             timeInForce: quote.policy,
             clientOrderId: `${quoteCycleId}:ask${suffix}`,
-            intent: "quote",
+            intent: orderIntent(level.askIntent),
             trendBps,
           }),
         );
@@ -105,7 +105,7 @@ export class RefreshQuotesUseCase {
     reduceOnly: boolean;
     timeInForce: "ALO" | "GTC" | "IOC";
     clientOrderId: string;
-    intent: "quote";
+    intent: "quote" | "reduce";
     trendBps: number;
   }): Promise<ManagedOrderRequest> {
     const touchSnapshot = await this.marketFeed.getSnapshot();
@@ -123,6 +123,8 @@ function quoteLevels(quote: {
   ask: number;
   bidSize: number;
   askSize: number;
+  bidIntent?: QuoteSideIntent;
+  askIntent?: QuoteSideIntent;
   levels?: QuoteLevel[];
 }): QuoteLevel[] {
   return (
@@ -134,9 +136,19 @@ function quoteLevels(quote: {
         ask: quote.ask,
         bidSize: quote.bidSize,
         askSize: quote.askSize,
+        bidIntent: "bidIntent" in quote ? quote.bidIntent : undefined,
+        askIntent: "askIntent" in quote ? quote.askIntent : undefined,
       },
     ]
   );
+}
+
+function shouldSubmitSide(size: number, intent: QuoteSideIntent | undefined): boolean {
+  return size > 0 && intent !== "disabled";
+}
+
+function orderIntent(intent: QuoteSideIntent | undefined): "quote" | "reduce" {
+  return intent === "reduce_inventory" ? "reduce" : "quote";
 }
 
 function guardedLimitPrice(

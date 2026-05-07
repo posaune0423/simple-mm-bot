@@ -18,22 +18,13 @@ function marketName(config: Awaited<ReturnType<typeof ConfigLoader.load>>): stri
     : config.connections.hyperliquid.market;
 }
 
-const slackContext: {
-  mode?: string;
-  venue?: string;
-  market?: string;
-  configPath?: string;
-} = { configPath: env.CONFIG_PATH, mode: env.MODE };
-
 try {
   // Startup stays intentionally thin: load config, build the bot, then run it.
   const config = await ConfigLoader.load();
   const mode: AppMode = env.MODE ?? config.mode;
   config.mode = mode;
-  slackContext.mode = config.mode;
-  slackContext.venue = config.venue;
-  slackContext.market = marketName(config);
-  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${marketName(config)}`);
+  const market = marketName(config);
+  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${market}`);
 
   const bot = await new DIContainer(config).buildBot();
   registerShutdownHandlers(
@@ -43,7 +34,7 @@ try {
 
   await bot.start();
 } catch (error) {
-  await notifyFatalErrorToSlack(error, slackContext);
+  await notifyFatalErrorToSlack(error);
   if (isAppError(error)) {
     logger.error(formatAppError(error));
   } else if (error instanceof Error) {

@@ -115,6 +115,9 @@ describe("evaluateMetricsRun", () => {
       avgMarkout30s: false,
       markoutTail: false,
       sideImbalance: true,
+      volumeRequiredPace: true,
+      volumeBalancedPace: true,
+      sizeIncreaseAllowed: false,
     });
     expect(result.parameterAction).toBe("widen_spread_or_increase_gamma");
   });
@@ -187,5 +190,34 @@ describe("evaluateMetricsRun", () => {
     expect(result.issueSignals).toContain("high_cancel_churn");
     expect(result.issueSignals).toContain("short_order_lifetime");
     expect(result.issueSignals).toContain("quotes_far_from_touch");
+  });
+
+  test("flags runs below the required and balanced 14d volume pace", () => {
+    const result = evaluateMetricsRun({
+      fillCount: 30,
+      markoutCoverage: 1,
+      notionalUsd: 4_578_556.1,
+      windowDays: 1,
+      netPnl: -182.52,
+      tradePnl: 0,
+      fee: 182.52,
+      pnlPerNotional: -0.0000398639,
+      pnlPerVolumeBps: -0.398639,
+      maxDrawdown: 0,
+      avg5sMarkoutBps: 0.617051,
+      adverseSelectionRate: 0.45904,
+      fillRate: 0.5,
+      rejectRate: 0,
+      cancelRate: 0,
+      minMarkoutCoverage: 0.8,
+    });
+
+    expect(result.volume.projected14dUsd).toBeCloseTo(64_099_785.4);
+    expect(result.passFail.volumeRequiredPace).toBe(false);
+    expect(result.passFail.volumeBalancedPace).toBe(false);
+    expect(result.passFail.sizeIncreaseAllowed).toBe(false);
+    expect(result.issueSignals).toContain("volume_below_required_pace");
+    expect(result.issueSignals).toContain("volume_below_balanced_pace");
+    expect(result.issueSignals).toContain("adverse_selection_high");
   });
 });

@@ -134,13 +134,12 @@ export class Bot {
       return "stop";
     }
 
-    if (riskState === "OK") {
+    await this.drainEventTasks();
+    const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
+    if (riskState === "OK" && !didReduceInventory) {
       await this.useCases.refreshQuotes.execute();
       this.quotedCount += 2;
     }
-
-    await this.drainEventTasks();
-    await this.useCases.reduceInventory.executeIfNeeded();
     return this.advanceMarketFeed(tick);
   }
 

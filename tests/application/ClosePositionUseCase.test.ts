@@ -4,6 +4,48 @@ import { ClosePositionUseCase } from "../../src/application/usecases/ClosePositi
 import type { OrderRequest } from "../../src/domain/ports/IOrderGateway.ts";
 
 describe("ClosePositionUseCase", () => {
+  test("does not submit a close order for floating-point residual inventory", async () => {
+    const placed: OrderRequest[] = [];
+
+    await new ClosePositionUseCase(
+      {
+        async place(order) {
+          placed.push(order);
+          throw new Error("floating-point residual should not be closed");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      {
+        async get() {
+          return { qty: 1.3877787807814457e-17, avgEntry: 100, unrealizedPnl: 0 };
+        },
+        async update() {
+          throw new Error("unused");
+        },
+        async set() {},
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          throw new Error("unused");
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      "BTC-USD",
+      [0, 0, 0],
+      0,
+    ).execute();
+
+    expect(placed).toEqual([]);
+  });
+
   test("uses a market reduce-only order first to close long inventory", async () => {
     const placed: OrderRequest[] = [];
     let syncFillsCount = 0;

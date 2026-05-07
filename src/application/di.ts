@@ -77,6 +77,12 @@ export class DIContainer {
           feed,
           this.config.risk.maxPositionQty,
           this.marketName(),
+          {
+            reduceTriggerQty: this.config.risk.reduceTriggerQty,
+            reduceTargetQty: this.config.risk.reduceTargetQty,
+            maxUnrealizedLossUsd: this.config.risk.maxUnrealizedLossUsd,
+            maxAdverseMoveBps: this.config.risk.maxAdverseMoveBps,
+          },
         ),
         closePosition: new ClosePositionUseCase(
           gateway,

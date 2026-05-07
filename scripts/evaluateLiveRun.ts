@@ -247,6 +247,8 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
       fillCount,
       markoutCoverage: row.markout_5s_coverage ?? 0,
       snapshotFreshnessMs: freshness?.staleness_ms ?? null,
+      notionalUsd: row.notional ?? 0,
+      windowDays: evaluationWindowDays(row.started_at, row.ended_at),
       netPnl: row.net_pnl ?? 0,
       tradePnl: row.trade_pnl ?? 0,
       fee: row.fee ?? 0,
@@ -277,6 +279,11 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
   } finally {
     db.close();
   }
+}
+
+function evaluationWindowDays(startedAt: number, endedAt: number | null): number {
+  const end = endedAt ?? Date.now();
+  return Math.max((end - startedAt) / 86_400_000, 1 / 1_440);
 }
 
 function tail(values: number[]): { p10: number; p5: number; worst: number } {

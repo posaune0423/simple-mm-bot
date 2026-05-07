@@ -1,5 +1,6 @@
 import type { Position } from "./entities/Position.ts";
-import type { OrderTimeInForce, Quote, QuoteLevel } from "./entities/Quote.ts";
+import { isFlatPositionQty } from "./entities/Position.ts";
+import type { OrderTimeInForce, Quote, QuoteLevel, QuoteSideIntent } from "./entities/Quote.ts";
 import type { MarketSnapshot } from "./ports/IMarketFeed.ts";
 import type { IQuotingStrategy } from "./strategy/IQuotingStrategy.ts";
 import type { FairPriceCalculator } from "./FairPriceCalculator.ts";
@@ -49,7 +50,7 @@ export class QuoteEngine {
       defaultTimeInForce: this.config.defaultTimeInForce,
       marginRatio: snapshot.marginRatio,
     });
-    return this.withConfiguredLevels(quote, position);
+    return this.withSideIntentCaps(this.withConfiguredLevels(quote, position), position);
   }
 
   private computeQuoteSize(fairPrice: number): number {
@@ -112,8 +113,95 @@ export class QuoteEngine {
       askSize,
     };
   }
+
+  private withSideIntentCaps(quote: Quote, position: Position): Quote {
+    const levels = quote.levels;
+    if (levels === undefined) {
+      const [level] = capReduceSideQuantities(
+        [
+          {
+            level: 0,
+            halfSpreadBps: 0,
+            bid: quote.bid,
+            ask: quote.ask,
+            bidSize: quote.bidSize,
+            askSize: quote.askSize,
+          },
+        ],
+        position.qty,
+      );
+      if (level === undefined) {
+        return quote;
+      }
+      return {
+        ...quote,
+        bidSize: level.bidSize,
+        askSize: level.askSize,
+        bidIntent: level.bidIntent,
+        askIntent: level.askIntent,
+      };
+    }
+
+    const cappedLevels = capReduceSideQuantities(levels, position.qty);
+    const top = cappedLevels[0];
+    if (top === undefined) {
+      return quote;
+    }
+    return {
+      ...quote,
+      bidSize: top.bidSize,
+      askSize: top.askSize,
+      bidIntent: top.bidIntent,
+      askIntent: top.askIntent,
+      levels: cappedLevels,
+    };
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function capReduceSideQuantities(
+  levels: ReadonlyArray<QuoteLevel>,
+  positionQty: number,
+): QuoteLevel[] {
+  const activePositionQty = isFlatPositionQty(positionQty) ? 0 : positionQty;
+  let remainingReduceQty = Math.abs(activePositionQty);
+  return levels.map((level) => {
+    const bidIntent = sideIntent("buy", level.bidSize, activePositionQty);
+    const askIntent = sideIntent("sell", level.askSize, activePositionQty);
+    let bidSize = level.bidSize;
+    let askSize = level.askSize;
+
+    if (bidIntent === "reduce_inventory") {
+      bidSize = Math.min(level.bidSize, remainingReduceQty);
+      remainingReduceQty -= bidSize;
+    }
+    if (askIntent === "reduce_inventory") {
+      askSize = Math.min(level.askSize, remainingReduceQty);
+      remainingReduceQty -= askSize;
+    }
+
+    return {
+      ...level,
+      bidSize,
+      askSize,
+      bidIntent: bidSize > 0 ? bidIntent : "disabled",
+      askIntent: askSize > 0 ? askIntent : "disabled",
+    };
+  });
+}
+
+function sideIntent(side: "buy" | "sell", size: number, positionQty: number): QuoteSideIntent {
+  if (size <= 0) {
+    return "disabled";
+  }
+  if (side === "buy" && positionQty < 0) {
+    return "reduce_inventory";
+  }
+  if (side === "sell" && positionQty > 0) {
+    return "reduce_inventory";
+  }
+  return "open_quote";
 }

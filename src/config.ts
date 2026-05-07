@@ -53,6 +53,10 @@ const commonConfigSchema = z.object({
     imrBuffer: z.number().min(0).max(1),
     mmrBuffer: z.number().min(0).max(1),
     maxPositionQty: z.number().positive(),
+    reduceTriggerQty: z.number().positive().optional(),
+    reduceTargetQty: z.number().min(0).optional(),
+    maxUnrealizedLossUsd: z.number().positive().optional(),
+    maxAdverseMoveBps: z.number().positive().optional(),
   }),
   bot: z.object({
     intervalMs: z.number().int().positive(),

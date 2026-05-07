@@ -1,8 +1,15 @@
+export interface SlackAttachment {
+  color?: string;
+  fallback?: string;
+  text?: string;
+}
+
 export interface SlackWebhookMessage {
-  text: string;
+  text?: string;
   username?: string;
   icon_emoji?: string;
   blocks?: unknown[];
+  attachments?: SlackAttachment[];
 }
 
 export class SlackWebhookError extends Error {

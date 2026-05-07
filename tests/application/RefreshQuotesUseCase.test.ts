@@ -238,6 +238,83 @@ describe("RefreshQuotesUseCase", () => {
     expect(placed).toEqual(["buy", "sell", "buy", "sell"]);
   });
 
+  test("submits reduce-inventory quote sides as reduce-only reduce orders", async () => {
+    const placed: OrderRequest[] = [];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        return {
+          market: "BTC-USD",
+          bestBid: 99_990,
+          bestAsk: 100_010,
+          microPrice: 100_000,
+          markPrice: 100_000,
+          timestamp: 1,
+          marginRatio: 0.2,
+        };
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        placed.push(order);
+        return {
+          id: `${order.side}-${placed.length}`,
+          request: order,
+          status: "open" as const,
+        };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: -0.3, avgEntry: 100_100, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: -0.3, avgEntry: 100_100, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_970,
+          ask: 100_030,
+          bidSize: 0.3,
+          askSize: 0.01,
+          bidIntent: "reduce_inventory" as const,
+          askIntent: "open_quote" as const,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+
+    await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
+
+    expect(placed).toHaveLength(2);
+    expect(placed[0]).toMatchObject({
+      side: "buy",
+      qty: 0.3,
+      reduceOnly: true,
+      intent: "reduce",
+    });
+    expect(placed[1]).toMatchObject({
+      side: "sell",
+      qty: 0.01,
+      reduceOnly: false,
+      intent: "quote",
+    });
+  });
+
   test("logs quote creation and submitted order ids", async () => {
     const logs = captureInfoLogs();
     const marketFeed = {

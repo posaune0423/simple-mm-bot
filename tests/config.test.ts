@@ -48,7 +48,7 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
     expect(config.quoteEngine.markWeight).toBe(0.25);
     expect(config.quoteEngine.minSpreadBps).toBe(3);
-    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 1.5, sizeUsd: 14400 }]);
+    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 1.5, sizeUsd: 12000 }]);
     expect(config.quoteEngine.strategy).toEqual({
       type: "bulk-beta-leaderboard",
       params: {
@@ -64,8 +64,12 @@ describe("ConfigLoader", () => {
     });
     expect(config.quoteEngine.inventoryScale).toBe(0.08);
     expect(config.quoteEngine.sizing.positionSize).toBe(1.25);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(9600);
-    expect(config.risk.maxPositionQty).toBe(0.3);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(12000);
+    expect(config.risk.maxPositionQty).toBe(0.22);
+    expect(config.risk.reduceTriggerQty).toBe(0.08);
+    expect(config.risk.reduceTargetQty).toBe(0.04);
+    expect(config.risk.maxUnrealizedLossUsd).toBe(25);
+    expect(config.risk.maxAdverseMoveBps).toBe(20);
     expect(config.bot.intervalMs).toBe(1000);
     expect(config.shutdown.closePositionPolicy).toBe("emergency_only");
   });
@@ -84,7 +88,7 @@ describe("ConfigLoader", () => {
         throw new Error("Expected bulk config");
       }
       expect(config.connections.bulk.environment).toBe("beta");
-      expect(config.quoteEngine.sizing.budgetUsd).toBe(9600);
+      expect(config.quoteEngine.sizing.budgetUsd).toBe(12000);
       expect(config.quoteEngine.strategy.type).toBe("bulk-beta-leaderboard");
     } finally {
       if (previousMode === undefined) {

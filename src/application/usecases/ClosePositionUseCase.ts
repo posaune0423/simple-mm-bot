@@ -4,6 +4,7 @@ import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { Position } from "../../domain/entities/Position.ts";
+import { isFlatPositionQty } from "../../domain/entities/Position.ts";
 import { logger } from "../../utils/logger.ts";
 
 const closeMaxAttempts = 30;
@@ -93,7 +94,7 @@ export class ClosePositionUseCase {
 
     for (let attempt = 1; attempt <= closeMaxAttempts; attempt += 1) {
       const position = await this.refreshPosition();
-      if (position.qty === 0) {
+      if (isFlatPositionQty(position.qty)) {
         return;
       }
 

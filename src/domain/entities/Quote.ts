@@ -1,5 +1,6 @@
 export type OrderSide = "buy" | "sell";
 export type OrderTimeInForce = "ALO" | "GTC" | "IOC";
+export type QuoteSideIntent = "open_quote" | "reduce_inventory" | "disabled";
 
 export interface QuoteLevel {
   level: number;
@@ -8,6 +9,8 @@ export interface QuoteLevel {
   ask: number;
   bidSize: number;
   askSize: number;
+  bidIntent?: QuoteSideIntent;
+  askIntent?: QuoteSideIntent;
 }
 
 export interface Quote {
@@ -15,6 +18,8 @@ export interface Quote {
   ask: number;
   bidSize: number;
   askSize: number;
+  bidIntent?: QuoteSideIntent;
+  askIntent?: QuoteSideIntent;
   bidSizeMultiplier?: number;
   askSizeMultiplier?: number;
   levels?: QuoteLevel[];

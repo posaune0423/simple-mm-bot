@@ -201,6 +201,69 @@ describe("Bot", () => {
     expect(calls.slice(0, 4)).toEqual(["connect", "syncFills", "initializePosition", "refresh"]);
   });
 
+  test("runs inventory reduction before normal quote refresh and skips quotes when reducing", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: {
+          execute: async () => {
+            calls.push("guard");
+            return "OK" as const;
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            calls.push("reduce");
+            return true;
+          },
+        },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["guard", "reduce"]);
+  });
+
   test("cleans up subscriptions and order gateway lifecycle after stopping", async () => {
     const calls: string[] = [];
     const bot = new Bot(
@@ -860,7 +923,7 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["ohlcv:1", "ohlcv:2:start", "ohlcv:2:end", "fill", "reduce"]);
+    expect(calls).toEqual(["ohlcv:1", "reduce", "ohlcv:2:start", "ohlcv:2:end", "fill"]);
   });
 
   test("logs lifecycle, tick state, and cleanup", async () => {

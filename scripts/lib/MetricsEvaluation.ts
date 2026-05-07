@@ -3,6 +3,10 @@ export interface MetricsEvaluationInput {
   markoutCoverage: number;
   rawFieldCoverage?: number;
   snapshotFreshnessMs?: number | null;
+  notionalUsd?: number;
+  windowDays?: number;
+  required14dVolumeUsd?: number;
+  balanced14dVolumeUsd?: number;
   netPnl: number;
   tradePnl: number;
   fee: number;
@@ -105,6 +109,15 @@ export interface MetricsEvaluation {
     avgMarkout30s: boolean;
     markoutTail: boolean;
     sideImbalance: boolean;
+    volumeRequiredPace: boolean;
+    volumeBalancedPace: boolean;
+    sizeIncreaseAllowed: boolean;
+  };
+  volume: {
+    notionalUsd: number | null;
+    projected14dUsd: number | null;
+    requiredDailyUsd: number;
+    balancedDailyUsd: number;
   };
   verdict: "pass" | "review";
   parameterAction: ParameterAction;
@@ -165,6 +178,7 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       warningCount: input.warningCount ?? 0,
       errorCount: input.errorCount ?? 0,
     },
+    volume: volumeFor(input),
     passFail: passFailFor(input),
     verdict: verdictFor(input),
     parameterAction: parameterActionFor(input, tuningAllowed),
@@ -177,17 +191,35 @@ function passFailFor(input: MetricsEvaluationInput): MetricsEvaluation["passFail
   const pnlPerVolumeBps = input.pnlPerVolumeBps ?? input.pnlPerNotional * 10_000;
   const avgMarkout30s = input.avg30sMarkoutBps ?? 0;
   const tail = input.markout30sTailBps ?? { p10: 0, p5: 0, worst: 0 };
+  const volume = volumeFor(input);
   return {
     netPnl: input.netPnl >= 0,
     pnlPerVolumeBps: pnlPerVolumeBps >= 5,
     avgMarkout30s: avgMarkout30s >= -5,
     markoutTail: tail.p10 >= -150,
     sideImbalance: Math.abs(input.sideImbalance ?? 0) < 0.7,
+    volumeRequiredPace:
+      volume.projected14dUsd === null || volume.projected14dUsd >= inputRequired14dVolume(input),
+    volumeBalancedPace:
+      volume.projected14dUsd === null || volume.projected14dUsd >= inputBalanced14dVolume(input),
+    sizeIncreaseAllowed:
+      input.netPnl > 0 &&
+      pnlPerVolumeBps > 0 &&
+      input.avg5sMarkoutBps > 0.5 &&
+      input.adverseSelectionRate < 0.3,
   };
 }
 
 function verdictFor(input: MetricsEvaluationInput): MetricsEvaluation["verdict"] {
-  return Object.values(passFailFor(input)).every(Boolean) ? "pass" : "review";
+  const passFail = passFailFor(input);
+  return passFail.netPnl &&
+    passFail.pnlPerVolumeBps &&
+    passFail.avgMarkout30s &&
+    passFail.markoutTail &&
+    passFail.sideImbalance &&
+    passFail.volumeRequiredPace
+    ? "pass"
+    : "review";
 }
 
 function parameterActionFor(
@@ -246,5 +278,46 @@ function issueSignalsFor(
   ) {
     signals.add("strategy_model_gap");
   }
+  const passFail = passFailFor(input);
+  if (!passFail.volumeRequiredPace) {
+    signals.add("volume_below_required_pace");
+  }
+  if (!passFail.volumeBalancedPace) {
+    signals.add("volume_below_balanced_pace");
+  }
+  if (input.adverseSelectionRate >= 0.3) {
+    signals.add("adverse_selection_high");
+  }
+  if (!passFail.sizeIncreaseAllowed) {
+    signals.add("size_increase_blocked");
+  }
   return [...signals];
+}
+
+function volumeFor(input: MetricsEvaluationInput): MetricsEvaluation["volume"] {
+  const requiredDailyUsd = inputRequired14dVolume(input) / 14;
+  const balancedDailyUsd = inputBalanced14dVolume(input) / 14;
+  if (input.notionalUsd === undefined || input.windowDays === undefined || input.windowDays <= 0) {
+    return {
+      notionalUsd: input.notionalUsd ?? null,
+      projected14dUsd: null,
+      requiredDailyUsd,
+      balancedDailyUsd,
+    };
+  }
+
+  return {
+    notionalUsd: input.notionalUsd,
+    projected14dUsd: (input.notionalUsd / input.windowDays) * 14,
+    requiredDailyUsd,
+    balancedDailyUsd,
+  };
+}
+
+function inputRequired14dVolume(input: MetricsEvaluationInput): number {
+  return input.required14dVolumeUsd ?? 150_000_000;
+}
+
+function inputBalanced14dVolume(input: MetricsEvaluationInput): number {
+  return input.balanced14dVolumeUsd ?? 180_000_000;
 }
