@@ -27,10 +27,10 @@ quoteEngine:
   defaultTimeInForce: GTC
   sizing:
     positionSize: 1.25
-    budgetUsd: 12000
+    budgetUsd: 14400
   levels:
     - halfSpreadBps: 1.5
-      sizeUsd: 12000
+      sizeUsd: 14400
   strategy:
     type: bulk-beta-leaderboard
     params:
@@ -47,8 +47,8 @@ risk:
   imrBuffer: 0.06
   mmrBuffer: 0.03
   maxPositionQty: 0.22
-  reduceTriggerQty: 0.08
-  reduceTargetQty: 0.04
+  reduceTriggerQty: 0.22
+  reduceTargetQty: 0.08
   maxUnrealizedLossUsd: 25
   maxAdverseMoveBps: 20
 
