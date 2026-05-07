@@ -70,3 +70,23 @@ Read these docs before changing runtime behavior, venue support, configuration, 
 ## Coding & Testing Rules
 
 Follow [.codex/rules/typescript.mdc](./.codex/rules/typescript.mdc) for TypeScript style and [.codex/rules/test.mdc](./.codex/rules/test.mdc) for test style. In short: design types and interfaces first, avoid `any`, prefer functions when no internal state is needed, use adapters for external dependencies, keep tests independent, and import the real implementation from `src/`.
+
+## Cursor Cloud specific instructions
+
+### Environment
+
+- **Runtime**: Bun (not Node). Bun is installed to `~/.bun/bin/bun`; the update script ensures it is on `PATH`. If shell commands cannot find `bun`, run `export PATH="$HOME/.bun/bin:$PATH"`.
+- **No external services required**: SQLite is embedded (`bun:sqlite`), auto-created on startup. No Docker, Redis, or Postgres needed for dev/test.
+- **`.env` file**: Copy `.env.example` to `.env` before first run. `BULK_PRIVATE_KEY` is only needed for live mode; paper mode and all tests work without it.
+
+### Running the bot
+
+- **Paper mode** (`bun run dev:paper`): Connects to public Bulk Trade WebSocket feed, computes Avellaneda-Stoikov quotes, and simulates fills locally. This is the recommended "hello world" for verifying the environment works. It requires outbound internet access to `exchange-ws1.bulk.trade` and `exchange-api.bulk.trade`.
+- **Backtest mode** (`bun run dev:backtest`): Uses Hyperliquid public API for historical OHLCV data. Requires internet access to `api.hyperliquid.xyz`.
+- **Live mode** (`bun run start`): Requires `BULK_PRIVATE_KEY` env var; fails fast without it.
+
+### Testing caveats
+
+- `bun run test` runs unit + integration tests (131 + 8 = 139 tests). All pass without network access.
+- `bun run test:e2e:paper` runs 2 smoke tests that require internet. The backtest smoke test has a known pre-existing failure (`latestRunPerformance` returns `undefined` venue); the paper smoke test passes.
+- Linting/formatting uses `vite-plus` (`vp` CLI): `bun run lint`, `bun run format:check`, `bun run check`.
