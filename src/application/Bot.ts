@@ -22,6 +22,13 @@ interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
 }
 
+type ErrorLike = {
+  name?: unknown;
+  status?: unknown;
+  message?: unknown;
+  response?: unknown;
+};
+
 export class Bot {
   private running = false;
   private quotedCount = 0;
@@ -124,7 +131,7 @@ export class Bot {
 
     while (this.isRunning()) {
       const tick = ticks + 1;
-      const tickResult = await this.runTick(tick);
+      const tickResult = await this.runTickSafely(tick);
       ticks = tick;
 
       if (tickResult === "stop" || this.hasReachedMaxTicks(ticks, maxTicks) || !this.isRunning()) {
@@ -132,6 +139,21 @@ export class Bot {
       }
 
       await Bun.sleep(this.intervalMs);
+    }
+  }
+
+  private async runTickSafely(tick: number): Promise<TickResult> {
+    try {
+      return await this.runTick(tick);
+    } catch (error) {
+      if (!isTransientBulkError(error)) {
+        throw error;
+      }
+      logger.warn(`bot.tick_transient_error tick=${tick} error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth("warn", "transient_tick_error", String(error), {
+        tick,
+      });
+      return "continue";
     }
   }
 
@@ -228,4 +250,49 @@ export class Bot {
   private async drainEventTasks(): Promise<void> {
     await this.eventTasks;
   }
+}
+
+function isTransientBulkError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null) {
+    const errorLike = error as ErrorLike;
+    const status = toHttpStatus(errorLike);
+    if (status === 408) {
+      return true;
+    }
+    if (errorLike.name === "BulkTimeoutError") {
+      return true;
+    }
+  }
+
+  const message = String(error);
+  return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
+}
+
+function toHttpStatus(errorLike: ErrorLike): number | undefined {
+  const maybeStatus = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isInteger(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
+  const directStatus = maybeStatus(errorLike.status);
+  if (directStatus !== undefined) {
+    return directStatus;
+  }
+
+  if (
+    errorLike.response === undefined ||
+    errorLike.response === null ||
+    typeof errorLike.response !== "object"
+  ) {
+    return undefined;
+  }
+
+  const responseStatus = maybeStatus((errorLike.response as { status?: unknown }).status);
+  return responseStatus;
 }

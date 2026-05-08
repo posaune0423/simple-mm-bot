@@ -633,6 +633,77 @@ describe("Bot", () => {
     expect(calls).toEqual(["connect", "reduce", "cancelAll", "closePosition", "disconnect"]);
   });
 
+  test("continues after a transient Bulk 408 during a live tick", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+            if (calls.filter((call) => call === "refresh").length === 1) {
+              throw Object.assign(new Error("HTTP error 408"), {
+                name: "BulkHttpError",
+                status: 408,
+              });
+            }
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    try {
+      await bot.start(2);
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual(["connect", "refresh", "refresh", "cancelAll", "disconnect"]);
+    expect(logs.messages).toContain(
+      "bot.tick_transient_error tick=1 error=BulkHttpError: HTTP error 408",
+    );
+  });
+
   test("propagates close-position cleanup failures after disconnecting and disposing", async () => {
     const logs = captureLogs();
     const calls: string[] = [];
