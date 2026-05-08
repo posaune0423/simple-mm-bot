@@ -66,7 +66,7 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.sizing.positionSize).toBe(1.25);
     expect(config.quoteEngine.sizing.budgetUsd).toBe(14400);
     expect(config.risk.maxPositionQty).toBe(0.22);
-    expect(config.risk.reduceTriggerQty).toBe(0.22);
+    expect(config.risk.reduceTriggerQty).toBe(0.18);
     expect(config.risk.reduceTargetQty).toBe(0.08);
     expect(config.risk.maxUnrealizedLossUsd).toBe(25);
     expect(config.risk.maxAdverseMoveBps).toBe(20);

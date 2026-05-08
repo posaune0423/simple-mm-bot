@@ -47,7 +47,7 @@ risk:
   imrBuffer: 0.06
   mmrBuffer: 0.03
   maxPositionQty: 0.22
-  reduceTriggerQty: 0.22
+  reduceTriggerQty: 0.18
   reduceTargetQty: 0.08
   maxUnrealizedLossUsd: 25
   maxAdverseMoveBps: 20
