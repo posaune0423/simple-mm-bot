@@ -1062,6 +1062,92 @@ describe("Bot", () => {
     expect(calls).toEqual(["ohlcv:1", "reduce", "ohlcv:2:start", "ohlcv:2:end", "fill"]);
   });
 
+  test("continues quoting when a subscribed event task stalls", async () => {
+    let marketListener: SnapshotListener | undefined;
+    let quoteCount = 0;
+    const logs = captureLogs();
+
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            quoteCount += 1;
+            void marketListener?.({
+              market: "BTC-USD",
+              bestBid: 100,
+              bestAsk: 102,
+              microPrice: 101,
+              markPrice: 101,
+              timestamp: quoteCount + 1,
+              volume: 1,
+              marginRatio: null,
+            });
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: {
+          execute: async (snapshot) => {
+            if (snapshot.timestamp === 2) {
+              await new Promise<void>(() => {});
+            }
+          },
+        },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            volume: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe(listener) {
+          marketListener = listener;
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+        dispose() {},
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "always", eventTaskDrainTimeoutMs: 5 },
+    );
+
+    try {
+      const result = await Promise.race([
+        bot.start(2).then(() => "completed" as const),
+        Bun.sleep(100).then(() => "timed_out" as const),
+      ]);
+
+      expect(result).toBe("completed");
+      expect(quoteCount).toBe(2);
+      expect(
+        logs.messages.some((message) => message.startsWith("bot.event_tasks_drain_timeout")),
+      ).toBe(true);
+    } finally {
+      logs.restore();
+    }
+  });
+
   test("logs lifecycle, tick state, and cleanup", async () => {
     const logs = captureLogs();
     const bot = new Bot(

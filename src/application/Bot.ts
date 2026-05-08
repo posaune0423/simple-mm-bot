@@ -20,6 +20,7 @@ type ShutdownClosePositionPolicy = "always" | "emergency_only";
 
 interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
+  eventTaskDrainTimeoutMs?: number;
 }
 
 type ErrorLike = {
@@ -248,7 +249,34 @@ export class Bot {
   }
 
   private async drainEventTasks(): Promise<void> {
-    await this.eventTasks;
+    const pendingTasks = this.eventTasks;
+    const result = await Promise.race([
+      pendingTasks.then(() => "completed" as const),
+      Bun.sleep(this.eventTaskDrainTimeoutMs()).then(() => "timeout" as const),
+    ]);
+
+    if (result === "completed") {
+      return;
+    }
+
+    const timeoutMs = this.eventTaskDrainTimeoutMs();
+    logger.warn(`bot.event_tasks_drain_timeout timeoutMs=${timeoutMs}`);
+    await this.metrics?.recordRuntimeHealth(
+      "warn",
+      "event_tasks_drain_timeout",
+      `event tasks did not drain within ${timeoutMs}ms`,
+      { timeoutMs },
+    );
+    void pendingTasks.catch((error) => {
+      logger.warn(`bot.event_tasks_detached_failed error=${String(error)}`);
+    });
+    if (this.eventTasks === pendingTasks) {
+      this.eventTasks = Promise.resolve();
+    }
+  }
+
+  private eventTaskDrainTimeoutMs(): number {
+    return this.options.eventTaskDrainTimeoutMs ?? Math.max(1_000, this.intervalMs);
   }
 }
 
