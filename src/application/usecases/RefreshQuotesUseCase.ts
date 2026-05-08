@@ -87,7 +87,16 @@ export class RefreshQuotesUseCase {
     }
     const activeOrders = await this.orderManager.reconcile(targetOrders);
     if (activeOrders.length === 0) {
-      throw new Error("No quote orders were submitted");
+      logger.warn(
+        `refresh_quotes.no_active_orders market=${snapshot.market} targetCount=${targetOrders.length} rejectedOrSkipped=true`,
+      );
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "quote_placement_no_active_orders",
+        "No quote orders were submitted",
+        { market: snapshot.market, targetCount: targetOrders.length },
+      );
+      return;
     }
     const bidOrder = activeOrders.find((entry) => entry.side === "buy")?.order;
     const askOrder = activeOrders.find((entry) => entry.side === "sell")?.order;

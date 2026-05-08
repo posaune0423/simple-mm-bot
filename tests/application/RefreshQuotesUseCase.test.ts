@@ -23,6 +23,20 @@ function captureInfoLogs() {
   };
 }
 
+function captureWarnLogs() {
+  const warn = logger.warn;
+  const messages: string[] = [];
+  logger.warn = (...args: unknown[]) => {
+    messages.push(args.join(" "));
+  };
+  return {
+    messages,
+    restore() {
+      logger.warn = warn;
+    },
+  };
+}
+
 describe("RefreshQuotesUseCase", () => {
   test("places initial quotes without a blanket cancelAll", async () => {
     const calls: string[] = [];
@@ -165,7 +179,8 @@ describe("RefreshQuotesUseCase", () => {
     expect(calls).toEqual(["place:buy", "place:sell"]);
   });
 
-  test("does not treat rejected placements as active quote orders on the next refresh", async () => {
+  test("does not fail the bot when every quote placement is rejected", async () => {
+    const logs = captureWarnLogs();
     const placedStatuses = ["rejected", "rejected", "open", "open"] as const;
     const placed: string[] = [];
     const marketFeed = {
@@ -225,17 +240,17 @@ describe("RefreshQuotesUseCase", () => {
     } as unknown as QuoteEngine;
     const useCase = new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine);
 
-    await useCase.execute().then(
-      () => {
-        throw new Error("Expected rejected quotes to fail the first refresh");
-      },
-      (error) => {
-        expect((error as Error).message).toBe("No quote orders were submitted");
-      },
-    );
-    await useCase.execute();
+    try {
+      await useCase.execute();
+      await useCase.execute();
+    } finally {
+      logs.restore();
+    }
 
     expect(placed).toEqual(["buy", "sell", "buy", "sell"]);
+    expect(logs.messages).toContain(
+      "refresh_quotes.no_active_orders market=BTC-USD targetCount=2 rejectedOrSkipped=true",
+    );
   });
 
   test("submits reduce-inventory quote sides as reduce-only reduce orders", async () => {
