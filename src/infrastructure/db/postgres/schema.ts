@@ -39,6 +39,7 @@ export const orderbookSnapshotsTable = pgTable(
     bestAsk: doublePrecision("best_ask").notNull(),
     midPrice: doublePrecision("mid_price").notNull(),
     microPrice: doublePrecision("micro_price").notNull(),
+    vampPrice: doublePrecision("vamp_price"),
     markPrice: doublePrecision("mark_price").notNull(),
     spreadBps: doublePrecision("spread_bps").notNull(),
     stalenessMs: bigint("staleness_ms", { mode: "number" }).notNull(),

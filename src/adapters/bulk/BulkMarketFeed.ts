@@ -3,8 +3,10 @@ import type { Candle as BulkCandle } from "bulk-ts-sdk";
 import type {
   IMarketFeed,
   MarketSnapshot,
+  OrderBookLevel,
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
+import { calculateDepthVampPrice } from "../../domain/FairPriceCalculator.ts";
 import { logger } from "../../utils/logger.ts";
 import { retryTransientBulk } from "../../utils/transientBulk.ts";
 
@@ -101,6 +103,8 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     bestBid: snapshot.bestBid,
     bestAsk: snapshot.bestAsk,
     microPrice: snapshot.microPrice,
+    vampPrice: snapshot.vampPrice,
+    orderBookLevels: snapshot.orderBookLevels,
     markPrice: snapshot.markPrice,
     timestamp: snapshot.timestamp,
     bookUpdatedAt: snapshot.bookUpdatedAt,
@@ -247,19 +251,22 @@ export class BulkMarketFeed implements IMarketFeed {
     book: BulkBook,
     marginState: BulkMarginState,
   ): MarketSnapshot {
-    const [bidLevel, askLevel] = this.topLevels(book);
-    const bestBid = levelPrice(bidLevel);
-    const bestAsk = levelPrice(askLevel);
-    if (bestBid === undefined || bestAsk === undefined) {
+    const bookLevels = this.bookLevels(book);
+    const topLevel = bookLevels[0];
+    if (topLevel === undefined) {
       throw new Error(`No Bulk order book levels for ${this.params.market}`);
     }
+    const bestBid = topLevel.bidPrice;
+    const bestAsk = topLevel.askPrice;
     const bookUpdatedAt = nsToMs(book.timestamp);
     const tickerUpdatedAt = nsToMs(ticker.timestamp);
     return {
       market: this.params.market,
       bestBid,
       bestAsk,
-      microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
+      microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
+      vampPrice: calculateDepthVampPrice(bookLevels),
+      orderBookLevels: bookLevels,
       markPrice:
         ticker.markPrice ?? ticker.fairBookPx ?? ticker.lastPrice ?? (bestBid + bestAsk) / 2,
       timestamp: book.timestamp === undefined ? tickerUpdatedAt : bookUpdatedAt,
@@ -300,21 +307,20 @@ export class BulkMarketFeed implements IMarketFeed {
       return;
     }
     const data = payloadOf(message, ["l2Snapshot", "l2snapshot", "book"]) as BulkBook;
-    const levels = this.tryTopLevels(data);
-    if (levels === null) {
+    const bookLevels = this.tryBookLevels(data);
+    const topLevel = bookLevels[0];
+    if (topLevel === undefined) {
       return;
     }
-    const [bidLevel, askLevel] = levels;
-    const bestBid = levelPrice(bidLevel);
-    const bestAsk = levelPrice(askLevel);
-    if (bestBid === undefined || bestAsk === undefined) {
-      return;
-    }
+    const bestBid = topLevel.bidPrice;
+    const bestAsk = topLevel.askPrice;
     this.snapshot = {
       ...quoteSnapshot(this.snapshot),
       bestBid,
       bestAsk,
-      microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
+      microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
+      vampPrice: calculateDepthVampPrice(bookLevels),
+      orderBookLevels: bookLevels,
       timestamp: nsToMs(data.timestamp),
       bookUpdatedAt: nsToMs(data.timestamp),
     };
@@ -430,21 +436,42 @@ export class BulkMarketFeed implements IMarketFeed {
     this.publish(this.snapshot);
   }
 
-  private topLevels(book: BulkBook): [BulkLevel, BulkLevel] {
-    const levels = this.tryTopLevels(book);
-    if (levels === null) {
+  private bookLevels(book: BulkBook): OrderBookLevel[] {
+    const levels = this.tryBookLevels(book);
+    if (levels.length === 0) {
       throw new Error(`No Bulk order book levels for ${this.params.market}`);
     }
     return levels;
   }
 
-  private tryTopLevels(book: BulkBook): [BulkLevel, BulkLevel] | null {
-    const bid = book.levels?.[0]?.[0];
-    const ask = book.levels?.[1]?.[0];
-    if (!bid || !ask) {
-      return null;
+  private tryBookLevels(book: BulkBook): OrderBookLevel[] {
+    const bids = book.levels?.[0] ?? [];
+    const asks = book.levels?.[1] ?? [];
+    const length = Math.min(bids.length, asks.length);
+    const levels: OrderBookLevel[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const bid = bids[index];
+      const ask = asks[index];
+      if (bid === undefined || ask === undefined) {
+        continue;
+      }
+      const bidPrice = levelPrice(bid);
+      const askPrice = levelPrice(ask);
+      const bidSize = levelSize(bid);
+      const askSize = levelSize(ask);
+      if (
+        bidPrice === undefined ||
+        askPrice === undefined ||
+        !Number.isFinite(bidPrice) ||
+        !Number.isFinite(askPrice) ||
+        !Number.isFinite(bidSize) ||
+        !Number.isFinite(askSize)
+      ) {
+        continue;
+      }
+      levels.push({ bidPrice, bidSize, askPrice, askSize });
     }
-    return [bid, ask];
+    return levels;
   }
 
   private async fetchMarginState(): Promise<BulkMarginState> {

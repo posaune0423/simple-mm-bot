@@ -65,6 +65,7 @@ export const SQLITE_BOOTSTRAP_SQL = `
     best_ask REAL NOT NULL,
     mid_price REAL NOT NULL,
     micro_price REAL NOT NULL,
+    vamp_price REAL,
     mark_price REAL NOT NULL,
     spread_bps REAL NOT NULL,
     staleness_ms INTEGER NOT NULL,

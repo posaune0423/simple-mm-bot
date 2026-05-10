@@ -10,6 +10,8 @@ export interface MarketSnapshot extends CandleLike {
   bestBid: number;
   bestAsk: number;
   microPrice: number;
+  vampPrice?: number;
+  orderBookLevels?: ReadonlyArray<OrderBookLevel>;
   markPrice: number;
   timestamp: number;
   bookUpdatedAt?: number;
@@ -21,6 +23,13 @@ export interface MarketSnapshot extends CandleLike {
   volume?: number;
   marginRatio: number | null;
   availableMarginUsd?: number | null;
+}
+
+export interface OrderBookLevel {
+  bidPrice: number;
+  bidSize: number;
+  askPrice: number;
+  askSize: number;
 }
 
 export type SnapshotListener = (snapshot: MarketSnapshot) => void | Promise<void>;

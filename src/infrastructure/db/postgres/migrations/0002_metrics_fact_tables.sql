@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS orderbook_snapshots (
   best_ask DOUBLE PRECISION NOT NULL,
   mid_price DOUBLE PRECISION NOT NULL,
   micro_price DOUBLE PRECISION NOT NULL,
+  vamp_price DOUBLE PRECISION,
   mark_price DOUBLE PRECISION NOT NULL,
   spread_bps DOUBLE PRECISION NOT NULL,
   staleness_ms BIGINT NOT NULL,

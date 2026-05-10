@@ -39,6 +39,7 @@ export const orderbookSnapshotsTable = sqliteTable(
     bestAsk: real("best_ask").notNull(),
     midPrice: real("mid_price").notNull(),
     microPrice: real("micro_price").notNull(),
+    vampPrice: real("vamp_price"),
     markPrice: real("mark_price").notNull(),
     spreadBps: real("spread_bps").notNull(),
     stalenessMs: integer("staleness_ms").notNull(),

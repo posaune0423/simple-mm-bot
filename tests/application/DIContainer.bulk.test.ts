@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { BulkMarketFeed } from "../../src/adapters/bulk/BulkMarketFeed.ts";
@@ -9,6 +8,8 @@ import { HistoricalMarketFeed } from "../../src/adapters/paper/HistoricalMarketF
 import { PaperOrderGateway } from "../../src/adapters/paper/PaperOrderGateway.ts";
 import { DIContainer, resolveCapitalMode } from "../../src/application/di.ts";
 import type { AppConfig } from "../../src/config.ts";
+
+const TEST_DB_DIR = join(process.cwd(), "data", "test-dbs", "di");
 
 function config(
   mode: "live" | "paper" | "backtest",
@@ -32,6 +33,7 @@ function config(
     },
     quoteEngine: {
       markWeight: 0.6,
+      bookPriceSource: "micro",
       inventoryScale: 0.05,
       timeHorizonSec: 30,
       slideMarginThreshold: 0.12,
@@ -74,10 +76,11 @@ describe("DIContainer Bulk venue", () => {
   let tempDir: string;
   let dbPath: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     previousDbPath = Bun.env.DB_PATH;
     previousDatabaseUrl = Bun.env.DATABASE_URL;
-    tempDir = join(process.cwd(), "tmp-tests-di", randomUUID());
+    await mkdir(TEST_DB_DIR, { recursive: true });
+    tempDir = await mkdtemp(join(TEST_DB_DIR, "run-"));
     dbPath = join(tempDir, "di.db");
     Bun.env.DB_PATH = dbPath;
     delete Bun.env.DATABASE_URL;

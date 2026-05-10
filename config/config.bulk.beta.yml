@@ -24,6 +24,7 @@ connections:
 
 quoteEngine:
   markWeight: 0.25
+  bookPriceSource: vamp
   inventoryScale: 0.22
   timeHorizonSec: 10
   minSpreadBps: 1.7

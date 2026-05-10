@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -46,6 +47,7 @@ describe("SqliteMetricsRepository", () => {
       bestAsk: 101,
       midPrice: 100,
       microPrice: 100.25,
+      vampPrice: 100.5,
       markPrice: 100,
       spreadBps: 200,
       stalenessMs: 0,
@@ -61,6 +63,7 @@ describe("SqliteMetricsRepository", () => {
       bestAsk: 102,
       midPrice: 100,
       microPrice: 100,
+      vampPrice: 100.75,
       markPrice: 100,
       spreadBps: 400,
       stalenessMs: 10,
@@ -186,6 +189,44 @@ describe("SqliteMetricsRepository", () => {
       .get();
     expect(snapshotCount?.count).toBe(1);
     expect(fillCount?.count).toBe(1);
+    const snapshot = client.sqlite
+      .query<{ vamp_price: number }, []>(
+        "SELECT vamp_price FROM orderbook_snapshots WHERE run_id = 'run-1'",
+      )
+      .get();
+    expect(snapshot?.vamp_price).toBe(100.75);
+  });
+
+  test("adds nullable VAMP price when bootstrapping an existing sqlite database", () => {
+    const old = new Database(dbPath, { create: true });
+    old.exec(`
+      CREATE TABLE orderbook_snapshots (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        venue TEXT NOT NULL,
+        market TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        best_bid REAL NOT NULL,
+        best_ask REAL NOT NULL,
+        mid_price REAL NOT NULL,
+        micro_price REAL NOT NULL,
+        mark_price REAL NOT NULL,
+        spread_bps REAL NOT NULL,
+        staleness_ms INTEGER NOT NULL,
+        raw_json TEXT,
+        UNIQUE (run_id, market, observed_at)
+      )
+    `);
+    old.close();
+
+    const migrated = createSqliteClient(dbPath);
+    const columns = migrated.sqlite
+      .query<{ name: string }, []>("PRAGMA table_info(orderbook_snapshots)")
+      .all()
+      .map((column) => column.name);
+
+    expect(columns).toContain("vamp_price");
+    migrated.sqlite.close();
   });
 
   test("computes market quality p95 spread from orderbook snapshots", async () => {

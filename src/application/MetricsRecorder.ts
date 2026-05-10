@@ -81,6 +81,7 @@ export class MetricsRecorder {
       bestAsk: snapshot.bestAsk,
       midPrice: midPrice(snapshot),
       microPrice: snapshot.microPrice,
+      vampPrice: snapshot.vampPrice,
       markPrice: snapshot.markPrice,
       spreadBps: spreadBps(snapshot),
       stalenessMs: Math.max(0, Date.now() - (snapshot.bookUpdatedAt ?? snapshot.timestamp)),
@@ -397,6 +398,8 @@ function snapshotPayload(snapshot: MarketSnapshot): Record<string, unknown> {
     positionUpdatedAt: snapshot.positionUpdatedAt,
     positionQty: snapshot.positionQty,
     marginRatio: snapshot.marginRatio,
+    vampPrice: snapshot.vampPrice,
+    orderBookLevels: snapshot.orderBookLevels,
     ohlcvPresent:
       snapshot.open !== undefined ||
       snapshot.high !== undefined ||

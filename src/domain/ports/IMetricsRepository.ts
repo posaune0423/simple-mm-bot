@@ -34,6 +34,7 @@ export interface OrderbookSnapshotFact {
   bestAsk: number;
   midPrice: number;
   microPrice: number;
+  vampPrice?: number;
   markPrice: number;
   spreadBps: number;
   stalenessMs: number;

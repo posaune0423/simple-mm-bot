@@ -111,7 +111,10 @@ export class DIContainer {
     const strategy = buildQuotingStrategy(this.config.quoteEngine.strategy);
     return new QuoteEngine(
       strategy,
-      new FairPriceCalculator(this.config.quoteEngine.markWeight),
+      new FairPriceCalculator(
+        this.config.quoteEngine.markWeight,
+        this.config.quoteEngine.bookPriceSource,
+      ),
       new VolatilityEstimator(),
       {
         inventoryScale: this.config.quoteEngine.inventoryScale,
