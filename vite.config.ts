@@ -47,6 +47,12 @@ export default {
       "@typescript-eslint/no-unnecessary-type-assertion": "error",
       "@typescript-eslint/promise-function-async": "error",
       "@typescript-eslint/switch-exhaustiveness-check": "error",
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [{ name: "zod", message: "Use valibot" }],
+        },
+      ],
     },
     overrides: [
       {
@@ -55,11 +61,27 @@ export default {
           "no-restricted-imports": [
             "error",
             {
+              paths: [
+                { name: "zod", message: "Use valibot" },
+                { name: "valibot", message: "Keep runtime validation outside the domain layer" },
+                { name: "bun:sqlite", message: "Keep DB access outside the domain layer" },
+                { name: "postgres", message: "Keep DB access outside the domain layer" },
+                { name: "bulk-ts-sdk", message: "Keep SDK imports in adapters" },
+                { name: "@nktkas/hyperliquid", message: "Keep SDK imports in adapters or lib" },
+                { name: "viem", message: "Keep SDK imports outside the domain layer" },
+              ],
               patterns: [
                 "**/application/**",
                 "**/adapters/**",
                 "**/infrastructure/**",
                 "**/lib/**",
+                "**/config.ts",
+                "**/env.ts",
+                "**/utils/**",
+                "node:*",
+                "drizzle-orm",
+                "drizzle-orm/*",
+                "viem/*",
               ],
             },
           ],
@@ -71,8 +93,10 @@ export default {
           "no-restricted-imports": [
             "error",
             {
+              paths: [{ name: "zod", message: "Use valibot" }],
               patterns: [
                 "**/adapters/**",
+                "**/infrastructure/**",
                 "**/infrastructure/db/**",
                 "**/infrastructure/InMemoryPositionRepository.ts",
                 "**/lib/**",
@@ -84,7 +108,12 @@ export default {
       {
         files: ["src/application/di.ts"],
         rules: {
-          "no-restricted-imports": "off",
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [{ name: "zod", message: "Use valibot" }],
+            },
+          ],
         },
       },
       {
@@ -93,6 +122,7 @@ export default {
           "no-restricted-imports": [
             "error",
             {
+              paths: [{ name: "zod", message: "Use valibot" }],
               patterns: ["**/application/**", "**/infrastructure/**"],
             },
           ],
@@ -104,6 +134,7 @@ export default {
           "no-restricted-imports": [
             "error",
             {
+              paths: [{ name: "zod", message: "Use valibot" }],
               patterns: ["**/application/**", "**/adapters/**"],
             },
           ],
@@ -115,6 +146,7 @@ export default {
           "no-restricted-imports": [
             "error",
             {
+              paths: [{ name: "zod", message: "Use valibot" }],
               patterns: [
                 "**/domain/**",
                 "**/application/**",

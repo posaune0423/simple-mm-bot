@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
 
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
-import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
+import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { LATEST_METRICS_EVALUATION_PATH, LATEST_METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";

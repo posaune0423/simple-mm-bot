@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { ResultAsync } from "neverthrow";
 
-import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
+import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { DEFAULT_SQLITE_DB_PATH, METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";

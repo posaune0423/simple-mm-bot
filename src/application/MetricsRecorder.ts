@@ -3,9 +3,13 @@ import { randomUUID } from "node:crypto";
 import type { Fill } from "../domain/entities/Fill.ts";
 import type { Quote } from "../domain/entities/Quote.ts";
 import type { MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
+import type {
+  CapitalMode,
+  IMetricsRepository,
+  SubmittedOrderFact,
+  TradingRunFact,
+} from "../domain/ports/IMetricsRepository.ts";
 import type { OrderGatewayEvent } from "../domain/ports/IOrderGateway.ts";
-import type { CapitalMode, SubmittedOrderFact, TradingRunFact } from "../infrastructure/Metrics.ts";
-import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
 import type { AppMode } from "../config.ts";
 
 interface MetricsRecorderOptions {

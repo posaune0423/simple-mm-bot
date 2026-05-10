@@ -2,7 +2,7 @@ import { ResultAsync } from "neverthrow";
 
 import { planDesignIssues } from "./lib/DesignIssuePlanner.ts";
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
-import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
+import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import {
   LATEST_METRICS_EVALUATION_PATH,
   LATEST_METRICS_REPORT_PATH,
