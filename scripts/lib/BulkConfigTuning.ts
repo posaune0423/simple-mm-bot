@@ -10,7 +10,7 @@ interface EvaluationForTuning {
   tuningAllowed: boolean;
   markouts: {
     avg5sBps: number;
-    avg30sBps?: number;
+    avg30sBps?: number | null;
     adverseSelectionRate: number;
     tail30sBps?: { p10: number };
     spreadCaptureBps?: number;

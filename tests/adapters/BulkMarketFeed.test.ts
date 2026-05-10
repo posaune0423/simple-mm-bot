@@ -60,6 +60,7 @@ describe("BulkMarketFeed", () => {
       markPrice: 101,
       timestamp: 1_700_000_000_123,
       marginRatio: null,
+      availableMarginUsd: null,
     });
   });
 
@@ -95,7 +96,7 @@ describe("BulkMarketFeed", () => {
 
       expect(logs.messages).toContain("bulk_market_feed.connect market=BTC-USD nlevels=20");
       expect(logs.messages).toContain(
-        "bulk_market_feed.snapshot_seeded market=BTC-USD bestBid=99 bestAsk=101 markPrice=101 marginRatio=null",
+        "bulk_market_feed.snapshot_seeded market=BTC-USD bestBid=99 bestAsk=101 markPrice=101 marginRatio=null availableMarginUsd=null",
       );
       expect(logs.messages).toContain(
         "bulk_market_feed.ws_subscribed market=BTC-USD topics=ticker,l2Snapshot,candle",
@@ -411,5 +412,55 @@ describe("BulkMarketFeed", () => {
         expect((error as Error).message).toBe("account unavailable");
       },
     );
+  });
+
+  test("retries transient account margin lookup before seeding the snapshot", async () => {
+    let attempts = 0;
+    const sleeps: number[] = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          attempts += 1;
+          if (attempts === 1) {
+            throw Object.assign(new Error("HTTP error 408"), {
+              name: "BulkHttpError",
+              status: 408,
+            });
+          }
+          return { margin: { totalBalance: 1000, marginUsed: 250 } };
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "ETH-USD",
+      accountId: "account",
+      accountRetryAttempts: 2,
+      accountRetryDelayMs: 7,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await feed.connect();
+
+    expect(attempts).toBe(2);
+    expect(sleeps).toEqual([7]);
+    expect((await feed.getSnapshot()).marginRatio).toBe(0.75);
   });
 });

@@ -272,6 +272,51 @@ describe("MetricsRecorder", () => {
     now.mockRestore();
   });
 
+  test("records terminal ack statuses as terminal order facts", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-terminal-ack",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "bulk-beta-leaderboard",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordOrder({
+      action: "submit",
+      clientOrderId: "client-cancelled",
+      intent: "quote",
+      side: "sell",
+      orderType: "limit",
+      price: 101,
+      qty: 1,
+      timeInForce: "GTC",
+    });
+    await recorder.recordOrder({
+      action: "ack",
+      clientOrderId: "client-cancelled",
+      orderId: "venue-cancelled",
+      intent: "quote",
+      side: "sell",
+      orderType: "limit",
+      price: 101,
+      qty: 1,
+      timeInForce: "GTC",
+      status: "cancelled",
+      rawSummary: { status: "cancelled" },
+    });
+
+    expect(repository.orders.at(-1)).toMatchObject({
+      id: "run-terminal-ack:client-cancelled",
+      finalStatus: "canceled",
+      venueOrderId: "venue-cancelled",
+      rawJson: { status: "cancelled" },
+    });
+  });
+
   test("records quote diagnostics as account state observations", async () => {
     const repository = new MemoryMetricsRepository();
     const recorder = new MetricsRecorder(repository, {

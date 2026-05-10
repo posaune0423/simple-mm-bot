@@ -339,6 +339,7 @@ CREATE OR REPLACE VIEW v_fill_markouts AS
     WHERE next_s5.run_id = f.run_id
       AND next_s5.market = f.market
       AND next_s5.observed_at >= f.filled_at + 5000
+      AND next_s5.observed_at <= f.filled_at + 10000
     ORDER BY next_s5.observed_at ASC
     LIMIT 1
   ) s5 ON true
@@ -348,6 +349,7 @@ CREATE OR REPLACE VIEW v_fill_markouts AS
     WHERE next_s30.run_id = f.run_id
       AND next_s30.market = f.market
       AND next_s30.observed_at >= f.filled_at + 30000
+      AND next_s30.observed_at <= f.filled_at + 45000
     ORDER BY next_s30.observed_at ASC
     LIMIT 1
   ) s30 ON true
@@ -357,6 +359,7 @@ CREATE OR REPLACE VIEW v_fill_markouts AS
     WHERE next_s300.run_id = f.run_id
       AND next_s300.market = f.market
       AND next_s300.observed_at >= f.filled_at + 300000
+      AND next_s300.observed_at <= f.filled_at + 330000
     ORDER BY next_s300.observed_at ASC
     LIMIT 1
   ) s300 ON true;

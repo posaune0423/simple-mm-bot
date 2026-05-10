@@ -8,6 +8,7 @@ describe("planDesignIssues", () => {
       issueSignals: [
         "low_markout_coverage",
         "missing_sdk_fields",
+        "order_lifecycle_inconsistency",
         "stale_feed",
         "strategy_model_gap",
       ],
@@ -17,6 +18,7 @@ describe("planDesignIssues", () => {
 
     expect(issues.map((issue) => issue.label)).toEqual([
       "metrics-sdk-field-gap",
+      "metrics-runtime-health",
       "metrics-runtime-health",
       "metrics-strategy-design",
     ]);

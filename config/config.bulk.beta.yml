@@ -1,8 +1,8 @@
 # Bulk beta status:
 # - Faucet deposits 10,000 mock USD once per 24 hours per account.
-# - This preset uses passive GTC ladder quotes for leaderboard-oriented
-#   turnover while keeping inventory bounded. Bulk beta BTC-USD currently
-#   exposes GTC/IOC time in force, not ALO/post-only.
+# - This preset is a PnL-first guarded baseline. Do not scale notional solely
+#   for leaderboard volume unless live PnL and 5s/30s/300s markouts pass.
+# - Bulk beta BTC-USD currently exposes GTC/IOC time in force, not ALO/post-only.
 # - Use this for virtual trading only, not for real-capital mainnet.
 mode: live
 venue: bulk
@@ -14,49 +14,64 @@ connections:
     market: BTC-USD
     environment: beta
     nlevels: 20
-    # Bulk accounts may default to 50x. The bot verifies the account setting
-    # before live orders and fails closed if the UI/API leverage is higher.
-    maxLeverage: 10
+    # Give Bulk beta private endpoints more room during busy windows. The
+    # exchange may still return server-side 408s before this client timeout.
+    timeoutMs: 30000
+    # Bulk beta mock account currently reports 50x leverage. Position/risk caps
+    # remain bot-side; this avoids fail-closed startup during volume canaries.
+    maxLeverage: 50
 
 quoteEngine:
   markWeight: 0.25
-  inventoryScale: 0.08
+  inventoryScale: 0.22
   timeHorizonSec: 10
-  minSpreadBps: 3
+  minSpreadBps: 1.7
   slideMarginThreshold: 0.06
   defaultTimeInForce: GTC
   sizing:
-    positionSize: 1.25
-    budgetUsd: 14400
+    positionSize: 1.0
+    # 90k no-churn baseline: backtest PnL/vol was positive with 0 rejects, but
+    # the short live canary had 0 fills. This protects leaderboard PnL while
+    # the live volume model gap is fixed; it is not a validated $150M/14d preset.
+    budgetUsd: 90000
   levels:
-    - halfSpreadBps: 1.5
-      sizeUsd: 14400
+    - halfSpreadBps: 1.1
+      sizeUsd: 15000
+    - halfSpreadBps: 1.7
+      sizeUsd: 15000
+    - halfSpreadBps: 2.6
+      sizeUsd: 15000
+    - halfSpreadBps: 4.0
+      sizeUsd: 15000
+    - halfSpreadBps: 6.4
+      sizeUsd: 15000
+  qualityGate:
+    enabled: true
+    minAverageMarkoutBps: 0
+    minSamples: 20
+    lookbackFills: 100
+    horizonsSec: [5, 30, 300]
   strategy:
-    type: bulk-beta-leaderboard
+    type: avellaneda-stoikov
     params:
-      baseHalfSpreadBps: 2.5
-      minHalfSpreadBps: 1.2
-      maxHalfSpreadBps: 8
-      volatilitySpreadMultiplier: 1.5
-      inventorySoftLimitQty: 0.08
-      inventoryHardLimitQty: 0.18
-      sameSideSizeMultiplierAtSoft: 0.25
-      reduceSideSizeMultiplierAtSoft: 1.8
+      gamma: 0
+      kappa: 625
+      kInv: 2
 
 risk:
   imrBuffer: 0.06
   mmrBuffer: 0.03
-  maxPositionQty: 0.22
-  reduceTriggerQty: 0.18
-  reduceTargetQty: 0.08
-  maxUnrealizedLossUsd: 25
-  maxAdverseMoveBps: 20
+  maxPositionQty: 1.25
+  reduceTriggerQty: 1.05
+  reduceTargetQty: 0.25
+  maxUnrealizedLossUsd: 650
+  maxAdverseMoveBps: 220
 
 bot:
-  intervalMs: 1000
+  intervalMs: 150
 
 shutdown:
-  closePositionPolicy: emergency_only
+  closePositionPolicy: always
 
 paper:
   touchFillRatio: 1
@@ -64,5 +79,5 @@ paper:
 backtest:
   market: BTC-USD
   timeframe: 1m
-  from: "2026-05-06"
-  to: "2026-05-07"
+  from: 2026-05-08T18:17:03.708Z
+  to: 2026-05-09T18:17:03.708Z

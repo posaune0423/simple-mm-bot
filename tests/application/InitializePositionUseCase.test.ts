@@ -34,6 +34,41 @@ describe("InitializePositionUseCase", () => {
       unrealizedPnl: 0,
     });
   });
+
+  test("retries transient Bulk position reads before seeding", async () => {
+    const repository = new InMemoryPositionRepository();
+    const calls: string[] = [];
+    let attempts = 0;
+    const gateway = {
+      ...orderGateway(),
+      async getPosition() {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error("HTTP error 408"), {
+            name: "BulkHttpError",
+            status: 408,
+          });
+        }
+        return { qty: 0.2, avgEntry: 80_000, unrealizedPnl: 5 };
+      },
+    };
+
+    await new InitializePositionUseCase(gateway, repository, {
+      retryAttempts: 2,
+      retryDelayMs: 1,
+      sleep: async () => {
+        calls.push("sleep");
+      },
+    }).execute();
+
+    expect(attempts).toBe(2);
+    expect(calls).toEqual(["sleep"]);
+    expect(await repository.get()).toEqual({
+      qty: 0.2,
+      avgEntry: 80_000,
+      unrealizedPnl: 5,
+    });
+  });
 });
 
 function orderGateway(position?: Position): IOrderGateway {

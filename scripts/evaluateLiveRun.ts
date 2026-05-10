@@ -44,13 +44,35 @@ interface PerformanceRow {
   min_margin_ratio: number | null;
 }
 
+interface RunMetadataRow {
+  config_json: string;
+  git_sha: string | null;
+  git_dirty: number | boolean;
+  stop_reason: string | null;
+}
+
 interface FreshnessRow {
   staleness_ms: number | null;
 }
 
 interface MarkoutSummaryRow {
+  avg_markout_5s_bps: number | null;
   avg_markout_30s_bps: number | null;
   avg_markout_300s_bps: number | null;
+  vw_markout_5s_bps: number | null;
+  vw_markout_30s_bps: number | null;
+  vw_markout_300s_bps: number | null;
+  markout_5s_count: number;
+  markout_30s_count: number;
+  markout_300s_count: number;
+  fill_count: number;
+  adverse_selection_rate_5s: number | null;
+  adverse_selection_rate_30s: number | null;
+  adverse_selection_rate_300s: number | null;
+}
+
+interface FillMixRow {
+  maker_ratio: number | null;
 }
 
 interface OrderDiagnosticsRow {
@@ -101,6 +123,11 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
     if (row === null) {
       throw new Error(`Metrics run not found: ${runId}`);
     }
+    const runMetadata = db
+      .query<RunMetadataRow, [string]>(
+        "SELECT config_json, git_sha, git_dirty, stop_reason FROM trading_runs WHERE id = ?",
+      )
+      .get(runId);
     const freshness = db
       .query<FreshnessRow, [string]>(
         `
@@ -122,9 +149,31 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
       .query<MarkoutSummaryRow, [string]>(
         `
           SELECT
-            AVG(markout_30s_bps) AS avg_markout_30s_bps,
-            AVG(markout_300s_bps) AS avg_markout_300s_bps
-          FROM v_fill_markouts
+            AVG(m.markout_5s_bps) AS avg_markout_5s_bps,
+            AVG(m.markout_30s_bps) AS avg_markout_30s_bps,
+            AVG(m.markout_300s_bps) AS avg_markout_300s_bps,
+            SUM(m.markout_5s_bps * f.price * f.quantity) / NULLIF(SUM(CASE WHEN m.markout_5s_bps IS NOT NULL THEN f.price * f.quantity ELSE 0 END), 0) AS vw_markout_5s_bps,
+            SUM(m.markout_30s_bps * f.price * f.quantity) / NULLIF(SUM(CASE WHEN m.markout_30s_bps IS NOT NULL THEN f.price * f.quantity ELSE 0 END), 0) AS vw_markout_30s_bps,
+            SUM(m.markout_300s_bps * f.price * f.quantity) / NULLIF(SUM(CASE WHEN m.markout_300s_bps IS NOT NULL THEN f.price * f.quantity ELSE 0 END), 0) AS vw_markout_300s_bps,
+            COUNT(m.markout_5s_bps) AS markout_5s_count,
+            COUNT(m.markout_30s_bps) AS markout_30s_count,
+            COUNT(m.markout_300s_bps) AS markout_300s_count,
+            COUNT(*) AS fill_count,
+            AVG(CASE WHEN m.markout_5s_bps IS NULL THEN NULL WHEN m.markout_5s_bps < 0 THEN 1 ELSE 0 END) AS adverse_selection_rate_5s,
+            AVG(CASE WHEN m.markout_30s_bps IS NULL THEN NULL WHEN m.markout_30s_bps < 0 THEN 1 ELSE 0 END) AS adverse_selection_rate_30s,
+            AVG(CASE WHEN m.markout_300s_bps IS NULL THEN NULL WHEN m.markout_300s_bps < 0 THEN 1 ELSE 0 END) AS adverse_selection_rate_300s
+          FROM v_fill_markouts m
+          JOIN trade_fills f ON f.id = m.fill_id
+          WHERE m.run_id = ?
+        `,
+      )
+      .get(runId);
+    const fillMix = db
+      .query<FillMixRow, [string]>(
+        `
+          SELECT
+            SUM(CASE WHEN maker_taker = 'maker' THEN 1 ELSE 0 END) * 1.0 / NULLIF(COUNT(*), 0) AS maker_ratio
+          FROM trade_fills
           WHERE run_id = ?
         `,
       )
@@ -237,15 +286,23 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
       market: row.market,
       capitalMode: row.capital_mode,
       strategyName: row.strategy_name,
-      configJson: {},
-      gitDirty: false,
+      configJson: parseConfigJson(runMetadata?.config_json),
+      gitSha: runMetadata?.git_sha ?? undefined,
+      gitDirty: Boolean(runMetadata?.git_dirty ?? false),
       startedAt: row.started_at,
       endedAt: row.ended_at ?? undefined,
       status: row.status,
+      stopReason: runMetadata?.stop_reason ?? undefined,
     };
+    const markoutTotal = markoutSummary?.fill_count ?? fillCount;
     const evaluation = evaluateMetricsRun({
       fillCount,
-      markoutCoverage: row.markout_5s_coverage ?? 0,
+      markoutCoverage: coverage(markoutSummary?.markout_5s_count ?? 0, markoutTotal),
+      markoutCoverageByHorizon: {
+        "5s": horizonCoverage(markoutSummary?.markout_5s_count ?? 0, markoutTotal),
+        "30s": horizonCoverage(markoutSummary?.markout_30s_count ?? 0, markoutTotal),
+        "300s": horizonCoverage(markoutSummary?.markout_300s_count ?? 0, markoutTotal),
+      },
       snapshotFreshnessMs: freshness?.staleness_ms ?? null,
       notionalUsd: row.notional ?? 0,
       windowDays: evaluationWindowDays(row.started_at, row.ended_at),
@@ -255,11 +312,19 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
       pnlPerNotional: row.pnl_per_notional ?? 0,
       pnlPerVolumeBps: (row.pnl_per_notional ?? 0) * 10_000,
       maxDrawdown: row.max_drawdown ?? 0,
-      avg5sMarkoutBps: row.avg_markout_5s_bps ?? 0,
-      avg30sMarkoutBps: markoutSummary?.avg_markout_30s_bps ?? 0,
-      avg300sMarkoutBps: markoutSummary?.avg_markout_300s_bps ?? 0,
+      avg5sMarkoutBps: markoutSummary?.avg_markout_5s_bps ?? row.avg_markout_5s_bps ?? 0,
+      avg30sMarkoutBps: markoutSummary?.avg_markout_30s_bps ?? null,
+      avg300sMarkoutBps: markoutSummary?.avg_markout_300s_bps ?? null,
+      vw5sMarkoutBps: markoutSummary?.vw_markout_5s_bps ?? null,
+      vw30sMarkoutBps: markoutSummary?.vw_markout_30s_bps ?? null,
+      vw300sMarkoutBps: markoutSummary?.vw_markout_300s_bps ?? null,
       markout30sTailBps: tail(markout30s),
-      adverseSelectionRate: row.adverse_selection_rate_5s ?? 0,
+      adverseSelectionRate:
+        markoutSummary?.adverse_selection_rate_5s ?? row.adverse_selection_rate_5s ?? 0,
+      adverseSelectionRate5s:
+        markoutSummary?.adverse_selection_rate_5s ?? row.adverse_selection_rate_5s ?? 0,
+      adverseSelectionRate30s: markoutSummary?.adverse_selection_rate_30s ?? null,
+      adverseSelectionRate300s: markoutSummary?.adverse_selection_rate_300s ?? null,
       spreadCaptureBps: orderDiagnostics?.quoted_spread_bps ?? 0,
       realizedSpreadBps: orderDiagnostics?.realized_spread_bps ?? 0,
       sideImbalance: orderDiagnostics?.side_imbalance ?? 0,
@@ -269,11 +334,13 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
       rejectRate: row.reject_rate ?? 0,
       cancelRate: row.cancel_rate ?? 0,
       cancelBeforeFillRate: row.cancel_before_fill_rate ?? 0,
+      makerRatio: fillMix?.maker_ratio ?? 0,
       avgLatencyMs: row.avg_latency_ms ?? 0,
       avgOrderLiveMs: row.avg_live_ms ?? undefined,
       avgQuoteDistanceToMidBps: quoteCompetitiveness?.avg_distance_to_mid_bps ?? 0,
       avgQuoteDistanceToBestBps: quoteCompetitiveness?.avg_distance_to_best_bps ?? 0,
       positionSkew: row.avg_position ?? 0,
+      issueSignals: row.status === "failed" ? ["order_lifecycle_inconsistency"] : [],
     });
     return { run, evaluation };
   } finally {
@@ -286,6 +353,18 @@ function evaluationWindowDays(startedAt: number, endedAt: number | null): number
   return Math.max((end - startedAt) / 86_400_000, 1 / 1_440);
 }
 
+function horizonCoverage(observed: number, total: number) {
+  return {
+    observed,
+    total,
+    coverage: coverage(observed, total),
+  };
+}
+
+function coverage(observed: number, total: number): number {
+  return total > 0 ? observed / total : 0;
+}
+
 function tail(values: number[]): { p10: number; p5: number; worst: number } {
   if (values.length === 0) {
     return { p10: 0, p5: 0, worst: 0 };
@@ -295,6 +374,17 @@ function tail(values: number[]): { p10: number; p5: number; worst: number } {
     p5: percentileSorted(values, 0.05),
     worst: values[0] ?? 0,
   };
+}
+
+function parseConfigJson(configJson: string | undefined): unknown {
+  if (configJson === undefined) {
+    return {};
+  }
+  try {
+    return JSON.parse(configJson);
+  } catch {
+    return {};
+  }
 }
 
 function percentileSorted(values: number[], percentile: number): number {

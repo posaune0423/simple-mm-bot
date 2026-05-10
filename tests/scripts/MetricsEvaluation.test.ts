@@ -38,8 +38,13 @@ describe("evaluateMetricsRun", () => {
       avg5sMarkoutBps: 25,
       avg30sMarkoutBps: 12,
       avg300sMarkoutBps: 3,
+      vw5sMarkoutBps: 15,
+      vw30sMarkoutBps: 9,
+      vw300sMarkoutBps: 1,
       markout30sTailBps: { p10: -12, p5: -20, worst: -30 },
       adverseSelectionRate: 0.5,
+      adverseSelectionRate30s: 0.25,
+      adverseSelectionRate300s: 0.125,
       spreadCaptureBps: 35,
       realizedSpreadBps: 18,
       sideImbalance: 0.25,
@@ -66,14 +71,21 @@ describe("evaluateMetricsRun", () => {
     expect(result.markouts.avg5sBps).toBe(25);
     expect(result.markouts.avg30sBps).toBe(12);
     expect(result.markouts.avg300sBps).toBe(3);
+    expect(result.markouts.vw5sBps).toBe(15);
+    expect(result.markouts.vw30sBps).toBe(9);
+    expect(result.markouts.vw300sBps).toBe(1);
     expect(result.markouts.tail30sBps).toEqual({ p10: -12, p5: -20, worst: -30 });
     expect(result.markouts.adverseSelectionRate).toBe(0.5);
+    expect(result.markouts.adverseSelectionRate5s).toBe(0.5);
+    expect(result.markouts.adverseSelectionRate30s).toBe(0.25);
+    expect(result.markouts.adverseSelectionRate300s).toBe(0.125);
     expect(result.markouts.spreadCaptureBps).toBe(35);
     expect(result.markouts.realizedSpreadBps).toBe(18);
     expect(result.orderQuality.sideImbalance).toBe(0.25);
     expect(result.orderQuality.fillRate).toBe(0.5);
     expect(result.orderQuality.rejectRate).toBe(0.5);
     expect(result.orderQuality.cancelBeforeFillRate).toBe(0.2);
+    expect(result.orderQuality.makerRatio).toBe(0.75);
     expect(result.orderQuality.avgLatencyMs).toBe(37.5);
     expect(result.orderQuality.avgLiveMs).toBe(850);
     expect(result.market.avgSpreadBps).toBe(7);
@@ -213,6 +225,9 @@ describe("evaluateMetricsRun", () => {
     });
 
     expect(result.volume.projected14dUsd).toBeCloseTo(64_099_785.4);
+    expect(result.volume.required14dUsd).toBe(150_000_000);
+    expect(result.volume.requiredMultiplier).toBeCloseTo(2.3401, 4);
+    expect(result.volume.projectedShortfallUsd).toBeCloseTo(85_900_214.6);
     expect(result.passFail.volumeRequiredPace).toBe(false);
     expect(result.passFail.volumeBalancedPace).toBe(false);
     expect(result.passFail.sizeIncreaseAllowed).toBe(false);

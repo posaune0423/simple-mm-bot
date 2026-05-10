@@ -87,4 +87,193 @@ describe("OrderManager", () => {
     expect(secondActive).toHaveLength(0);
     expect(placeCount).toBe(2);
   });
+
+  test("skips a failed quote placement while waiting for other placements", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        if (order.clientOrderId === "bad") {
+          throw new Error("Bulk BTC-USD order notional is below minimum");
+        }
+        await Bun.sleep(1);
+        calls.push(`placed:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway);
+    const active = await manager.reconcile([
+      quoteOrder({ key: "bad", clientOrderId: "bad", qty: 0.000001 }),
+      quoteOrder({ key: "good", clientOrderId: "good", side: "sell", price: 101 }),
+    ]);
+
+    expect(active.map((entry) => entry.key)).toEqual(["good"]);
+    expect(calls).toEqual(["place:bad", "place:good", "placed:good"]);
+  });
+
+  test("delays new quote placements after tracked exchange orders disappear", async () => {
+    const calls: string[] = [];
+    let nowMs = 1_000;
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      async getOpenOrders() {
+        return [];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway, {
+      exchangeDropQuoteCooldownMs: 1_500,
+      nowMs: () => nowMs,
+    });
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-1" })]);
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-2" })]);
+    nowMs = 2_501;
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-3" })]);
+
+    expect(calls).toEqual(["place:quote-1", "place:quote-3"]);
+  });
+
+  test("does not delay reduce placements after tracked exchange orders disappear", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      async getOpenOrders() {
+        return [];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway);
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-1" })]);
+    await manager.reconcile([
+      quoteOrder({
+        clientOrderId: "reduce-1",
+        intent: "reduce",
+        side: "sell",
+        reduceOnly: true,
+      }),
+    ]);
+
+    expect(calls).toEqual(["place:quote-1", "place:reduce-1"]);
+  });
+
+  test("cancels exchange open orders that are not tracked locally", async () => {
+    const calls: string[] = [];
+    let syncCount = 0;
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      async getOpenOrders() {
+        syncCount += 1;
+        if (syncCount === 1) {
+          return [];
+        }
+        return [
+          {
+            id: "quote-1",
+            market: "BTC-USD",
+            side: "buy",
+            price: 100,
+            qty: 1,
+            reduceOnly: false,
+            timeInForce: "GTC",
+            status: "open",
+          },
+          {
+            id: "orphan",
+            market: "BTC-USD",
+            side: "sell",
+            price: 101,
+            qty: 1,
+            reduceOnly: false,
+            timeInForce: "GTC",
+            status: "open",
+          },
+        ];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway);
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-1" })]);
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-2" })]);
+
+    expect(calls).toEqual(["place:quote-1", "cancel:orphan"]);
+  });
+
+  test("keeps orders when price drift is below 0.8 bps and size drift is below 15 percent", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway);
+    await manager.reconcile([quoteOrder({ price: 100, qty: 1, clientOrderId: "quote-1" })]);
+    await manager.reconcile([quoteOrder({ price: 100.007, qty: 1.14, clientOrderId: "quote-2" })]);
+
+    expect(calls).toEqual(["place:quote-1"]);
+  });
 });

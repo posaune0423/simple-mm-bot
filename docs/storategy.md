@@ -1,6 +1,6 @@
 # Strategy
 
-この文書は現在の market making strategy の実装仕様をまとめる。コード上の primary path は Bulk Trade `BTC-USD` の live / paper 実行で、strategy は YAML の `quoteEngine.strategy.type` で切り替える。Bulk beta live は `bulk-beta-leaderboard`、paper/mainnet/backtest の既存 preset は `AvellanedaStoikovStrategy` を使う。
+この文書は現在の market making strategy の実装仕様をまとめる。コード上の primary path は Bulk Trade `BTC-USD` の live / paper 実行で、YAML の `quoteEngine.strategy.type` は `avellaneda-stoikov` を使う。ladder は別 strategy ではなく `quoteEngine.levels` で A-S quote を展開する。
 
 > ファイル名は現状の依頼に合わせて `storategy.md` とする。
 
@@ -227,26 +227,26 @@ defaultTimeInForce = GTC
 
 `config/config.bulk.beta.yml` の current strategy parameters。
 
-| Group    | Parameter               |                   Value | Meaning                       |
-| -------- | ----------------------- | ----------------------: | ----------------------------- |
-| market   | `market`                |               `BTC-USD` | Bulk target market            |
-| env      | `environment`           |                  `beta` | mock-capital Bulk environment |
-| loop     | `intervalMs`            |                  `1000` | tick interval                 |
-| venue    | `maxLeverage`           |                    `10` | Bulk account leverage guard   |
-| fair     | `markWeight`            |                  `0.25` | mark-price fair weight        |
-| sizing   | `positionSize`          |                  `1.25` | fallback max quote size BTC   |
-| sizing   | `budgetUsd`             |                  `9600` | fallback per-order budget cap |
-| ladder   | `halfSpreadBps`         |                   `1.5` | level half-spread             |
-| ladder   | `sizeUsd`               |                 `14400` | level notional                |
-| engine   | `minSpreadBps`          |                     `3` | minimum full quote width      |
-| strategy | `type`                  | `bulk-beta-leaderboard` | Bulk beta live strategy       |
-| strategy | `baseHalfSpreadBps`     |                   `2.5` | base half spread              |
-| strategy | `inventorySoftLimitQty` |                  `0.08` | inventory soft limit          |
-| strategy | `inventoryHardLimitQty` |                  `0.18` | inventory hard limit          |
-| risk     | `maxPositionQty`        |                   `0.3` | inventory reduction threshold |
-| risk     | `imrBuffer`             |                  `0.06` | pause quoting threshold       |
-| risk     | `mmrBuffer`             |                  `0.03` | emergency stop threshold      |
-| policy   | `defaultTimeInForce`    |                   `GTC` | normal quote policy           |
+| Group    | Parameter            |                Value | Meaning                       |
+| -------- | -------------------- | -------------------: | ----------------------------- |
+| market   | `market`             |            `BTC-USD` | Bulk target market            |
+| env      | `environment`        |               `beta` | mock-capital Bulk environment |
+| loop     | `intervalMs`         |               `1000` | tick interval                 |
+| venue    | `maxLeverage`        |                 `10` | Bulk account leverage guard   |
+| fair     | `markWeight`         |               `0.25` | mark-price fair weight        |
+| sizing   | `positionSize`       |               `1.25` | fallback max quote size BTC   |
+| sizing   | `budgetUsd`          |               `9600` | fallback per-order budget cap |
+| ladder   | `halfSpreadBps`      |                `1.5` | level half-spread             |
+| ladder   | `sizeUsd`            |              `14400` | level notional                |
+| engine   | `minSpreadBps`       |                  `3` | minimum full quote width      |
+| strategy | `type`               | `avellaneda-stoikov` | base quote model              |
+| strategy | `gamma`              |                  `0` | A-S risk aversion             |
+| strategy | `kappa`              |                `625` | A-S fill intensity            |
+| strategy | `kInv`               |                  `2` | inventory skew                |
+| risk     | `maxPositionQty`     |                `0.3` | inventory reduction threshold |
+| risk     | `imrBuffer`          |               `0.06` | pause quoting threshold       |
+| risk     | `mmrBuffer`          |               `0.03` | emergency stop threshold      |
+| policy   | `defaultTimeInForce` |                `GTC` | normal quote policy           |
 
 ## Inventory Reduction
 

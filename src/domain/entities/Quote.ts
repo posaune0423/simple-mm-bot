@@ -11,6 +11,8 @@ export interface QuoteLevel {
   askSize: number;
   bidIntent?: QuoteSideIntent;
   askIntent?: QuoteSideIntent;
+  bidControlReasons?: string[];
+  askControlReasons?: string[];
 }
 
 export interface Quote {
@@ -22,6 +24,10 @@ export interface Quote {
   askIntent?: QuoteSideIntent;
   bidSizeMultiplier?: number;
   askSizeMultiplier?: number;
+  bidDistanceMultiplier?: number;
+  askDistanceMultiplier?: number;
+  bidControlReasons?: string[];
+  askControlReasons?: string[];
   levels?: QuoteLevel[];
   policy: OrderTimeInForce;
   fairPrice: number;

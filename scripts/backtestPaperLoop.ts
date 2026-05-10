@@ -113,7 +113,11 @@ function buildBot(
   );
 }
 
-function loadLatestRunReport(dbPath: string, mode: "paper" | "backtest"): LoopRunReport {
+function loadLatestRunReport(
+  dbPath: string,
+  mode: "paper" | "backtest",
+  windowDays: number,
+): LoopRunReport {
   const client = createSqliteClient(dbPath);
   try {
     const row = client.sqlite
@@ -194,6 +198,8 @@ function loadLatestRunReport(dbPath: string, mode: "paper" | "backtest"): LoopRu
     const evaluation = evaluateMetricsRun({
       fillCount: row.fill_count,
       markoutCoverage: row.fill_count > 0 ? 1 : 0,
+      notionalUsd: row.notional,
+      windowDays,
       netPnl: row.net_pnl,
       tradePnl: row.trade_pnl,
       fee: row.fee,
@@ -227,14 +233,18 @@ export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppErr
     .andThen(() => buildBot(backtestConfigPath, "backtest", dbPath, { from, to }))
     .andThen((bot) =>
       ResultAsync.fromPromise(
-        bot.start().then(() => loadLatestRunReport(dbPath, "backtest")),
+        bot
+          .start()
+          .then(() => loadLatestRunReport(dbPath, "backtest", windowDaysBetween(from, to))),
         (error) => createAppError("loop.backtest_failed", "Backtest execution failed", error),
       ),
     )
     .andThen((backtestReport) =>
       buildBot(paperConfigPath, "paper", dbPath).andThen((bot) =>
         ResultAsync.fromPromise(
-          bot.start(paperTicks).then(() => loadLatestRunReport(dbPath, "paper")),
+          bot
+            .start(paperTicks)
+            .then(() => loadLatestRunReport(dbPath, "paper", paperDurationMin / 60 / 24)),
           (error) => createAppError("loop.paper_failed", "Paper execution failed", error),
         ).map((paperReport) => ({ backtestReport, paperReport })),
       ),
@@ -275,6 +285,11 @@ export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppErr
               `- Paper action: ${summary.recommendation.paper}`,
               `- Backtest netPnl: ${backtestMetrics.netPnl}`,
               `- Paper netPnl: ${paperMetrics.netPnl}`,
+              `- Backtest projected 14d volume: ${formatNullableNumber(backtestReport.evaluation.volume.projected14dUsd)}`,
+              `- Paper projected 14d volume: ${formatNullableNumber(paperReport.evaluation.volume.projected14dUsd)}`,
+              `- Required 14d volume: ${backtestReport.evaluation.volume.required14dUsd}`,
+              `- Required hourly volume: ${backtestReport.evaluation.volume.requiredDailyUsd / 24}`,
+              `- Required minute volume: ${backtestReport.evaluation.volume.requiredDailyUsd / 24 / 60}`,
               `- DB path: ${dbPath}`,
               `- Output dir: ${outputDir}`,
             ].join("\n"),
@@ -315,6 +330,19 @@ async function writeLoopConfigSnapshot(
     );
   }
   await Promise.all(writes);
+}
+
+function formatNullableNumber(value: number | null): string {
+  return value === null ? "n/a" : String(value);
+}
+
+function windowDaysBetween(from: string, to: string): number {
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+    return 1;
+  }
+  return (toMs - fromMs) / 86_400_000;
 }
 
 if (import.meta.main) {

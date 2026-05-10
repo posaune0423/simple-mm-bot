@@ -14,6 +14,7 @@ import { QuoteEngine } from "../domain/QuoteEngine.ts";
 import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
+import type { IQuoteQualityRepository } from "../domain/ports/IQuoteQualityRepository.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
 import type { CapitalMode } from "../infrastructure/Metrics.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
@@ -41,6 +42,7 @@ import { UpdatePositionOnFillUseCase } from "./usecases/UpdatePositionOnFillUseC
 interface Repositories {
   ohlcvRepository: IOhlcvRepository;
   metricsRepository: IMetricsRepository;
+  quoteQualityRepository?: IQuoteQualityRepository;
 }
 
 interface ResolvedAdapters {
@@ -66,9 +68,15 @@ export class DIContainer {
           positionRepository,
           quoteEngine,
           metrics,
+          repositories.quoteQualityRepository,
+          this.config.quoteEngine.qualityGate,
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
-        initializePosition: new InitializePositionUseCase(gateway, positionRepository),
+        initializePosition: new InitializePositionUseCase(
+          gateway,
+          positionRepository,
+          bulkLiveStartupRetryOptions(this.config),
+        ),
         updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
         recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
         reduceInventory: new ReduceInventoryUseCase(
@@ -113,6 +121,12 @@ export class DIContainer {
         defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
         budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
+        bidSizeMultiplier: this.config.quoteEngine.sizing.bidSizeMultiplier,
+        askSizeMultiplier: this.config.quoteEngine.sizing.askSizeMultiplier,
+        bidDistanceMultiplier: this.config.quoteEngine.sizing.bidDistanceMultiplier,
+        askDistanceMultiplier: this.config.quoteEngine.sizing.askDistanceMultiplier,
+        maxLeverage:
+          this.config.venue === "bulk" ? this.config.connections.bulk.maxLeverage : undefined,
         levels: this.config.quoteEngine.levels,
       },
     );
@@ -129,9 +143,11 @@ export class DIContainer {
     }
 
     const client = createSqliteClient(Bun.env.DB_PATH ?? env.DB_PATH);
+    const metricsRepository = new SqliteMetricsRepository(client.db);
     return {
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
-      metricsRepository: new SqliteMetricsRepository(client.db),
+      metricsRepository,
+      quoteQualityRepository: metricsRepository,
     };
   }
 
@@ -205,6 +221,7 @@ export class DIContainer {
       httpUrl: bulk.httpUrl,
       wsUrl: bulk.wsUrl,
       privateKey: bulk.privateKey,
+      timeoutMs: bulk.timeoutMs,
     });
     const accountId = client.accountPublicKey;
 
@@ -225,6 +242,7 @@ export class DIContainer {
       market: bulk.market,
       nlevels: bulk.nlevels,
       accountId,
+      ...bulkLiveStartupRetryOptions(config),
     });
 
     if (mode === "paper") {
@@ -245,6 +263,7 @@ export class DIContainer {
         accountId,
         maxLeverage: bulk.maxLeverage,
         pollIntervalMs: 1000,
+        ignoreFillsBeforeMs: Date.now(),
       }),
     };
   }
@@ -274,6 +293,23 @@ export function resolveCapitalMode(config: AppConfig): CapitalMode {
     return "beta_mock";
   }
   return "real";
+}
+
+function bulkLiveStartupRetryOptions(config: AppConfig): {
+  retryAttempts?: number;
+  retryDelayMs?: number;
+  accountRetryAttempts?: number;
+  accountRetryDelayMs?: number;
+} {
+  if (config.venue !== "bulk" || config.mode !== "live") {
+    return {};
+  }
+  return {
+    retryAttempts: 6,
+    retryDelayMs: 1_000,
+    accountRetryAttempts: 6,
+    accountRetryDelayMs: 1_000,
+  };
 }
 
 function redactConfig(config: AppConfig): unknown {

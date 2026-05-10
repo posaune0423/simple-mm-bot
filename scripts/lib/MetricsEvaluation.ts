@@ -1,6 +1,7 @@
 export interface MetricsEvaluationInput {
   fillCount: number;
   markoutCoverage: number;
+  markoutCoverageByHorizon?: MarkoutCoverageByHorizon;
   rawFieldCoverage?: number;
   snapshotFreshnessMs?: number | null;
   notionalUsd?: number;
@@ -14,10 +15,16 @@ export interface MetricsEvaluationInput {
   pnlPerVolumeBps?: number;
   maxDrawdown: number;
   avg5sMarkoutBps: number;
-  avg30sMarkoutBps?: number;
-  avg300sMarkoutBps?: number;
+  avg30sMarkoutBps?: number | null;
+  avg300sMarkoutBps?: number | null;
+  vw5sMarkoutBps?: number | null;
+  vw30sMarkoutBps?: number | null;
+  vw300sMarkoutBps?: number | null;
   markout30sTailBps?: MarkoutTailBps;
   adverseSelectionRate: number;
+  adverseSelectionRate5s?: number | null;
+  adverseSelectionRate30s?: number | null;
+  adverseSelectionRate300s?: number | null;
   spreadCaptureBps?: number;
   realizedSpreadBps?: number;
   sideImbalance?: number;
@@ -47,6 +54,18 @@ export interface MarkoutTailBps {
   worst: number;
 }
 
+export interface MarkoutCoverage {
+  observed: number;
+  total: number;
+  coverage: number;
+}
+
+export interface MarkoutCoverageByHorizon {
+  "5s": MarkoutCoverage;
+  "30s": MarkoutCoverage;
+  "300s": MarkoutCoverage;
+}
+
 type ParameterAction =
   | "hold"
   | "blocked_by_data_health"
@@ -59,6 +78,7 @@ export interface MetricsEvaluation {
   dataHealth: {
     fillCount: number;
     markoutCoverage: number;
+    markoutCoverageByHorizon: MarkoutCoverageByHorizon;
     rawFieldCoverage: number;
     snapshotFreshnessMs: number | null;
   };
@@ -72,10 +92,16 @@ export interface MetricsEvaluation {
   };
   markouts: {
     avg5sBps: number;
-    avg30sBps: number;
-    avg300sBps: number;
+    avg30sBps: number | null;
+    avg300sBps: number | null;
+    vw5sBps: number | null;
+    vw30sBps: number | null;
+    vw300sBps: number | null;
     tail30sBps: MarkoutTailBps;
     adverseSelectionRate: number;
+    adverseSelectionRate5s: number;
+    adverseSelectionRate30s: number | null;
+    adverseSelectionRate300s: number | null;
     spreadCaptureBps: number;
     realizedSpreadBps: number;
   };
@@ -116,8 +142,12 @@ export interface MetricsEvaluation {
   volume: {
     notionalUsd: number | null;
     projected14dUsd: number | null;
+    projectedShortfallUsd: number | null;
+    requiredMultiplier: number | null;
     requiredDailyUsd: number;
     balancedDailyUsd: number;
+    required14dUsd: number;
+    balanced14dUsd: number;
   };
   verdict: "pass" | "review";
   parameterAction: ParameterAction;
@@ -128,12 +158,14 @@ export interface MetricsEvaluation {
 export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvaluation {
   const minFillCount = input.minFillCount ?? 3;
   const minMarkoutCoverage = input.minMarkoutCoverage ?? 0.8;
+  const markoutCoverageByHorizon = normalizedMarkoutCoverage(input);
   const tuningAllowed =
     input.fillCount >= minFillCount && input.markoutCoverage >= minMarkoutCoverage;
   return {
     dataHealth: {
       fillCount: input.fillCount,
       markoutCoverage: input.markoutCoverage,
+      markoutCoverageByHorizon,
       rawFieldCoverage: input.rawFieldCoverage ?? 1,
       snapshotFreshnessMs: input.snapshotFreshnessMs ?? null,
     },
@@ -147,10 +179,16 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
     },
     markouts: {
       avg5sBps: input.avg5sMarkoutBps,
-      avg30sBps: input.avg30sMarkoutBps ?? 0,
-      avg300sBps: input.avg300sMarkoutBps ?? 0,
+      avg30sBps: input.avg30sMarkoutBps ?? null,
+      avg300sBps: input.avg300sMarkoutBps ?? null,
+      vw5sBps: input.vw5sMarkoutBps ?? null,
+      vw30sBps: input.vw30sMarkoutBps ?? null,
+      vw300sBps: input.vw300sMarkoutBps ?? null,
       tail30sBps: input.markout30sTailBps ?? { p10: 0, p5: 0, worst: 0 },
       adverseSelectionRate: input.adverseSelectionRate,
+      adverseSelectionRate5s: input.adverseSelectionRate5s ?? input.adverseSelectionRate,
+      adverseSelectionRate30s: input.adverseSelectionRate30s ?? null,
+      adverseSelectionRate300s: input.adverseSelectionRate300s ?? null,
       spreadCaptureBps: input.spreadCaptureBps ?? 0,
       realizedSpreadBps: input.realizedSpreadBps ?? 0,
     },
@@ -189,13 +227,13 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
 
 function passFailFor(input: MetricsEvaluationInput): MetricsEvaluation["passFail"] {
   const pnlPerVolumeBps = input.pnlPerVolumeBps ?? input.pnlPerNotional * 10_000;
-  const avgMarkout30s = input.avg30sMarkoutBps ?? 0;
+  const avgMarkout30s = input.avg30sMarkoutBps;
   const tail = input.markout30sTailBps ?? { p10: 0, p5: 0, worst: 0 };
   const volume = volumeFor(input);
   return {
     netPnl: input.netPnl >= 0,
     pnlPerVolumeBps: pnlPerVolumeBps >= 5,
-    avgMarkout30s: avgMarkout30s >= -5,
+    avgMarkout30s: avgMarkout30s !== null && avgMarkout30s !== undefined && avgMarkout30s >= 0,
     markoutTail: tail.p10 >= -150,
     sideImbalance: Math.abs(input.sideImbalance ?? 0) < 0.7,
     volumeRequiredPace:
@@ -262,6 +300,13 @@ function issueSignalsFor(
   if (input.markoutCoverage < minMarkoutCoverage) {
     signals.add("low_markout_coverage");
   }
+  const coverage = normalizedMarkoutCoverage(input);
+  if (coverage["30s"].coverage < minMarkoutCoverage) {
+    signals.add("low_markout_30s_coverage");
+  }
+  if (coverage["300s"].coverage < minMarkoutCoverage) {
+    signals.add("low_markout_300s_coverage");
+  }
   if ((input.cancelBeforeFillRate ?? input.cancelRate) >= 0.8) {
     signals.add("high_cancel_churn");
   }
@@ -294,23 +339,51 @@ function issueSignalsFor(
   return [...signals];
 }
 
+function normalizedMarkoutCoverage(input: MetricsEvaluationInput): MarkoutCoverageByHorizon {
+  if (input.markoutCoverageByHorizon !== undefined) {
+    return input.markoutCoverageByHorizon;
+  }
+  const observed = Math.round(input.fillCount * input.markoutCoverage);
+  const fallback = {
+    observed,
+    total: input.fillCount,
+    coverage: input.markoutCoverage,
+  };
+  return {
+    "5s": fallback,
+    "30s": fallback,
+    "300s": fallback,
+  };
+}
+
 function volumeFor(input: MetricsEvaluationInput): MetricsEvaluation["volume"] {
-  const requiredDailyUsd = inputRequired14dVolume(input) / 14;
-  const balancedDailyUsd = inputBalanced14dVolume(input) / 14;
+  const required14dUsd = inputRequired14dVolume(input);
+  const balanced14dUsd = inputBalanced14dVolume(input);
+  const requiredDailyUsd = required14dUsd / 14;
+  const balancedDailyUsd = balanced14dUsd / 14;
   if (input.notionalUsd === undefined || input.windowDays === undefined || input.windowDays <= 0) {
     return {
       notionalUsd: input.notionalUsd ?? null,
       projected14dUsd: null,
+      projectedShortfallUsd: null,
+      requiredMultiplier: null,
       requiredDailyUsd,
       balancedDailyUsd,
+      required14dUsd,
+      balanced14dUsd,
     };
   }
+  const projected14dUsd = (input.notionalUsd / input.windowDays) * 14;
 
   return {
     notionalUsd: input.notionalUsd,
-    projected14dUsd: (input.notionalUsd / input.windowDays) * 14,
+    projected14dUsd,
+    projectedShortfallUsd: Math.max(0, required14dUsd - projected14dUsd),
+    requiredMultiplier: projected14dUsd > 0 ? required14dUsd / projected14dUsd : null,
     requiredDailyUsd,
     balancedDailyUsd,
+    required14dUsd,
+    balanced14dUsd,
   };
 }
 

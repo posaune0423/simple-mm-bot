@@ -29,17 +29,18 @@ quoteEngine:
   levels:
     - halfSpreadBps: 1.5
       sizeUsd: 14400
+  qualityGate:
+    enabled: true
+    minAverageMarkoutBps: 0
+    minSamples: 20
+    lookbackFills: 100
+    horizonsSec: [5, 30, 300]
   strategy:
-    type: bulk-beta-leaderboard
+    type: avellaneda-stoikov
     params:
-      baseHalfSpreadBps: 2.5
-      minHalfSpreadBps: 1.2
-      maxHalfSpreadBps: 8
-      volatilitySpreadMultiplier: 1.5
-      inventorySoftLimitQty: 0.08
-      inventoryHardLimitQty: 0.18
-      sameSideSizeMultiplierAtSoft: 0.25
-      reduceSideSizeMultiplierAtSoft: 1.8
+      gamma: 0
+      kappa: 625
+      kInv: 2
 
 risk:
   imrBuffer: 0.06

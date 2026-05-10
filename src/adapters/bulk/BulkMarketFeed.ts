@@ -6,6 +6,7 @@ import type {
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
 import { logger } from "../../utils/logger.ts";
+import { retryTransientBulk } from "../../utils/transientBulk.ts";
 
 type BulkLevel = { price?: number; px?: number; size?: number; sz?: number };
 type BulkBook = { levels?: BulkLevel[][]; timestamp?: number };
@@ -16,6 +17,10 @@ type BulkTicker = {
   timestamp?: number;
 };
 type BulkAccount = { margin?: { totalBalance?: number; marginUsed?: number } };
+interface BulkMarginState {
+  marginRatio: number | null;
+  availableMarginUsd: number | null;
+}
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
 
 interface BulkMarketClient {
@@ -46,6 +51,9 @@ interface BulkMarketFeedParams {
   nlevels?: number;
   accountId?: string;
   candleInterval?: "1m";
+  accountRetryAttempts?: number;
+  accountRetryDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_CANDLE_INTERVAL = "1m";
@@ -83,6 +91,7 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     markPrice: snapshot.markPrice,
     timestamp: snapshot.timestamp,
     marginRatio: snapshot.marginRatio,
+    availableMarginUsd: snapshot.availableMarginUsd,
   };
 }
 
@@ -167,14 +176,14 @@ export class BulkMarketFeed implements IMarketFeed {
   }
 
   private async refreshSnapshot(): Promise<void> {
-    const [ticker, book, marginRatio] = await Promise.all([
+    const [ticker, book, marginState] = await Promise.all([
       this.client.market.ticker(this.params.market),
       this.client.market.l2Book({ symbol: this.params.market, nlevels: this.params.nlevels }),
-      this.fetchMarginRatio(),
+      this.fetchMarginState(),
     ]);
-    this.snapshot = this.snapshotFrom(ticker, book, marginRatio);
+    this.snapshot = this.snapshotFrom(ticker, book, marginState);
     logger.info(
-      `bulk_market_feed.snapshot_seeded market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio}`,
+      `bulk_market_feed.snapshot_seeded market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"}`,
     );
     this.publish(this.snapshot);
   }
@@ -209,7 +218,7 @@ export class BulkMarketFeed implements IMarketFeed {
   private snapshotFrom(
     ticker: BulkTicker,
     book: BulkBook,
-    marginRatio: number | null,
+    marginState: BulkMarginState,
   ): MarketSnapshot {
     const [bidLevel, askLevel] = this.topLevels(book);
     const bestBid = levelPrice(bidLevel);
@@ -225,7 +234,8 @@ export class BulkMarketFeed implements IMarketFeed {
       markPrice:
         ticker.markPrice ?? ticker.fairBookPx ?? ticker.lastPrice ?? (bestBid + bestAsk) / 2,
       timestamp: nsToMs(book.timestamp ?? ticker.timestamp),
-      marginRatio,
+      marginRatio: marginState.marginRatio,
+      availableMarginUsd: marginState.availableMarginUsd,
     };
   }
 
@@ -346,17 +356,33 @@ export class BulkMarketFeed implements IMarketFeed {
     return [bid, ask];
   }
 
-  private async fetchMarginRatio(): Promise<number | null> {
+  private async fetchMarginState(): Promise<BulkMarginState> {
     if (!this.params.accountId) {
-      return null;
+      return { marginRatio: null, availableMarginUsd: null };
     }
-    const account = await this.client.account.fullAccount(this.params.accountId);
+    const account = await retryTransientBulk(
+      async () => this.client.account.fullAccount(this.params.accountId ?? ""),
+      {
+        attempts: this.params.accountRetryAttempts ?? 1,
+        delayMs: this.params.accountRetryDelayMs ?? 1_000,
+        sleep: this.params.sleep,
+        onRetry: (error, attempt, attempts) => {
+          logger.warn(
+            `bulk_market_feed.margin_transient_retry market=${this.params.market} attempt=${attempt}/${attempts} error=${String(error)}`,
+          );
+        },
+      },
+    );
     const totalBalance = account.margin?.totalBalance;
     const marginUsed = account.margin?.marginUsed;
     if (totalBalance === undefined || totalBalance <= 0 || marginUsed === undefined) {
       throw new Error(`No Bulk margin data for ${this.params.accountId}`);
     }
-    return Math.max(0, (totalBalance - marginUsed) / totalBalance);
+    const availableMarginUsd = Math.max(0, totalBalance - marginUsed);
+    return {
+      marginRatio: availableMarginUsd / totalBalance,
+      availableMarginUsd,
+    };
   }
 
   private publish(snapshot: MarketSnapshot): void {

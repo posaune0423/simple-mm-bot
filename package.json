@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "CONFIG_PATH=config/config.bulk.beta.yml MODE=live bun run src/main.ts",
+    "bulk:preflight": "bun run scripts/checkBulkPrivateApi.ts",
     "dev:paper": "MODE=paper bun run src/main.ts",
     "dev:backtest": "CONFIG_PATH=config/config.backtest.yml MODE=backtest bun run src/main.ts",
     "db:generate": "drizzle-kit generate",

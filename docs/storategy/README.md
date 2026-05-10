@@ -2,7 +2,7 @@
 
 この文書は、`simple-mm-bot` の market making strategy を、実装に沿って説明する。
 
-Bulk beta live の current config は `bulk-beta-leaderboard` を使う。Avellaneda-Stoikov は `config/config.paper.yml`、`config/config.bulk.mainnet.yml`、backtest path で引き続き選択できる。
+Bulk beta live の current config は `avellaneda-stoikov` を使う。ladder は `quoteEngine.levels` で A-S quote を展開し、markout/toxicity gate は `quoteEngine.qualityGate` から `QuoteControls` として適用する。
 ここでは quote 生成と risk control の流れに絞る。
 
 ## 全体像
@@ -45,24 +45,24 @@ flowchart LR
 
 `config/config.bulk.beta.yml` の現在値:
 
-| 項目                    |                  現在値 | 役割                                         |
-| ----------------------- | ----------------------: | -------------------------------------------- |
-| `market`                |               `BTC-USD` | quote 対象 market                            |
-| `environment`           |                  `beta` | mock-capital Bulk environment                |
-| `intervalMs`            |                  `1000` | tick 間隔                                    |
-| `markWeight`            |                  `0.25` | mark price と micro price の混合比           |
-| `inventoryScale`        |                  `0.08` | inventory skew の正規化幅                    |
-| `timeHorizonSec`        |                    `10` | spread / skew が見る短期 horizon             |
-| `slideMarginThreshold`  |                  `0.06` | margin ratio が低いとき IOC に切り替える閾値 |
-| `defaultTimeInForce`    |                   `GTC` | 通常 quote の time in force                  |
-| `positionSize`          |                  `1.25` | 片側 quote の最大 base size                  |
-| `budgetUsd`             |                  `9600` | 片側 quote の USD 上限                       |
-| `minSpreadBps`          |                     `3` | fee 負けを避ける最小 quote 幅                |
-| `strategy.type`         | `bulk-beta-leaderboard` | Bulk beta live strategy                      |
-| `baseHalfSpreadBps`     |                   `2.5` | strategy base half spread                    |
-| `inventorySoftLimitQty` |                  `0.08` | side multiplier soft limit                   |
-| `inventoryHardLimitQty` |                  `0.18` | quote stop hard limit                        |
-| `maxPositionQty`        |                   `0.3` | これを超える在庫は reduce-only IOC で削る    |
+| 項目                      |               現在値 | 役割                                         |
+| ------------------------- | -------------------: | -------------------------------------------- |
+| `market`                  |            `BTC-USD` | quote 対象 market                            |
+| `environment`             |               `beta` | mock-capital Bulk environment                |
+| `intervalMs`              |               `1000` | tick 間隔                                    |
+| `markWeight`              |               `0.25` | mark price と micro price の混合比           |
+| `inventoryScale`          |               `0.08` | inventory skew の正規化幅                    |
+| `timeHorizonSec`          |                 `10` | spread / skew が見る短期 horizon             |
+| `slideMarginThreshold`    |               `0.06` | margin ratio が低いとき IOC に切り替える閾値 |
+| `defaultTimeInForce`      |                `GTC` | 通常 quote の time in force                  |
+| `positionSize`            |               `1.25` | 片側 quote の最大 base size                  |
+| `budgetUsd`               |               `9600` | 片側 quote の USD 上限                       |
+| `minSpreadBps`            |                  `3` | fee 負けを避ける最小 quote 幅                |
+| `strategy.type`           | `avellaneda-stoikov` | base quote model                             |
+| `qualityGate.enabled`     |               `true` | side markout gate                            |
+| `qualityGate.minSamples`  |                 `20` | sample floor before gating                   |
+| `qualityGate.horizonsSec` |         `[5,30,300]` | markout horizons                             |
+| `maxPositionQty`          |                `0.3` | これを超える在庫は reduce-only IOC で削る    |
 
 ## Quote 生成フロー
 

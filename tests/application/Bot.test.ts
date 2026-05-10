@@ -508,7 +508,92 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["connect", "syncFills", "subscribeFills"]);
+    expect(calls).toEqual(["connect", "syncFills", "subscribeFills", "syncFills", "syncFills"]);
+  });
+
+  test("continues startup when the initial Bulk fill sync times out", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          calls.push("subscribeMarket");
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          calls.push("subscribeFills");
+          return () => {};
+        },
+        async syncFills() {
+          calls.push("syncFills");
+          throw Object.assign(new Error("HTTP error 408"), {
+            name: "BulkHttpError",
+            status: 408,
+          });
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    try {
+      await bot.start(1);
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual([
+      "connect",
+      "syncFills",
+      "subscribeMarket",
+      "subscribeFills",
+      "refresh",
+      "cancelAll",
+      "syncFills",
+      "disconnect",
+    ]);
+    expect(logs.messages).toContain(
+      "bot.initial_sync_transient_error error=BulkHttpError: HTTP error 408",
+    );
   });
 
   test("does not sleep after stop is requested during a tick", async () => {
@@ -702,6 +787,99 @@ describe("Bot", () => {
     expect(logs.messages).toContain(
       "bot.tick_transient_error tick=1 error=BulkHttpError: HTTP error 408",
     );
+  });
+
+  test("syncs late fills during cleanup before finishing the run", async () => {
+    const calls: string[] = [];
+    let fillListener: FillListener | undefined;
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: {
+          execute: async (fill) => {
+            calls.push(`fill:${fill.id}`);
+          },
+        },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills(listener) {
+          calls.push("subscribe");
+          fillListener = listener;
+          return () => {
+            calls.push("unsubscribe");
+          };
+        },
+        async syncFills() {
+          calls.push("syncFills");
+          await fillListener?.({
+            id: "late-fill",
+            venue: "bulk",
+            market: "BTC-USD",
+            side: "buy",
+            price: 100,
+            qty: 0.1,
+            fee: 0,
+            tradePnl: 0,
+            filledAt: 1,
+            quoteId: "late-order",
+          });
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual([
+      "connect",
+      "syncFills",
+      "subscribe",
+      "refresh",
+      "cancelAll",
+      "syncFills",
+      "fill:late-fill",
+      "disconnect",
+      "unsubscribe",
+    ]);
   });
 
   test("propagates close-position cleanup failures after disconnecting and disposing", async () => {

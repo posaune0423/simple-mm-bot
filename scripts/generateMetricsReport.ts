@@ -14,7 +14,7 @@ interface EvaluationResult {
   evaluation: MetricsEvaluation;
 }
 
-function markdown(result: EvaluationResult): string {
+export function formatMetricsReportMarkdown(result: EvaluationResult): string {
   const { run, evaluation } = result;
   return [
     "# Metrics Run Report",
@@ -30,6 +30,9 @@ function markdown(result: EvaluationResult): string {
     "",
     `- Fill count: ${evaluation.dataHealth.fillCount}`,
     `- Markout coverage: ${(evaluation.dataHealth.markoutCoverage * 100).toFixed(1)}%`,
+    `- Markout coverage 5s: ${formatCoverage(evaluation.dataHealth.markoutCoverageByHorizon["5s"])}`,
+    `- Markout coverage 30s: ${formatCoverage(evaluation.dataHealth.markoutCoverageByHorizon["30s"])}`,
+    `- Markout coverage 300s: ${formatCoverage(evaluation.dataHealth.markoutCoverageByHorizon["300s"])}`,
     `- Raw field coverage: ${(evaluation.dataHealth.rawFieldCoverage * 100).toFixed(1)}%`,
     `- Snapshot freshness ms: ${evaluation.dataHealth.snapshotFreshnessMs ?? "n/a"}`,
     "",
@@ -45,10 +48,16 @@ function markdown(result: EvaluationResult): string {
     "## Markout And Orders",
     "",
     `- Avg 5s markout: ${evaluation.markouts.avg5sBps.toFixed(4)} bps`,
-    `- Avg 30s markout: ${evaluation.markouts.avg30sBps.toFixed(4)} bps`,
-    `- Avg 300s markout: ${evaluation.markouts.avg300sBps.toFixed(4)} bps`,
+    `- Avg 30s markout: ${formatNullableBps(evaluation.markouts.avg30sBps)}`,
+    `- Avg 300s markout: ${formatNullableBps(evaluation.markouts.avg300sBps)}`,
+    `- VW 5s markout: ${formatNullableBps(evaluation.markouts.vw5sBps)}`,
+    `- VW 30s markout: ${formatNullableBps(evaluation.markouts.vw30sBps)}`,
+    `- VW 300s markout: ${formatNullableBps(evaluation.markouts.vw300sBps)}`,
     `- 30s markout tail: p10=${evaluation.markouts.tail30sBps.p10.toFixed(4)} bps, p5=${evaluation.markouts.tail30sBps.p5.toFixed(4)} bps, worst=${evaluation.markouts.tail30sBps.worst.toFixed(4)} bps`,
     `- Adverse selection rate: ${(evaluation.markouts.adverseSelectionRate * 100).toFixed(1)}%`,
+    `- Adverse selection 5s: ${(evaluation.markouts.adverseSelectionRate5s * 100).toFixed(1)}%`,
+    `- Adverse selection 30s: ${formatNullablePercent(evaluation.markouts.adverseSelectionRate30s)}`,
+    `- Adverse selection 300s: ${formatNullablePercent(evaluation.markouts.adverseSelectionRate300s)}`,
     `- Spread capture: ${evaluation.markouts.spreadCaptureBps.toFixed(4)} bps`,
     `- Realized spread: ${evaluation.markouts.realizedSpreadBps.toFixed(4)} bps`,
     `- Fill rate: ${(evaluation.orderQuality.fillRate * 100).toFixed(1)}%`,
@@ -63,6 +72,18 @@ function markdown(result: EvaluationResult): string {
     `- Quote distance to mid: ${evaluation.market.avgQuoteDistanceToMidBps.toFixed(4)} bps`,
     `- Quote distance to best: ${evaluation.market.avgQuoteDistanceToBestBps.toFixed(4)} bps`,
     `- Stale rate: ${(evaluation.market.staleRate * 100).toFixed(1)}%`,
+    "",
+    "## Volume Pace",
+    "",
+    `- Current notional: ${formatNullableUsd(evaluation.volume.notionalUsd)}`,
+    `- Required 14d volume: ${evaluation.volume.required14dUsd.toFixed(2)}`,
+    `- Projected 14d volume: ${formatNullableUsd(evaluation.volume.projected14dUsd)}`,
+    `- Projected shortfall: ${formatNullableUsd(evaluation.volume.projectedShortfallUsd)}`,
+    `- Required multiplier: ${formatNullableMultiplier(evaluation.volume.requiredMultiplier)}`,
+    `- Required daily volume: ${evaluation.volume.requiredDailyUsd.toFixed(2)}`,
+    `- Required hourly volume: ${(evaluation.volume.requiredDailyUsd / 24).toFixed(2)}`,
+    `- Required minute volume: ${(evaluation.volume.requiredDailyUsd / 24 / 60).toFixed(2)}`,
+    `- Balanced daily volume: ${evaluation.volume.balancedDailyUsd.toFixed(2)}`,
     "",
     "## A-S Gate",
     "",
@@ -83,6 +104,26 @@ function markdown(result: EvaluationResult): string {
   ].join("\n");
 }
 
+function formatNullableUsd(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(2);
+}
+
+function formatNullableBps(value: number | null): string {
+  return value === null ? "n/a" : `${value.toFixed(4)} bps`;
+}
+
+function formatNullablePercent(value: number | null): string {
+  return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCoverage(value: { observed: number; total: number; coverage: number }): string {
+  return `${(value.coverage * 100).toFixed(1)}% (${value.observed}/${value.total})`;
+}
+
+function formatNullableMultiplier(value: number | null): string {
+  return value === null ? "n/a" : `${value.toFixed(2)}x`;
+}
+
 function generate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
   const evaluationPath = options.evaluation ?? LATEST_METRICS_EVALUATION_PATH;
@@ -93,7 +134,7 @@ function generate(argv: string[]): ResultAsync<string, AppError> {
       const result = (await Bun.file(evaluationPath).json()) as EvaluationResult;
       const reportPath = join(outputDir, "metrics-report.md");
       await Promise.all([
-        writeTextFile(reportPath, markdown(result)),
+        writeTextFile(reportPath, formatMetricsReportMarkdown(result)),
         writeJsonFile(join(outputDir, "metrics-report.json"), result),
       ]);
       return reportPath;
@@ -102,10 +143,12 @@ function generate(argv: string[]): ResultAsync<string, AppError> {
   );
 }
 
-void generate(Bun.argv.slice(2)).match(
-  (reportPath) => logger.info(`metrics report written to ${reportPath}`),
-  (error) => {
-    logger.error(formatAppError(error));
-    process.exitCode = 1;
-  },
-);
+if (import.meta.main) {
+  void generate(Bun.argv.slice(2)).match(
+    (reportPath) => logger.info(`metrics report written to ${reportPath}`),
+    (error) => {
+      logger.error(formatAppError(error));
+      process.exitCode = 1;
+    },
+  );
+}

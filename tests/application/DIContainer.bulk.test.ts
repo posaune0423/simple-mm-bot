@@ -37,6 +37,13 @@ function config(
       slideMarginThreshold: 0.12,
       defaultTimeInForce: "GTC",
       sizing: { positionSize: 0.01, budgetUsd: 100 },
+      qualityGate: {
+        enabled: false,
+        minAverageMarkoutBps: 0,
+        minSamples: 20,
+        lookbackFills: 100,
+        horizonsSec: [5, 30, 300],
+      },
       strategy,
     },
     risk: { imrBuffer: 0.15, mmrBuffer: 0.08, maxPositionQty: 0.05 },
@@ -147,23 +154,14 @@ describe("DIContainer Bulk venue", () => {
   test("passes the selected strategy name into metrics run metadata", async () => {
     const bot = await new DIContainer(
       config("paper", {
-        type: "bulk-beta-leaderboard",
-        params: {
-          baseHalfSpreadBps: 2.5,
-          minHalfSpreadBps: 1.2,
-          maxHalfSpreadBps: 8,
-          volatilitySpreadMultiplier: 1.5,
-          inventorySoftLimitQty: 0.08,
-          inventoryHardLimitQty: 0.18,
-          sameSideSizeMultiplierAtSoft: 0.25,
-          reduceSideSizeMultiplierAtSoft: 1.8,
-        },
+        type: "avellaneda-stoikov",
+        params: { gamma: 0.01, kappa: 2, kInv: 0.1 },
       }),
     ).buildBot();
     const internals = bot as unknown as {
       metrics: { options: { strategyName: string } };
     };
 
-    expect(internals.metrics.options.strategyName).toBe("bulk-beta-leaderboard");
+    expect(internals.metrics.options.strategyName).toBe("avellaneda-stoikov");
   });
 });

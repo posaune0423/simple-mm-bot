@@ -14,6 +14,7 @@ export interface MarketSnapshot extends CandleLike {
   timestamp: number;
   volume?: number;
   marginRatio: number | null;
+  availableMarginUsd?: number | null;
 }
 
 export type SnapshotListener = (snapshot: MarketSnapshot) => void | Promise<void>;

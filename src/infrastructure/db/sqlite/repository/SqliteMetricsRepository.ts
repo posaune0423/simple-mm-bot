@@ -1,5 +1,10 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
+import type {
+  IQuoteQualityRepository,
+  QuoteQualityQuery,
+  QuoteSideQuality,
+} from "../../../../domain/ports/IQuoteQualityRepository.ts";
 import type {
   AccountStateObservationFact,
   OrderbookSnapshotFact,
@@ -18,8 +23,14 @@ import {
 
 type SqliteDb = ReturnType<typeof import("../client.ts").createSqliteClient>["db"];
 type TradingRunRow = typeof tradingRunsTable.$inferSelect;
+type MarkoutRow = {
+  side: "buy" | "sell";
+  markout_5s_bps: number | null;
+  markout_30s_bps: number | null;
+  markout_300s_bps: number | null;
+};
 
-export class SqliteMetricsRepository implements IMetricsRepository {
+export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualityRepository {
   constructor(private readonly db: SqliteDb) {}
 
   async startRun(run: TradingRunFact): Promise<void> {
@@ -101,6 +112,74 @@ export class SqliteMetricsRepository implements IMetricsRepository {
       .limit(1);
     const row = rows[0];
     return row === undefined ? null : deserializeRun(row);
+  }
+
+  async getRecentSideQuality(query: QuoteQualityQuery): Promise<QuoteSideQuality[]> {
+    const rows = this.db.all<MarkoutRow>(
+      sql`
+        WITH latest_run AS (
+          SELECT id
+          FROM trading_runs
+          WHERE market = ${query.market}
+          ORDER BY started_at DESC
+          LIMIT 1
+        ),
+        ranked AS (
+          SELECT
+            side,
+            markout_5s_bps,
+            markout_30s_bps,
+            markout_300s_bps,
+            ROW_NUMBER() OVER (PARTITION BY side ORDER BY filled_at DESC, fill_id DESC) AS side_rank
+          FROM v_fill_markouts
+          WHERE run_id = (SELECT id FROM latest_run)
+            AND market = ${query.market}
+            AND side IN ('buy', 'sell')
+        )
+        SELECT side, markout_5s_bps, markout_30s_bps, markout_300s_bps
+        FROM ranked
+        WHERE side_rank <= ${query.lookbackFills}
+        ORDER BY side ASC, side_rank ASC
+      `,
+    );
+
+    return (["buy", "sell"] as const).flatMap((side) => {
+      const sideRows = rows.filter((row) => row.side === side);
+      if (sideRows.length === 0) {
+        return [];
+      }
+      return [
+        {
+          side,
+          horizons: query.horizonsSec.map((horizonSec) => aggregateHorizon(sideRows, horizonSec)),
+        },
+      ];
+    });
+  }
+}
+
+function aggregateHorizon(rows: MarkoutRow[], horizonSec: number) {
+  const values = rows
+    .map((row) => markoutForHorizon(row, horizonSec))
+    .filter((value): value is number => value !== null);
+  return {
+    horizonSec,
+    sampleCount: values.length,
+    averageMarkoutBps:
+      values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length,
+  };
+}
+
+function markoutForHorizon(row: MarkoutRow, horizonSec: number): number | null {
+  switch (horizonSec) {
+    case 5:
+      return row.markout_5s_bps;
+    case 30:
+      return row.markout_30s_bps;
+    case 300:
+      return row.markout_300s_bps;
+    default:
+      return null;
   }
 }
 

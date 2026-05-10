@@ -1,4 +1,3 @@
-import { env } from "../env.ts";
 import {
   ERROR_LEVEL_TO_EMOJI,
   ERROR_LEVEL_TO_SLACK_COLOR,
@@ -163,7 +162,7 @@ export async function notifyFatalErrorToSlack(
   error: unknown,
   context: FatalErrorSlackContext = {},
 ): Promise<void> {
-  const webhookUrl = Bun.env.SLACK_WEBHOOK_URL ?? env.SLACK_WEBHOOK_URL;
+  const webhookUrl = Bun.env.SLACK_WEBHOOK_URL;
   if (webhookUrl === undefined) return;
 
   try {

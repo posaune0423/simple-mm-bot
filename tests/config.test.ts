@@ -44,34 +44,47 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.wsUrl).toBe("wss://exchange-ws1.bulk.trade");
     expect(config.connections.bulk.market).toBe("BTC-USD");
     expect(config.connections.bulk.nlevels).toBe(20);
-    expect(config.connections.bulk.maxLeverage).toBe(10);
+    expect(config.connections.bulk.timeoutMs).toBe(30_000);
+    expect(config.connections.bulk.maxLeverage).toBe(50);
     expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
     expect(config.quoteEngine.markWeight).toBe(0.25);
-    expect(config.quoteEngine.minSpreadBps).toBe(3);
-    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 1.5, sizeUsd: 14400 }]);
+    expect(config.quoteEngine.minSpreadBps).toBe(1.7);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(90_000);
+    expect(config.quoteEngine.levels).toEqual([
+      { halfSpreadBps: 1.1, sizeUsd: 15_000 },
+      { halfSpreadBps: 1.7, sizeUsd: 15_000 },
+      { halfSpreadBps: 2.6, sizeUsd: 15_000 },
+      { halfSpreadBps: 4, sizeUsd: 15_000 },
+      { halfSpreadBps: 6.4, sizeUsd: 15_000 },
+    ]);
     expect(config.quoteEngine.strategy).toEqual({
-      type: "bulk-beta-leaderboard",
+      type: "avellaneda-stoikov",
       params: {
-        baseHalfSpreadBps: 2.5,
-        minHalfSpreadBps: 1.2,
-        maxHalfSpreadBps: 8,
-        volatilitySpreadMultiplier: 1.5,
-        inventorySoftLimitQty: 0.08,
-        inventoryHardLimitQty: 0.18,
-        sameSideSizeMultiplierAtSoft: 0.25,
-        reduceSideSizeMultiplierAtSoft: 1.8,
+        gamma: 0,
+        kappa: 625,
+        kInv: 2,
       },
     });
-    expect(config.quoteEngine.inventoryScale).toBe(0.08);
-    expect(config.quoteEngine.sizing.positionSize).toBe(1.25);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(14400);
-    expect(config.risk.maxPositionQty).toBe(0.22);
-    expect(config.risk.reduceTriggerQty).toBe(0.18);
-    expect(config.risk.reduceTargetQty).toBe(0.08);
-    expect(config.risk.maxUnrealizedLossUsd).toBe(25);
-    expect(config.risk.maxAdverseMoveBps).toBe(20);
-    expect(config.bot.intervalMs).toBe(1000);
-    expect(config.shutdown.closePositionPolicy).toBe("emergency_only");
+    expect(config.quoteEngine.qualityGate).toEqual({
+      enabled: true,
+      minAverageMarkoutBps: 0,
+      minSamples: 20,
+      lookbackFills: 100,
+      horizonsSec: [5, 30, 300],
+    });
+    expect(config.quoteEngine.inventoryScale).toBe(0.22);
+    expect(config.quoteEngine.sizing.positionSize).toBe(1);
+    expect(config.quoteEngine.sizing.bidSizeMultiplier).toBeUndefined();
+    expect(config.quoteEngine.sizing.askSizeMultiplier).toBeUndefined();
+    expect(config.quoteEngine.sizing.bidDistanceMultiplier).toBeUndefined();
+    expect(config.quoteEngine.sizing.askDistanceMultiplier).toBeUndefined();
+    expect(config.risk.maxPositionQty).toBe(1.25);
+    expect(config.risk.reduceTargetQty).toBe(0.25);
+    expect(config.risk.reduceTriggerQty).toBe(1.05);
+    expect(config.risk.maxUnrealizedLossUsd).toBe(650);
+    expect(config.risk.maxAdverseMoveBps).toBe(220);
+    expect(config.bot.intervalMs).toBe(150);
+    expect(config.shutdown.closePositionPolicy).toBe("always");
   });
 
   test("loads Bulk beta config as the default live config before mainnet launch", async () => {
@@ -88,8 +101,9 @@ describe("ConfigLoader", () => {
         throw new Error("Expected bulk config");
       }
       expect(config.connections.bulk.environment).toBe("beta");
-      expect(config.quoteEngine.sizing.budgetUsd).toBe(14400);
-      expect(config.quoteEngine.strategy.type).toBe("bulk-beta-leaderboard");
+      expect(config.quoteEngine.sizing.budgetUsd).toBe(90_000);
+      expect(config.quoteEngine.strategy.type).toBe("avellaneda-stoikov");
+      expect(config.quoteEngine.levels).toHaveLength(5);
     } finally {
       if (previousMode === undefined) {
         delete Bun.env.MODE;
@@ -99,7 +113,7 @@ describe("ConfigLoader", () => {
     }
   });
 
-  test("loads a standalone Bulk beta leaderboard strategy config", async () => {
+  test("rejects legacy Bulk beta leaderboard strategy config", async () => {
     const configFile = Bun.file("config/config.bulk-leaderboard-test.yml");
     await Bun.write(
       configFile,
@@ -151,16 +165,83 @@ backtest:
     );
 
     try {
-      const config = await ConfigLoader.load({
+      await ConfigLoader.load({
         configPath: "config/config.bulk-leaderboard-test.yml",
-      });
+      }).then(
+        () => {
+          throw new Error("Expected legacy strategy config to reject");
+        },
+        (error) => {
+          expect((error as Error).message).toContain("Config validation failed");
+        },
+      );
+    } finally {
+      await configFile.delete();
+    }
+  });
 
-      expect(config.quoteEngine.strategy.type).toBe("bulk-beta-leaderboard");
-      if (config.quoteEngine.strategy.type !== "bulk-beta-leaderboard") {
-        throw new Error("Expected Bulk beta leaderboard strategy");
-      }
-      expect(config.quoteEngine.strategy.params.inventoryHardLimitQty).toBe(0.18);
-      expect(config.shutdown.closePositionPolicy).toBe("always");
+  test("rejects legacy ladder market making strategy config", async () => {
+    const configFile = Bun.file("config/config.ladder-test.yml");
+    await Bun.write(
+      configFile,
+      `
+mode: paper
+venue: bulk
+
+connections:
+  bulk:
+    wsUrl: wss://api.bulk.trade/ws
+    httpUrl: https://api.bulk.trade
+    market: BTC-USD
+    environment: beta
+
+quoteEngine:
+  markWeight: 0.5
+  inventoryScale: 0.08
+  timeHorizonSec: 10
+  slideMarginThreshold: 0.06
+  defaultTimeInForce: GTC
+  sizing:
+    positionSize: 1
+  strategy:
+    type: ladder-market-making
+    params:
+      baseHalfSpreadBps: 2.5
+      minHalfSpreadBps: 1.2
+      maxHalfSpreadBps: 8
+      volatilitySpreadMultiplier: 1.5
+      inventorySoftLimitQty: 0.08
+      inventoryHardLimitQty: 0.18
+      sameSideSizeMultiplierAtSoft: 0.25
+      reduceSideSizeMultiplierAtSoft: 1.8
+
+risk:
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxPositionQty: 0.85
+
+bot:
+  intervalMs: 1000
+
+backtest:
+  market: BTC-USD
+  timeframe: 1m
+  from: "2026-05-06"
+  to: "2026-05-07"
+`,
+    );
+
+    try {
+      await ConfigLoader.load({
+        configPath: "config/config.ladder-test.yml",
+      }).then(
+        () => {
+          throw new Error("Expected legacy strategy config to reject");
+        },
+        (error) => {
+          expect((error as Error).message).toContain("Config validation failed");
+        },
+      );
     } finally {
       await configFile.delete();
     }

@@ -19,6 +19,18 @@ export interface PlacedOrder {
   status: "open" | "filled" | "partially_filled" | "cancelled" | "rejected";
 }
 
+export interface OpenOrder {
+  id: string;
+  market: string;
+  side: OrderSide;
+  price?: number;
+  qty: number;
+  reduceOnly: boolean;
+  timeInForce: OrderTimeInForce;
+  status: "open" | "partially_filled";
+  placedAtMs?: number;
+}
+
 export interface OrderGatewayEvent {
   action: "submit" | "ack" | "cancel" | "reject" | "fill";
   clientOrderId?: string;
@@ -47,6 +59,7 @@ export interface IOrderGateway {
   subscribeFills(listener: FillListener): () => void;
   subscribeOrderEvents?(listener: OrderEventListener): () => void;
   syncFills?(): Promise<void>;
+  getOpenOrders?(): Promise<OpenOrder[]>;
   getPosition?(): Promise<Position>;
   stopBackgroundSync?(): void | Promise<void>;
   dispose?(): void | Promise<void>;

@@ -334,6 +334,138 @@ describe("SqliteMetricsRepository", () => {
     expect(quality?.markout_5s_coverage).toBe(1);
   });
 
+  test("does not use delayed long-horizon snapshots for short-horizon markouts", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-delayed-markout",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordTradeFill({
+      id: "fill-delayed",
+      runId: "run-delayed-markout",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "fill-delayed",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1000,
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "snapshot-300s",
+      runId: "run-delayed-markout",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 301000,
+      bestBid: 110,
+      bestAsk: 112,
+      midPrice: 111,
+      microPrice: 111,
+      markPrice: 111,
+      spreadBps: 180,
+      stalenessMs: 0,
+    });
+
+    const markout = client.sqlite
+      .query<
+        {
+          markout_5s_bps: number | null;
+          markout_30s_bps: number | null;
+          markout_300s_bps: number | null;
+        },
+        []
+      >(
+        "SELECT markout_5s_bps, markout_30s_bps, markout_300s_bps FROM v_fill_markouts WHERE fill_id = 'fill-delayed'",
+      )
+      .get();
+
+    expect(markout?.markout_5s_bps).toBeNull();
+    expect(markout?.markout_30s_bps).toBeNull();
+    expect(markout?.markout_300s_bps).toBe(1100);
+  });
+
+  test("reads recent side quality from multi-horizon fill markouts", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-side-quality",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    for (const snapshot of [
+      { id: "quality-5s", observedAt: 6_000, midPrice: 99 },
+      { id: "quality-30s", observedAt: 31_000, midPrice: 98 },
+      { id: "quality-300s", observedAt: 301_000, midPrice: 102 },
+    ]) {
+      await repository.recordOrderbookSnapshot({
+        id: snapshot.id,
+        runId: "run-side-quality",
+        venue: "bulk",
+        market: "BTC-USD",
+        observedAt: snapshot.observedAt,
+        bestBid: snapshot.midPrice - 1,
+        bestAsk: snapshot.midPrice + 1,
+        midPrice: snapshot.midPrice,
+        microPrice: snapshot.midPrice,
+        markPrice: snapshot.midPrice,
+        spreadBps: 200,
+        stalenessMs: 0,
+      });
+    }
+    await repository.recordTradeFill({
+      id: "quality-buy",
+      runId: "run-side-quality",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "quality-buy",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1_000,
+    });
+
+    const quality = await repository.getRecentSideQuality({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      horizonsSec: [5, 30, 300],
+    });
+
+    expect(quality).toEqual([
+      {
+        side: "buy",
+        horizons: [
+          { horizonSec: 5, sampleCount: 1, averageMarkoutBps: -100 },
+          { horizonSec: 30, sampleCount: 1, averageMarkoutBps: -200 },
+          { horizonSec: 300, sampleCount: 1, averageMarkoutBps: 200 },
+        ],
+      },
+    ]);
+  });
+
   test("computes analysis views from fact tables instead of OHLCV", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
@@ -463,7 +595,14 @@ describe("SqliteMetricsRepository", () => {
       )
       .get();
     const inventoryRisk = client.sqlite
-      .query<{ max_abs_position: number; min_margin_ratio: number; equity_drawdown: number }, []>(
+      .query<
+        {
+          max_abs_position: number;
+          min_margin_ratio: number;
+          equity_drawdown: number;
+        },
+        []
+      >(
         "SELECT max_abs_position, min_margin_ratio, equity_drawdown FROM v_inventory_risk WHERE run_id = 'run-views'",
       )
       .get();
@@ -619,6 +758,10 @@ describe("SqliteMetricsRepository", () => {
     expect(competitiveness?.distance_to_mid_bps).toBeCloseTo(10);
     expect(competitiveness?.distance_to_best_bps).toBeCloseTo(5.0025, 4);
     expect(competitiveness?.market_spread_bps).toBe(10);
-    expect(levelQuality).toEqual({ quote_level: 1, submitted_count: 1, fill_rate: 1 });
+    expect(levelQuality).toEqual({
+      quote_level: 1,
+      submitted_count: 1,
+      fill_rate: 1,
+    });
   });
 });

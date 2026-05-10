@@ -182,7 +182,9 @@ export class MetricsRecorder {
   ): SubmittedOrderFact {
     const submittedAt =
       previous?.submittedAt ?? (payload.action === "submit" ? now : now - (payload.latencyMs ?? 0));
-    const acceptedAt = payload.action === "ack" ? now : previous?.acceptedAt;
+    const status = finalStatus(payload);
+    const acceptedAt =
+      payload.action === "ack" && status === "accepted" ? now : previous?.acceptedAt;
     return {
       id: submittedOrderId(this.runId, orderKey),
       runId: this.runId,
@@ -202,9 +204,9 @@ export class MetricsRecorder {
       timeInForce: payload.timeInForce ?? previous?.timeInForce ?? "GTC",
       submittedAt,
       acceptedAt,
-      rejectedAt: payload.action === "reject" ? now : previous?.rejectedAt,
-      canceledAt: payload.action === "cancel" ? now : previous?.canceledAt,
-      finalStatus: finalStatus(payload),
+      rejectedAt: status === "rejected" ? now : previous?.rejectedAt,
+      canceledAt: status === "canceled" ? now : previous?.canceledAt,
+      finalStatus: status,
       rejectReason: payload.reason,
       latencyMs: payload.latencyMs,
       rawJson: rawSummary(payload),
@@ -322,6 +324,16 @@ function submittedOrderId(runId: string, orderKey: string): string {
 function finalStatus(
   payload: OrderGatewayEvent,
 ): "submitted" | "accepted" | "rejected" | "canceled" | "filled" {
+  const venueStatus = normalizeVenueStatus(payload.status);
+  if (venueStatus === "filled") {
+    return "filled";
+  }
+  if (venueStatus === "canceled") {
+    return "canceled";
+  }
+  if (venueStatus === "rejected") {
+    return "rejected";
+  }
   if (payload.action === "submit") {
     return "submitted";
   }
@@ -335,6 +347,30 @@ function finalStatus(
     return "filled";
   }
   return "accepted";
+}
+
+function normalizeVenueStatus(
+  status: string | undefined,
+): "filled" | "canceled" | "rejected" | null {
+  if (status === undefined) {
+    return null;
+  }
+  const normalized = status.toLowerCase();
+  if (normalized === "filled") {
+    return "filled";
+  }
+  if (normalized === "rejected") {
+    return "rejected";
+  }
+  if (
+    normalized === "cancelled" ||
+    normalized === "canceled" ||
+    normalized.startsWith("cancelled") ||
+    normalized.startsWith("canceled")
+  ) {
+    return "canceled";
+  }
+  return null;
 }
 
 function rawSummary(payload: OrderGatewayEvent, cancelSource?: "cancelAll"): unknown {

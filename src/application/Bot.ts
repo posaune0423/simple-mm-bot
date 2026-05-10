@@ -97,7 +97,7 @@ export class Bot {
   private async connectAndSubscribe(): Promise<void> {
     await this.marketFeed.connect();
     logger.info("bot.market_feed_connected");
-    await this.orderGateway.syncFills?.();
+    await this.syncInitialFills();
     await this.useCases.initializePosition?.execute();
     this.unsubscribers.push(
       this.marketFeed.subscribe((snapshot) => {
@@ -125,6 +125,24 @@ export class Bot {
     logger.info("bot.market_snapshot_subscription_active");
     logger.info("bot.fill_subscription_active");
     await this.recordOhlcv(await this.marketFeed.getSnapshot());
+  }
+
+  private async syncInitialFills(): Promise<void> {
+    if (this.orderGateway.syncFills === undefined) {
+      return;
+    }
+
+    await this.orderGateway.syncFills().catch(async (error) => {
+      if (!isTransientBulkError(error)) {
+        throw error;
+      }
+      logger.warn(`bot.initial_sync_transient_error error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "initial_sync_transient_error",
+        String(error),
+      );
+    });
   }
 
   private async runLoop(maxTicks?: number): Promise<void> {
@@ -207,11 +225,13 @@ export class Bot {
     await this.orderGateway
       .cancelAll()
       .catch((err) => logger.error(`bot.cleanup.cancel_all_failed: ${err}`));
+    await this.syncCleanupFills("after_cancel_all");
     if (this.shouldClosePositionOnCleanup()) {
       await this.useCases.closePosition.execute().catch((err) => {
         closePositionError = err;
         logger.error(`bot.cleanup.close_position_failed: ${err}`);
       });
+      await this.syncCleanupFills("after_close_position");
     }
     await this.marketFeed.disconnect();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
@@ -229,6 +249,15 @@ export class Bot {
 
   private shouldClosePositionOnCleanup(): boolean {
     return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
+  }
+
+  private async syncCleanupFills(phase: string): Promise<void> {
+    await this.orderGateway.syncFills?.().catch(async (error) => {
+      logger.warn(`bot.cleanup.sync_fills_failed phase=${phase} error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth("warn", "cleanup_sync_fills_failed", String(error), {
+        phase,
+      });
+    });
   }
 
   private async recordOhlcv(snapshot: MarketSnapshot): Promise<void> {

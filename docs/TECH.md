@@ -77,8 +77,8 @@ bot の 1 tick は以下の責務順で動作する。
 
 ### Strategy / Quote Engine
 
-Strategy は `quoteEngine.strategy.type` で切り替える。現在は `avellaneda-stoikov` と `bulk-beta-leaderboard` を持つ。
-`QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce` を統合して最終 quote を生成する。
+Strategy は `quoteEngine.strategy.type: avellaneda-stoikov` を primary path にする。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
+`QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce`、任意の `qualityGate` controls を統合して最終 quote を生成する。
 `QuoteEngine` は `IQuotingStrategy` のみへ依存し、具体 strategy を import しない。
 
 主要パラメータ:

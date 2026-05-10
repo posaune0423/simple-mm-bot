@@ -55,6 +55,12 @@ Use [docs/STRUCTURE.md](./docs/STRUCTURE.md) as the source of truth for folder r
 
 Read these docs before changing runtime behavior, venue support, configuration, or layer boundaries.
 
+## Knowledge Base (Obsidian)
+
+- **Entry note**: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Private/MM bot.md`
+- **High-signal topics**: Avellaneda–Stoikov, markout, queue-awareness, VPIN, toxic flow, order types/book microstructure.
+- **Available skills**: `obsidian-cli`, `obsidian-markdown`, `obsidian-bases`
+
 ## Development Commands
 
 - `bun install`: install dependencies.
