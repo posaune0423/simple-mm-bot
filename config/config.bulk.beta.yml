@@ -24,7 +24,10 @@ connections:
 
 quoteEngine:
   markWeight: 0.25
-  bookPriceSource: vamp
+  # Controlled live A/B on 2026-05-10 showed depth VAMP was worse than micro
+  # for current Bulk BTC-USD flow; keep this config-switchable, but default to
+  # micro until VAMP has positive live bucket evidence.
+  bookPriceSource: micro
   inventoryScale: 0.22
   timeHorizonSec: 10
   minSpreadBps: 1.7
