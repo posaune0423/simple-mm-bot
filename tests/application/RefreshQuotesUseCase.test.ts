@@ -1743,7 +1743,7 @@ describe("RefreshQuotesUseCase", () => {
     expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "sell"]);
   });
 
-  test("skips reduce bids during a short-term down move", async () => {
+  test("keeps reduce bids during a short-term down move while skipping only open bids", async () => {
     const placed: Array<{ side: "buy" | "sell"; reduceOnly?: boolean }> = [];
     const snapshots = [
       {
@@ -1901,11 +1901,12 @@ describe("RefreshQuotesUseCase", () => {
     await useCase.execute();
     await useCase.execute();
 
-    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "sell"]);
+    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy", "sell"]);
     expect(placed[0]?.reduceOnly).toBe(true);
+    expect(placed[2]?.reduceOnly).toBe(true);
   });
 
-  test("skips reduce asks during a short-term up move", async () => {
+  test("keeps reduce asks during a short-term up move while skipping only open asks", async () => {
     const placed: Array<{ side: "buy" | "sell"; reduceOnly?: boolean }> = [];
     const snapshots = [
       {
@@ -2063,8 +2064,9 @@ describe("RefreshQuotesUseCase", () => {
     await useCase.execute();
     await useCase.execute();
 
-    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy"]);
+    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy", "sell"]);
     expect(placed[1]?.reduceOnly).toBe(true);
+    expect(placed[3]?.reduceOnly).toBe(true);
   });
 
   test("skips open bids during a short-term down move while keeping the ask side live", async () => {

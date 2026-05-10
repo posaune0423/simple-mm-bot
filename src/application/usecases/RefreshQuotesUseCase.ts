@@ -231,11 +231,14 @@ function quoteSkipReason(
   if (isStaleEpochSnapshot(snapshot)) {
     return "stale_touch";
   }
+  if (order.intent !== "quote") {
+    return null;
+  }
   if (order.side === "buy" && order.trendBps <= -OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
-    return order.intent === "reduce" ? "downtrend_reduce_bid" : "downtrend_open_bid";
+    return "downtrend_open_bid";
   }
   if (order.side === "sell" && order.trendBps >= OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
-    return order.intent === "reduce" ? "uptrend_reduce_ask" : "uptrend_open_ask";
+    return "uptrend_open_ask";
   }
   return null;
 }

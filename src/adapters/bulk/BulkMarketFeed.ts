@@ -153,6 +153,7 @@ export class BulkMarketFeed implements IMarketFeed {
   private lastCandleTs: number | null = null;
   private snapshot: MarketSnapshot | null = null;
   private accountPollTimer: ReturnType<typeof setInterval> | null = null;
+  private accountPollInFlight = false;
 
   constructor(
     private readonly client: BulkMarketFeedClient,
@@ -382,11 +383,19 @@ export class BulkMarketFeed implements IMarketFeed {
     }
     const intervalMs = this.params.accountPollIntervalMs ?? DEFAULT_ACCOUNT_POLL_INTERVAL_MS;
     this.accountPollTimer = setInterval(() => {
-      void this.refreshAccountState().catch((error) => {
-        logger.warn(
-          `bulk_market_feed.account_poll_failed market=${this.params.market} error=${String(error)}`,
-        );
-      });
+      if (this.accountPollInFlight) {
+        return;
+      }
+      this.accountPollInFlight = true;
+      void this.refreshAccountState()
+        .catch((error) => {
+          logger.warn(
+            `bulk_market_feed.account_poll_failed market=${this.params.market} error=${String(error)}`,
+          );
+        })
+        .finally(() => {
+          this.accountPollInFlight = false;
+        });
     }, intervalMs);
     this.accountPollTimer.unref();
     logger.info(

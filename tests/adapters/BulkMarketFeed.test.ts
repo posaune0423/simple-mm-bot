@@ -229,6 +229,66 @@ describe("BulkMarketFeed", () => {
     expect(polled.positionUpdatedAt).toBeGreaterThan(initial.positionUpdatedAt ?? 0);
   });
 
+  test("does not start overlapping account polls when the previous poll is still in flight", async () => {
+    let accountCalls = 0;
+    let concurrentCalls = 0;
+    let maxConcurrentCalls = 0;
+    const pending: Array<() => void> = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            timestamp: 1_700_000_000_000 * 1_000_000,
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          accountCalls += 1;
+          concurrentCalls += 1;
+          maxConcurrentCalls = Math.max(maxConcurrentCalls, concurrentCalls);
+          await new Promise<void>((resolve) => pending.push(resolve));
+          concurrentCalls -= 1;
+          return {
+            margin: { totalBalance: 1000, marginUsed: 250 },
+            positions: [{ symbol: "BTC-USD", size: 0.1 }],
+          };
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "BTC-USD",
+      accountId: "account",
+      accountPollIntervalMs: 1,
+    });
+
+    const initialConnect = feed.connect();
+    await waitFor(() => pending.length === 1);
+    pending.shift()?.();
+    await initialConnect;
+    await waitFor(() => pending.length === 1);
+    await Bun.sleep(5);
+    pending.shift()?.();
+    await waitFor(() => accountCalls >= 2);
+    await feed.disconnect();
+
+    expect(maxConcurrentCalls).toBe(1);
+    expect(accountCalls).toBe(2);
+    while (pending.length > 0) {
+      pending.shift()?.();
+    }
+  });
+
   test("updates snapshot with real OHLCV data from websocket candles", async () => {
     const handlers: Array<(message: unknown) => void> = [];
     const client = {

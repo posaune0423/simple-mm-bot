@@ -17,6 +17,7 @@ import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IQuoteQualityRepository } from "../domain/ports/IQuoteQualityRepository.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
 import type { CapitalMode } from "../infrastructure/Metrics.ts";
+import { getGitMetadata } from "../infrastructure/GitMetadata.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
@@ -159,7 +160,7 @@ export class DIContainer {
       market: this.marketName(),
       strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
       configJson: redactConfig(this.config),
-      ...gitMetadata(),
+      ...getGitMetadata(),
     });
   }
 
@@ -334,21 +335,4 @@ function redactConfig(config: AppConfig): unknown {
       },
     },
   };
-}
-
-function gitMetadata(): { gitSha?: string; gitDirty: boolean } {
-  const sha = runGit(["rev-parse", "--short", "HEAD"]);
-  const status = runGit(["status", "--porcelain"]);
-  return {
-    gitSha: sha === "" ? undefined : sha,
-    gitDirty: status !== "",
-  };
-}
-
-function runGit(args: string[]): string {
-  const result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "ignore" });
-  if (!result.success) {
-    return "";
-  }
-  return new TextDecoder().decode(result.stdout).trim();
 }
