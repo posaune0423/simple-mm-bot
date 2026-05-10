@@ -125,7 +125,7 @@ bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report
 
 4. **修正案のPlan**
    - `positive_candidate` または `production_candidate` の仮説だけをtuning候補にする。
-   - YML tuningで閉じる変更と、code/SDK/design issueにする変更を分ける。
+   - YAML tuningで閉じる変更と、code/SDK/design issueにする変更を分ける。
    - 変更前に、どのmetricを改善するための変更か、次runで何を合格条件にするかを書く。
    - maker fee tier到達を狙うvolume増加は、Net PnL、PnL per notional、markout、runtime healthが許容範囲にある場合だけplanに入れる。
 

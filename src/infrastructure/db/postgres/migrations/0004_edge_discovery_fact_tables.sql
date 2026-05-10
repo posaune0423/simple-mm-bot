@@ -1,3 +1,6 @@
+ALTER TABLE orderbook_snapshots
+  ADD COLUMN IF NOT EXISTS vamp_price DOUBLE PRECISION;
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS runtime_health_events (
   id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,

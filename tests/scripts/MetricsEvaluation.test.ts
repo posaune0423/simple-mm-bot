@@ -238,4 +238,30 @@ describe("evaluateMetricsRun", () => {
     expect(result.issueSignals).toContain("volume_below_balanced_pace");
     expect(result.issueSignals).toContain("adverse_selection_high");
   });
+
+  test("guards volume target days against zero or negative inputs", () => {
+    const result = evaluateMetricsRun({
+      fillCount: 3,
+      markoutCoverage: 1,
+      notionalUsd: 2_000_000,
+      windowDays: 1,
+      volumeTargetDays: 0,
+      netPnl: 1,
+      tradePnl: 1,
+      fee: 0,
+      pnlPerNotional: 0.0001,
+      maxDrawdown: 0,
+      avg5sMarkoutBps: 1,
+      adverseSelectionRate: 0,
+      fillRate: 0.5,
+      rejectRate: 0,
+      cancelRate: 0,
+      minMarkoutCoverage: 0.8,
+    });
+
+    expect(result.volume.targetDays).toBe(1);
+    expect(result.volume.requiredDailyUsd).toBe(50_000_000);
+    expect(result.volume.projectedTargetUsd).toBe(2_000_000);
+    expect(Number.isFinite(result.volume.requiredDailyUsd)).toBe(true);
+  });
 });

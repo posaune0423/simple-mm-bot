@@ -368,7 +368,7 @@ function normalizedMarkoutCoverage(input: MetricsEvaluationInput): MarkoutCovera
 }
 
 function volumeFor(input: MetricsEvaluationInput): MetricsEvaluation["volume"] {
-  const targetDays = inputVolumeTargetDays(input);
+  const targetDays = Math.max(inputVolumeTargetDays(input), 1);
   const requiredTargetUsd = inputRequiredTargetVolume(input);
   const balancedTargetUsd = inputBalancedTargetVolume(input);
   const requiredDailyUsd = requiredTargetUsd / targetDays;

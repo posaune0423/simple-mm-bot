@@ -48,6 +48,8 @@ describe("Postgres metrics migration", () => {
     ).text();
 
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS runtime_health_events");
+    expect(migration).toContain("ALTER TABLE orderbook_snapshots");
+    expect(migration).toContain("ADD COLUMN IF NOT EXISTS vamp_price DOUBLE PRECISION");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS quote_decisions");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS order_lifecycle_events");
     expect(migration).toContain("UNIQUE (run_id, quote_cycle_id, side, level)");

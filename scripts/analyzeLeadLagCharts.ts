@@ -27,12 +27,23 @@ import { DEFAULT_BULK_BETA_CONFIG_PATH } from "./lib/paths.ts";
 
 const DEFAULT_OUT = "data/lead-lag";
 
-function requireEnv(name: string): string {
-  const v = Bun.env[name];
-  if (v === undefined || v.trim() === "") {
-    throw new Error(`Missing required environment variable ${name}`);
+export function binanceCredentials(options: {
+  skipCredentialCheck: boolean;
+  env?: Record<string, string | undefined>;
+}): { apiKey: string; apiSecret?: string } {
+  const env = options.env ?? Bun.env;
+  const apiKey = env.BINANCE_API_KEY?.trim();
+  if (apiKey === undefined || apiKey === "") {
+    throw new Error("Missing required environment variable BINANCE_API_KEY");
   }
-  return v.trim();
+  if (options.skipCredentialCheck) {
+    return { apiKey };
+  }
+  const apiSecret = env.BINANCE_API_SECRET?.trim();
+  if (apiSecret === undefined || apiSecret === "") {
+    throw new Error("Missing required environment variable BINANCE_API_SECRET");
+  }
+  return { apiKey, apiSecret };
 }
 
 async function writeText(path: string, content: string): Promise<void> {
@@ -93,10 +104,14 @@ function parseCli(argv: string[]): CliOptions {
 }
 
 async function main(argv: string[]): Promise<void> {
-  const apiKey = requireEnv("BINANCE_API_KEY");
-  const apiSecret = requireEnv("BINANCE_API_SECRET");
   const opts = parseCli(argv);
+  const { apiKey, apiSecret } = binanceCredentials({
+    skipCredentialCheck: opts.skipBinanceCredentialCheck,
+  });
   if (!opts.skipBinanceCredentialCheck) {
+    if (apiSecret === undefined) {
+      throw new Error("Missing required environment variable BINANCE_API_SECRET");
+    }
     await verifyBinanceCredentials(apiKey, apiSecret);
   } else {
     logger.warn(
@@ -171,7 +186,7 @@ async function main(argv: string[]): Promise<void> {
     },
     credentials: {
       binanceApiKeyPresent: true,
-      binanceApiSecretPresent: true,
+      binanceApiSecretPresent: apiSecret !== undefined,
     },
   };
 

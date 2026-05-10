@@ -465,7 +465,11 @@ export class BulkMarketFeed implements IMarketFeed {
         !Number.isFinite(bidPrice) ||
         !Number.isFinite(askPrice) ||
         !Number.isFinite(bidSize) ||
-        !Number.isFinite(askSize)
+        !Number.isFinite(askSize) ||
+        bidPrice <= 0 ||
+        askPrice <= 0 ||
+        bidSize <= 0 ||
+        askSize <= 0
       ) {
         continue;
       }

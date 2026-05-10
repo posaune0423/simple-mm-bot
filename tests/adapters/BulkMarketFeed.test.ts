@@ -92,6 +92,51 @@ describe("BulkMarketFeed", () => {
     ]);
   });
 
+  test("ignores non-positive L2 book levels before deriving top of book", async () => {
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 101, lastPrice: 100.5, timestamp: 1_700_000_000_123 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [
+              [
+                { price: 0, size: 2 },
+                { price: 99, size: 2 },
+              ],
+              [
+                { price: 101, size: 1 },
+                { price: 102, size: 3 },
+              ],
+            ],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "ETH-USD", nlevels: 20 });
+
+    await feed.connect();
+    const snapshot = await feed.getSnapshot();
+
+    expect(snapshot.bestBid).toBe(99);
+    expect(snapshot.bestAsk).toBe(102);
+    expect(snapshot.orderBookLevels).toEqual([
+      { bidPrice: 99, bidSize: 2, askPrice: 102, askSize: 3 },
+    ]);
+  });
+
   test("logs HTTP snapshot seed and websocket subscriptions", async () => {
     const logs = captureLogs();
     const client = {
