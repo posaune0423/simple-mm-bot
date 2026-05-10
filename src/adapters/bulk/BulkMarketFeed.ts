@@ -16,10 +16,21 @@ type BulkTicker = {
   fairBookPx?: number;
   timestamp?: number;
 };
-type BulkAccount = { margin?: { totalBalance?: number; marginUsed?: number } };
+type BulkPositionEntry = {
+  symbol?: string;
+  size?: number;
+  iso?: boolean;
+};
+type BulkAccount = {
+  margin?: { totalBalance?: number; marginUsed?: number };
+  positions?: BulkPositionEntry[];
+};
 interface BulkMarginState {
   marginRatio: number | null;
   availableMarginUsd: number | null;
+  accountUpdatedAt: number | null;
+  positionQty: number | null;
+  positionUpdatedAt: number | null;
 }
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
 
@@ -53,10 +64,12 @@ interface BulkMarketFeedParams {
   candleInterval?: "1m";
   accountRetryAttempts?: number;
   accountRetryDelayMs?: number;
+  accountPollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_CANDLE_INTERVAL = "1m";
+const DEFAULT_ACCOUNT_POLL_INTERVAL_MS = 2_000;
 const MAX_CANDLES_PER_MESSAGE = 20;
 
 function nsToMs(timestamp: number | undefined): number {
@@ -90,6 +103,12 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     microPrice: snapshot.microPrice,
     markPrice: snapshot.markPrice,
     timestamp: snapshot.timestamp,
+    bookUpdatedAt: snapshot.bookUpdatedAt,
+    tickerUpdatedAt: snapshot.tickerUpdatedAt,
+    candleUpdatedAt: snapshot.candleUpdatedAt,
+    accountUpdatedAt: snapshot.accountUpdatedAt,
+    positionUpdatedAt: snapshot.positionUpdatedAt,
+    positionQty: snapshot.positionQty,
     marginRatio: snapshot.marginRatio,
     availableMarginUsd: snapshot.availableMarginUsd,
   };
@@ -115,6 +134,10 @@ function payloadOf(message: unknown, nestedKeys: string[]): Record<string, unkno
   return data;
 }
 
+function crossPositionQty(positions: BulkPositionEntry[] | undefined, market: string): number {
+  return positions?.find((entry) => entry.symbol === market && entry.iso !== true)?.size ?? 0;
+}
+
 function candlesOf(message: unknown): BulkCandle[] {
   const data = dataOf(message);
   const candles = data.candles;
@@ -129,6 +152,8 @@ export class BulkMarketFeed implements IMarketFeed {
   private readonly unsubscribers: Array<() => Promise<void>> = [];
   private lastCandleTs: number | null = null;
   private snapshot: MarketSnapshot | null = null;
+  private accountPollTimer: ReturnType<typeof setInterval> | null = null;
+  private accountPollInFlight = false;
 
   constructor(
     private readonly client: BulkMarketFeedClient,
@@ -141,11 +166,13 @@ export class BulkMarketFeed implements IMarketFeed {
     );
     await this.refreshSnapshot();
     await this.subscribeWs();
+    this.startAccountPolling();
     logger.info(`bulk_market_feed.connected market=${this.params.market}`);
   }
 
   async disconnect(): Promise<void> {
     logger.info(`bulk_market_feed.disconnect market=${this.params.market}`);
+    this.stopAccountPolling();
     const results = await Promise.allSettled(
       this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
     );
@@ -226,6 +253,8 @@ export class BulkMarketFeed implements IMarketFeed {
     if (bestBid === undefined || bestAsk === undefined) {
       throw new Error(`No Bulk order book levels for ${this.params.market}`);
     }
+    const bookUpdatedAt = nsToMs(book.timestamp);
+    const tickerUpdatedAt = nsToMs(ticker.timestamp);
     return {
       market: this.params.market,
       bestBid,
@@ -233,7 +262,13 @@ export class BulkMarketFeed implements IMarketFeed {
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
       markPrice:
         ticker.markPrice ?? ticker.fairBookPx ?? ticker.lastPrice ?? (bestBid + bestAsk) / 2,
-      timestamp: nsToMs(book.timestamp ?? ticker.timestamp),
+      timestamp: book.timestamp === undefined ? tickerUpdatedAt : bookUpdatedAt,
+      bookUpdatedAt,
+      tickerUpdatedAt,
+      candleUpdatedAt: null,
+      accountUpdatedAt: marginState.accountUpdatedAt,
+      positionUpdatedAt: marginState.positionUpdatedAt,
+      positionQty: marginState.positionQty,
       marginRatio: marginState.marginRatio,
       availableMarginUsd: marginState.availableMarginUsd,
     };
@@ -252,6 +287,7 @@ export class BulkMarketFeed implements IMarketFeed {
       ...quoteSnapshot(this.snapshot),
       markPrice,
       timestamp: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
+      tickerUpdatedAt: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
     };
     logger.debug(
       `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
@@ -280,6 +316,7 @@ export class BulkMarketFeed implements IMarketFeed {
       bestAsk,
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
       timestamp: nsToMs(data.timestamp),
+      bookUpdatedAt: nsToMs(data.timestamp),
     };
     logger.debug(
       `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
@@ -327,6 +364,7 @@ export class BulkMarketFeed implements IMarketFeed {
       ...this.snapshot,
       markPrice: close,
       timestamp: ts,
+      candleUpdatedAt: ts,
       open,
       high,
       low,
@@ -335,6 +373,59 @@ export class BulkMarketFeed implements IMarketFeed {
     };
     logger.info(
       `bulk_market_feed.candle_received market=${this.snapshot.market} ts=${this.snapshot.timestamp} open=${open} high=${high} low=${low} close=${close} volume=${volume}`,
+    );
+    this.publish(this.snapshot);
+  }
+
+  private startAccountPolling(): void {
+    if (!this.params.accountId || this.accountPollTimer !== null) {
+      return;
+    }
+    const intervalMs = this.params.accountPollIntervalMs ?? DEFAULT_ACCOUNT_POLL_INTERVAL_MS;
+    this.accountPollTimer = setInterval(() => {
+      if (this.accountPollInFlight) {
+        return;
+      }
+      this.accountPollInFlight = true;
+      void this.refreshAccountState()
+        .catch((error) => {
+          logger.warn(
+            `bulk_market_feed.account_poll_failed market=${this.params.market} error=${String(error)}`,
+          );
+        })
+        .finally(() => {
+          this.accountPollInFlight = false;
+        });
+    }, intervalMs);
+    this.accountPollTimer.unref();
+    logger.info(
+      `bulk_market_feed.account_polling_started market=${this.params.market} intervalMs=${intervalMs}`,
+    );
+  }
+
+  private stopAccountPolling(): void {
+    if (this.accountPollTimer === null) {
+      return;
+    }
+    clearInterval(this.accountPollTimer);
+    this.accountPollTimer = null;
+  }
+
+  private async refreshAccountState(): Promise<void> {
+    if (this.snapshot === null) {
+      return;
+    }
+    const marginState = await this.fetchMarginState();
+    this.snapshot = {
+      ...this.snapshot,
+      accountUpdatedAt: marginState.accountUpdatedAt,
+      positionUpdatedAt: marginState.positionUpdatedAt,
+      positionQty: marginState.positionQty,
+      marginRatio: marginState.marginRatio,
+      availableMarginUsd: marginState.availableMarginUsd,
+    };
+    logger.debug(
+      `bulk_market_feed.account_updated market=${this.snapshot.market} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"} positionQty=${this.snapshot.positionQty ?? "null"} accountUpdatedAt=${this.snapshot.accountUpdatedAt ?? "null"}`,
     );
     this.publish(this.snapshot);
   }
@@ -358,7 +449,13 @@ export class BulkMarketFeed implements IMarketFeed {
 
   private async fetchMarginState(): Promise<BulkMarginState> {
     if (!this.params.accountId) {
-      return { marginRatio: null, availableMarginUsd: null };
+      return {
+        marginRatio: null,
+        availableMarginUsd: null,
+        accountUpdatedAt: null,
+        positionQty: null,
+        positionUpdatedAt: null,
+      };
     }
     const account = await retryTransientBulk(
       async () => this.client.account.fullAccount(this.params.accountId ?? ""),
@@ -378,10 +475,14 @@ export class BulkMarketFeed implements IMarketFeed {
     if (totalBalance === undefined || totalBalance <= 0 || marginUsed === undefined) {
       throw new Error(`No Bulk margin data for ${this.params.accountId}`);
     }
+    const observedAt = Date.now();
     const availableMarginUsd = Math.max(0, totalBalance - marginUsed);
     return {
       marginRatio: availableMarginUsd / totalBalance,
       availableMarginUsd,
+      accountUpdatedAt: observedAt,
+      positionQty: crossPositionQty(account.positions, this.params.market),
+      positionUpdatedAt: observedAt,
     };
   }
 

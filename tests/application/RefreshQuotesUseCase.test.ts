@@ -37,6 +37,28 @@ function captureWarnLogs() {
   };
 }
 
+function freshSnapshot(now: number) {
+  return {
+    market: "BTC-USD",
+    bestBid: 99_990,
+    bestAsk: 100_010,
+    microPrice: 100_000,
+    markPrice: 100_000,
+    timestamp: now,
+    bookUpdatedAt: now,
+    tickerUpdatedAt: now,
+    marginRatio: 0.2,
+  };
+}
+
+function staleBookSnapshot(now: number) {
+  return {
+    ...freshSnapshot(now),
+    timestamp: now - 1_000,
+    bookUpdatedAt: now - 1_000,
+  };
+}
+
 describe("RefreshQuotesUseCase", () => {
   test("passes quality-gate controls into quote computation before placing orders", async () => {
     let receivedControls: unknown;
@@ -198,6 +220,69 @@ describe("RefreshQuotesUseCase", () => {
     await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
 
     expect(calls).toEqual(["place", "place"]);
+  });
+
+  test("applies stale touch side gate before ALO placement", async () => {
+    const placed: OrderRequest[] = [];
+    const now = Date.now();
+    const snapshots = [
+      freshSnapshot(now),
+      freshSnapshot(now),
+      freshSnapshot(now),
+      staleBookSnapshot(now),
+      staleBookSnapshot(now),
+    ];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        placed.push(order);
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_980,
+          ask: 100_020,
+          bidSize: 0.01,
+          askSize: 0.01,
+          policy: "ALO" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+
+    await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
+
+    expect(placed).toEqual([]);
   });
 
   test("keeps existing quote orders when refreshed prices and sizes stay within thresholds", async () => {
@@ -1658,7 +1743,7 @@ describe("RefreshQuotesUseCase", () => {
     expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "sell"]);
   });
 
-  test("skips reduce bids during a short-term down move", async () => {
+  test("keeps reduce bids during a short-term down move while skipping only open bids", async () => {
     const placed: Array<{ side: "buy" | "sell"; reduceOnly?: boolean }> = [];
     const snapshots = [
       {
@@ -1816,11 +1901,12 @@ describe("RefreshQuotesUseCase", () => {
     await useCase.execute();
     await useCase.execute();
 
-    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "sell"]);
+    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy", "sell"]);
     expect(placed[0]?.reduceOnly).toBe(true);
+    expect(placed[2]?.reduceOnly).toBe(true);
   });
 
-  test("skips reduce asks during a short-term up move", async () => {
+  test("keeps reduce asks during a short-term up move while skipping only open asks", async () => {
     const placed: Array<{ side: "buy" | "sell"; reduceOnly?: boolean }> = [];
     const snapshots = [
       {
@@ -1978,8 +2064,9 @@ describe("RefreshQuotesUseCase", () => {
     await useCase.execute();
     await useCase.execute();
 
-    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy"]);
+    expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "buy", "sell"]);
     expect(placed[1]?.reduceOnly).toBe(true);
+    expect(placed[3]?.reduceOnly).toBe(true);
   });
 
   test("skips open bids during a short-term down move while keeping the ask side live", async () => {
@@ -2142,7 +2229,7 @@ describe("RefreshQuotesUseCase", () => {
     expect(placed.map((order) => order.side)).toEqual(["buy", "sell", "sell"]);
   });
 
-  test("does not skip GTC quote placement for normal websocket lag", async () => {
+  test("does not skip GTC quote placement when the refreshed touch is still fresh", async () => {
     const placed: Array<{ side: "buy" | "sell"; price?: number }> = [];
     const now = Date.now();
     const snapshots = [
@@ -2179,7 +2266,7 @@ describe("RefreshQuotesUseCase", () => {
         bestAsk: 100_010,
         microPrice: 100_000,
         markPrice: 100_000,
-        timestamp: now - 2_500,
+        timestamp: now - 500,
         marginRatio: 0.2,
       },
       {
@@ -2188,7 +2275,7 @@ describe("RefreshQuotesUseCase", () => {
         bestAsk: 100_010,
         microPrice: 100_000,
         markPrice: 100_000,
-        timestamp: now - 2_500,
+        timestamp: now - 500,
         marginRatio: 0.2,
       },
     ];

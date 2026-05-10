@@ -47,7 +47,7 @@ describe("QuoteEngine", () => {
       bestAsk: 101,
       microPrice: 100,
       markPrice: 100,
-      timestamp: Date.now(),
+      timestamp: 2_000,
       marginRatio: 0.2,
     };
     const flatEngine = createEngine();
@@ -58,6 +58,7 @@ describe("QuoteEngine", () => {
       microPrice: 101,
       bestBid: 100,
       bestAsk: 102,
+      timestamp: 1_000,
     };
     flatEngine.compute(warmupSnapshot, { qty: 0, avgEntry: 0, unrealizedPnl: 0 });
     longEngine.compute(warmupSnapshot, { qty: 0.2, avgEntry: 100, unrealizedPnl: 0 });

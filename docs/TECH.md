@@ -136,7 +136,7 @@ Bullet の DI path は持たない。
   - 購読直後の historical candle batch は最新分だけ処理し、起動時の DB 書き込み量を bounded に保つ
   - Bulk timestamp は ns から ms に正規化する
   - best bid/ask と size から microprice を計算する
-  - account id がある場合のみ margin を取得する
+  - account id がある場合のみ margin / position を初期取得し、account poller で freshness を更新する
 - `BulkOrderGateway`
   - domain order を `bulk-ts-sdk` の `placeLimitOrder` / `placeMarketOrder` / `cancelOrder` / `cancelAll` に変換する
   - `response.data.statuses` から order id と status を抽出する

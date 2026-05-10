@@ -25,6 +25,22 @@ export interface ActiveManagedOrder {
   replaced: boolean;
 }
 
+export interface OrderManagerState {
+  unknownOrderState: boolean;
+  cancelFailures: number;
+  unknownOrderKeys: string[];
+}
+
+export class OrderManagerUnknownStateError extends Error {
+  constructor(
+    message: string,
+    override readonly cause: unknown,
+  ) {
+    super(message);
+    this.name = "OrderManagerUnknownStateError";
+  }
+}
+
 const defaultOptions: OrderManagerOptions = {
   priceReplaceThresholdBps: 0.8,
   sizeReplaceThresholdRatio: 0.15,
@@ -35,14 +51,24 @@ const defaultOptions: OrderManagerOptions = {
 
 export class OrderManager {
   private readonly activeOrders = new Map<string, { order: PlacedOrder; placedAtMs: number }>();
+  private readonly unknownOrders = new Map<string, { id: string }>();
   private readonly options: OrderManagerOptions;
   private quoteCooldownUntilMs = 0;
+  private cancelFailures = 0;
 
   constructor(
     private readonly orderGateway: IOrderGateway,
     options: Partial<OrderManagerOptions> = {},
   ) {
     this.options = { ...defaultOptions, ...options };
+  }
+
+  state(): OrderManagerState {
+    return {
+      unknownOrderState: this.unknownOrders.size > 0,
+      cancelFailures: this.cancelFailures,
+      unknownOrderKeys: [...this.unknownOrders.keys()],
+    };
   }
 
   async reconcile(targetOrders: ReadonlyArray<ManagedOrderRequest>): Promise<ActiveManagedOrder[]> {
@@ -57,8 +83,7 @@ export class OrderManager {
     const cancellations: Promise<void>[] = [];
     for (const [key, active] of this.activeOrders) {
       if (!targetKeys.has(key)) {
-        cancellations.push(this.orderGateway.cancel(active.order.id));
-        this.activeOrders.delete(key);
+        cancellations.push(this.cancelTrackedOrder(key, active, "target_removed"));
       }
     }
 
@@ -76,7 +101,7 @@ export class OrderManager {
         continue;
       }
       if (previous !== undefined) {
-        cancellations.push(this.orderGateway.cancel(previous.order.id));
+        cancellations.push(this.cancelTrackedOrder(target.key, previous, "replace"));
       }
       if (this.shouldDelayQuotePlacement(target)) {
         logger.warn(
@@ -113,6 +138,54 @@ export class OrderManager {
     }
     this.activeOrders.set(target.key, { order: placed, placedAtMs: this.options.nowMs() });
     return { key: target.key, side: target.side, order: placed, replaced: true };
+  }
+
+  private async cancelTrackedOrder(
+    key: string,
+    active: { order: PlacedOrder; placedAtMs: number },
+    reason: "replace" | "target_removed",
+  ): Promise<void> {
+    try {
+      await this.orderGateway.cancel(active.order.id);
+      this.activeOrders.delete(key);
+      this.unknownOrders.delete(key);
+    } catch (error) {
+      await this.markUnknownAndCancelAll(key, active.order, reason, error);
+    }
+  }
+
+  private async cancelUntrackedOrder(
+    order: { id: string },
+    reason: "untracked_exchange_order",
+  ): Promise<void> {
+    try {
+      await this.orderGateway.cancel(order.id);
+      this.unknownOrders.delete(`${reason}:${order.id}`);
+    } catch (error) {
+      await this.markUnknownAndCancelAll(`${reason}:${order.id}`, order, reason, error);
+    }
+  }
+
+  private async markUnknownAndCancelAll(
+    key: string,
+    order: { id: string },
+    reason: string,
+    error: unknown,
+  ): Promise<never> {
+    this.cancelFailures += 1;
+    this.unknownOrders.set(key, order);
+    logger.error(
+      `order_manager.cancel_failed_unknown_state key=${key} orderId=${order.id} reason=${reason} error=${String(error)}`,
+    );
+    await this.orderGateway.cancelAll().catch((cancelAllError) => {
+      logger.error(
+        `order_manager.cancel_all_after_cancel_failure_failed key=${key} orderId=${order.id} error=${String(cancelAllError)}`,
+      );
+    });
+    throw new OrderManagerUnknownStateError(
+      `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${String(error)}`,
+      error,
+    );
   }
 
   private shouldReplace(
@@ -166,7 +239,7 @@ export class OrderManager {
     await Promise.all(
       exchangeOpenOrders
         .filter((order) => !trackedOrderIds.has(order.id))
-        .map(async (order) => this.orderGateway.cancel(order.id)),
+        .map(async (order) => this.cancelUntrackedOrder(order, "untracked_exchange_order")),
     );
     return droppedTrackedOrders;
   }

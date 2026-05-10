@@ -16,7 +16,7 @@ import { logger } from "../../utils/logger.ts";
 
 const NORMAL_PASSIVE_TOUCH_MARGIN_BPS = 0.25;
 const REDUCE_PASSIVE_TOUCH_MARGIN_BPS = 0.05;
-const MAX_OPEN_QUOTE_TOUCH_STALENESS_MS = 3_000;
+const MAX_OPEN_QUOTE_TOUCH_STALENESS_MS = 750;
 const EPOCH_MS_LOWER_BOUND = 1_000_000_000_000;
 const MOMENTUM_GUARD_THRESHOLD_BPS = 0.05;
 const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
@@ -228,25 +228,28 @@ function quoteSkipReason(
   },
   snapshot: MarketSnapshot,
 ): string | null {
-  if (order.timeInForce !== "GTC") {
-    return null;
-  }
   if (isStaleEpochSnapshot(snapshot)) {
     return "stale_touch";
   }
+  if (order.intent !== "quote") {
+    return null;
+  }
   if (order.side === "buy" && order.trendBps <= -OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
-    return order.intent === "reduce" ? "downtrend_reduce_bid" : "downtrend_open_bid";
+    return "downtrend_open_bid";
   }
   if (order.side === "sell" && order.trendBps >= OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
-    return order.intent === "reduce" ? "uptrend_reduce_ask" : "uptrend_open_ask";
+    return "uptrend_open_ask";
   }
   return null;
 }
 
 function isStaleEpochSnapshot(snapshot: MarketSnapshot): boolean {
+  const touchTimestamp = snapshot.bookUpdatedAt ?? snapshot.timestamp;
+  if (snapshot.bookUpdatedAt === undefined && isCandleSnapshot(snapshot)) {
+    return false;
+  }
   return (
-    snapshot.timestamp >= EPOCH_MS_LOWER_BOUND &&
-    !isCandleSnapshot(snapshot) &&
+    touchTimestamp >= EPOCH_MS_LOWER_BOUND &&
     touchStalenessMs(snapshot) > MAX_OPEN_QUOTE_TOUCH_STALENESS_MS
   );
 }
@@ -261,7 +264,7 @@ function isCandleSnapshot(snapshot: MarketSnapshot): boolean {
 }
 
 function touchStalenessMs(snapshot: MarketSnapshot): number {
-  return Math.max(0, Date.now() - snapshot.timestamp);
+  return Math.max(0, Date.now() - (snapshot.bookUpdatedAt ?? snapshot.timestamp));
 }
 
 function guardedLimitPrice(

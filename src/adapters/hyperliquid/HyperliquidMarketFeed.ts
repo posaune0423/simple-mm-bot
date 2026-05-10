@@ -108,6 +108,7 @@ export class HyperliquidMarketFeed implements IMarketFeed {
           ...this.snapshot,
           markPrice: mark,
           timestamp: Date.now(),
+          tickerUpdatedAt: Date.now(),
         };
         logger.debug(
           `hyperliquid_market_feed.mark_updated market=${this.params.market} markPrice=${mark}`,
@@ -135,6 +136,7 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       bestAsk: bestAsk.price,
       microPrice: computeMicroPrice(bestBid.price, bestAsk.price, bestBid.size, bestAsk.size),
       timestamp: book.time,
+      bookUpdatedAt: book.time,
     };
     logger.debug(
       `hyperliquid_market_feed.book_updated market=${this.params.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice}`,
@@ -155,6 +157,7 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       throw new Error(`No order book levels for ${this.params.market}`);
     }
 
+    const observedAt = marginRatio === null ? null : Date.now();
     this.snapshot = {
       market: this.params.market,
       bestBid: bestBid.price,
@@ -162,6 +165,12 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       microPrice: computeMicroPrice(bestBid.price, bestAsk.price, bestBid.size, bestAsk.size),
       markPrice: mids[this.params.market] ?? (bestBid.price + bestAsk.price) / 2,
       timestamp: book.time,
+      bookUpdatedAt: book.time,
+      tickerUpdatedAt: Date.now(),
+      candleUpdatedAt: null,
+      accountUpdatedAt: observedAt ?? this.snapshot?.accountUpdatedAt ?? null,
+      positionUpdatedAt: observedAt ?? this.snapshot?.positionUpdatedAt ?? null,
+      positionQty: null,
       marginRatio,
     };
     logger.info(

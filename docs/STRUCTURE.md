@@ -32,6 +32,8 @@ simple-mm-bot/
 │   │   ├── ports/
 │   │   ├── strategy/
 │   │   ├── FairPriceCalculator.ts
+│   │   ├── MarketContext.ts
+│   │   ├── MarketContextBuilder.ts
 │   │   ├── QuoteEngine.ts
 │   │   └── VolatilityEstimator.ts
 │   ├── adapters/
@@ -117,6 +119,7 @@ simple-mm-bot/
 - adapter payload を entity に持ち込まない
 
 `QuoteEngine` は strategy、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
+`MarketContext` / `MarketContextBuilder` は component freshness、外部価格差、LOB/risk context など venue 非依存の market context を構築する純粋 domain code として置く。
 Strategy は `src/domain/strategy/*` に pure domain code として置き、`QuotingStrategyFactory` が config の `quoteEngine.strategy.type` から具象実装を組み立てる。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
@@ -152,7 +155,7 @@ Bulk Trade の primary adapter。
   - 購読直後の historical candle batch は最新分だけ処理し、quote tick loop とは同期させない
   - Bulk timestamp は ns から ms に正規化する
   - top book から mid / microprice を計算する
-  - account id が利用できる場合のみ margin ratio を取得する
+  - account id が利用できる場合のみ margin ratio / position qty を取得し、polling で account / position freshness を維持する
 - `BulkOhlcvFetcher.ts`
   - `bulk-ts-sdk` の `market.klines` から historical OHLCV を取得する
   - Bulk `backtest` の replay feed 用に domain `OhlcvRecord` へ正規化する

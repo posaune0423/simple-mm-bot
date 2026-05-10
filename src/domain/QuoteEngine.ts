@@ -44,7 +44,7 @@ export class QuoteEngine {
     // 2. update short-horizon volatility
     // 3. let the strategy convert state into executable bid/ask levels
     const fairPrice = this.fairCalc.compute(snapshot);
-    const sigma = this.volEst.update(snapshot.markPrice);
+    const sigma = this.volEst.update(snapshot.markPrice, snapshot.timestamp);
     const quoteSize = this.computeQuoteSize(fairPrice);
     const quote = this.strategy.computeQuote({
       fairPrice,
