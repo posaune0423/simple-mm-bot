@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeRollingSharpe } from "../../../src/reporting/metrics/rollingSharpe.ts";
+import { computeRollingSharpe } from "../../../src/lib/reporting/metrics/rollingSharpe.ts";
 import { buildFill } from "../fixtures.ts";
 
 describe("computeRollingSharpe", () => {

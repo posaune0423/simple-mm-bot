@@ -2,10 +2,7 @@ import { ResultAsync } from "neverthrow";
 
 import { tuneBulkConfigDocument } from "./lib/BulkConfigTuning.ts";
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
-import {
-  DEFAULT_BULK_BETA_CONFIG_PATH,
-  LATEST_METRICS_EVALUATION_PATH,
-} from "../src/runtimePaths.ts";
+import { DEFAULT_BULK_BETA_CONFIG_PATH, LATEST_METRICS_EVALUATION_PATH } from "../src/constants.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";

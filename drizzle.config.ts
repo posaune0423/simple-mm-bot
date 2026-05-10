@@ -6,7 +6,7 @@ import {
   POSTGRES_SCHEMA_PATH,
   SQLITE_MIGRATIONS_DIR,
   SQLITE_SCHEMA_PATH,
-} from "./src/runtimePaths.ts";
+} from "./src/constants.ts";
 
 const databaseUrl = env.DATABASE_URL;
 

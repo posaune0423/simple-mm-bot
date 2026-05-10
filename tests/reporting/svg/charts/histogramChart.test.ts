@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeHistogram } from "../../../../src/reporting/metrics/histogram.ts";
-import { renderHistogramChart } from "../../../../src/reporting/svg/charts/histogramChart.ts";
+import { computeHistogram } from "../../../../src/lib/reporting/metrics/histogram.ts";
+import { renderHistogramChart } from "../../../../src/lib/reporting/svg/charts/histogramChart.ts";
 
 describe("renderHistogramChart", () => {
   test("renders one rect per non-zero bin", () => {

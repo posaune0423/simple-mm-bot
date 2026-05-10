@@ -3,7 +3,7 @@ import { ResultAsync } from "neverthrow";
 
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
-import { LATEST_METRICS_EVALUATION_PATH, LATEST_METRICS_RESULTS_DIR } from "../src/runtimePaths.ts";
+import { LATEST_METRICS_EVALUATION_PATH, LATEST_METRICS_RESULTS_DIR } from "../src/constants.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";

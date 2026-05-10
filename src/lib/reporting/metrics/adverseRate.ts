@@ -1,4 +1,4 @@
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { ReportFill } from "../types.ts";
 
 interface HourlyAdverseRate {
   hour: number;
@@ -8,7 +8,7 @@ interface HourlyAdverseRate {
 
 const HOURS = 24;
 
-export function computeHourlyAdverseRate(fills: ReadonlyArray<Fill>): HourlyAdverseRate[] {
+export function computeHourlyAdverseRate(fills: ReadonlyArray<ReportFill>): HourlyAdverseRate[] {
   const buckets: HourlyAdverseRate[] = Array.from({ length: HOURS }, (_, hour) => ({
     hour,
     fillCount: 0,

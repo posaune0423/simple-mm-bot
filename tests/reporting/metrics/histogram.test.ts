@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeHistogram } from "../../../src/reporting/metrics/histogram.ts";
+import { computeHistogram } from "../../../src/lib/reporting/metrics/histogram.ts";
 
 describe("computeHistogram", () => {
   test("returns equal-width bins covering min..max", () => {

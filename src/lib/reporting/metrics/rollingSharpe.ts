@@ -1,4 +1,4 @@
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { ReportFill } from "../types.ts";
 
 interface RollingSharpePoint {
   timestamp: number;
@@ -6,7 +6,7 @@ interface RollingSharpePoint {
 }
 
 export function computeRollingSharpe(
-  fills: ReadonlyArray<Fill>,
+  fills: ReadonlyArray<ReportFill>,
   windowSize = 60,
   annualize = 365,
 ): RollingSharpePoint[] {

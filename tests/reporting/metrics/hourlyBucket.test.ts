@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   computeHourlyMarkoutBps,
   computeHourlySideCounts,
-} from "../../../src/reporting/metrics/hourlyBucket.ts";
+} from "../../../src/lib/reporting/metrics/hourlyBucket.ts";
 import { buildFill } from "../fixtures.ts";
 
 describe("computeHourlyMarkoutBps", () => {

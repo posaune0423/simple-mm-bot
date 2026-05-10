@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { ResultAsync } from "neverthrow";
 
 import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
-import { DEFAULT_SQLITE_DB_PATH, METRICS_RESULTS_DIR } from "../src/runtimePaths.ts";
+import { DEFAULT_SQLITE_DB_PATH, METRICS_RESULTS_DIR } from "../src/constants.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";

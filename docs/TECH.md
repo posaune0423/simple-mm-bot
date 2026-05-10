@@ -224,7 +224,7 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 - Bulk template: `config/config.example.yml`
 - Bulk backtest preset: `config/config.backtest.yml`
 
-Default path と生成先は `src/runtimePaths.ts` に集約する。script や Drizzle config へ hard-coded path を増やさない。
+Default path と生成先は `src/constants.ts` に集約する。script や Drizzle config へ hard-coded path を増やさない。
 
 環境変数による override:
 

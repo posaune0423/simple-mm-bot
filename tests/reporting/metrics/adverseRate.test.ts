@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeHourlyAdverseRate } from "../../../src/reporting/metrics/adverseRate.ts";
+import { computeHourlyAdverseRate } from "../../../src/lib/reporting/metrics/adverseRate.ts";
 import { buildFill } from "../fixtures.ts";
 
 describe("computeHourlyAdverseRate", () => {

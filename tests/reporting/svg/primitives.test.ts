@@ -11,7 +11,7 @@ import {
   svgEscape,
   svgRoot,
   text,
-} from "../../../src/reporting/svg/primitives.ts";
+} from "../../../src/lib/reporting/svg/primitives.ts";
 
 describe("svg primitives", () => {
   test("svgEscape replaces XML-significant characters", () => {

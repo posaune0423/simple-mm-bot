@@ -1,14 +1,14 @@
 import { ResultAsync } from "neverthrow";
 
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
-import { DEFAULT_SQLITE_DB_PATH } from "../src/runtimePaths.ts";
-import { fetchReportFills } from "../src/reporting/queries/MetricsFactQuery.ts";
+import { DEFAULT_SQLITE_DB_PATH } from "../src/constants.ts";
+import { fetchReportFills } from "../src/lib/reporting/queries/MetricsFactQuery.ts";
 import {
   DEFAULT_PERIODS,
   defaultOutputDir,
   generateReport,
-} from "../src/reporting/report/generator.ts";
-import type { PeriodWindow } from "../src/reporting/report/generator.ts";
+} from "../src/lib/reporting/report/generator.ts";
+import type { PeriodWindow } from "../src/lib/reporting/report/generator.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import type { AppError } from "../src/utils/errors.ts";
 import { createAppError, formatAppError } from "../src/utils/errors.ts";

@@ -6,7 +6,7 @@ import {
   DEFAULT_BULK_BETA_CONFIG_PATH,
   DEFAULT_CONFIG_PATH,
   DEFAULT_SQLITE_DB_PATH,
-} from "../src/runtimePaths.ts";
+} from "../src/constants.ts";
 
 describe("ConfigLoader", () => {
   test("uses data/mm.db as the default SQLite database path", () => {

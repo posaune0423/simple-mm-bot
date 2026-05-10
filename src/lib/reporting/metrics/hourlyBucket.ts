@@ -1,4 +1,4 @@
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { ReportFill } from "../types.ts";
 
 interface HourlyMarkoutBucket {
   hour: number;
@@ -19,7 +19,7 @@ function emptyMarkoutBuckets(): HourlyMarkoutBucket[] {
 }
 
 export function computeHourlyMarkoutBps(
-  fills: ReadonlyArray<Fill>,
+  fills: ReadonlyArray<ReportFill>,
   horizon: "5s" | "30s" = "5s",
 ): HourlyMarkoutBucket[] {
   const buckets = emptyMarkoutBuckets();
@@ -45,7 +45,7 @@ export function computeHourlyMarkoutBps(
   return buckets;
 }
 
-export function computeHourlySideCounts(fills: ReadonlyArray<Fill>): HourlySideCount[] {
+export function computeHourlySideCounts(fills: ReadonlyArray<ReportFill>): HourlySideCount[] {
   const buckets: HourlySideCount[] = Array.from({ length: HOURS }, (_, hour) => ({
     hour,
     buy: 0,

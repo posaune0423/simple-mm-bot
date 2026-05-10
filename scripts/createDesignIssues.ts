@@ -7,7 +7,7 @@ import {
   LATEST_METRICS_EVALUATION_PATH,
   LATEST_METRICS_REPORT_PATH,
   METRICS_ISSUES_PATH,
-} from "../src/runtimePaths.ts";
+} from "../src/constants.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile } from "../src/utils/fs.ts";

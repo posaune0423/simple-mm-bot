@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeDrawdown } from "../../../src/reporting/metrics/drawdown.ts";
+import { computeDrawdown } from "../../../src/lib/reporting/metrics/drawdown.ts";
 
 describe("computeDrawdown", () => {
   test("tracks peak-to-trough as non-positive series", () => {

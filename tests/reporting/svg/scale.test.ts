@@ -6,7 +6,7 @@ import {
   linearScale,
   niceTicks,
   symmetricExtent,
-} from "../../../src/reporting/svg/scale.ts";
+} from "../../../src/lib/reporting/svg/scale.ts";
 
 describe("linearScale", () => {
   test("maps domain edges to range edges", () => {

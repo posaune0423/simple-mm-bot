@@ -1,9 +1,9 @@
-import type { FillAnalysis, PerformanceMetrics } from "../../domain/entities/PerformanceMetrics.ts";
+import type { ReportFillAnalysis, ReportPerformanceMetrics } from "../types.ts";
 
 export interface PeriodKpis {
   label: string;
-  metrics: PerformanceMetrics;
-  fillAnalysis: FillAnalysis;
+  metrics: ReportPerformanceMetrics;
+  fillAnalysis: ReportFillAnalysis;
 }
 
 function formatNumber(value: number, fractionDigits = 2): string {
@@ -16,7 +16,7 @@ function formatPct(value: number, fractionDigits = 2): string {
   return `${(value * 100).toFixed(fractionDigits)}%`;
 }
 
-function adverseRate(analysis: FillAnalysis): number {
+function adverseRate(analysis: ReportFillAnalysis): number {
   return analysis.fillCount > 0 ? analysis.adverseSelectionCount / analysis.fillCount : 0;
 }
 

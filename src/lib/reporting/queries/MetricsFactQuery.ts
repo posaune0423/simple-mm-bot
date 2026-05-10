@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { ReportFill } from "../types.ts";
 
 interface FetchReportFillsInput {
   sqlite: Database;
@@ -13,7 +13,7 @@ interface ReportFillRow {
   id: string;
   venue: string;
   market: string;
-  side: Fill["side"];
+  side: ReportFill["side"];
   price: number;
   qty: number;
   fee: number;
@@ -30,7 +30,7 @@ export async function fetchReportFills({
   venue,
   periodStart,
   periodEnd,
-}: FetchReportFillsInput): Promise<Fill[]> {
+}: FetchReportFillsInput): Promise<ReportFill[]> {
   const venueCondition = venue === undefined ? "" : "AND f.venue = $venue";
   const rows = sqlite
     .query<ReportFillRow, Record<string, string | number | null>>(

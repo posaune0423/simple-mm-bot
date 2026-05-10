@@ -53,6 +53,10 @@ describe("package scripts", () => {
   test("keeps agent helper logic in scripts and persistence contracts in infrastructure", () => {
     expect(existsSync("src/ops")).toBe(false);
     expect(existsSync("src/telemetry")).toBe(false);
+    expect(existsSync("src/reporting")).toBe(false);
+    expect(existsSync("src/lib/reporting")).toBe(true);
+    expect(existsSync("src/runtimePaths.ts")).toBe(false);
+    expect(existsSync("src/constants.ts")).toBe(true);
     expect(existsSync("tests/ops")).toBe(false);
     expect(existsSync("scripts/lib/MetricsEvaluation.ts")).toBe(true);
     expect(existsSync("src/application/MetricsRecorder.ts")).toBe(true);

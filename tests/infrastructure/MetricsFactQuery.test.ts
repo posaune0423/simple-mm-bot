@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { createSqliteClient } from "../../src/infrastructure/db/sqlite/client.ts";
 import { SqliteMetricsRepository } from "../../src/infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
-import { fetchReportFills } from "../../src/reporting/queries/MetricsFactQuery.ts";
+import { fetchReportFills } from "../../src/lib/reporting/queries/MetricsFactQuery.ts";
 
 describe("fetchReportFills", () => {
   const tempDir = join(process.cwd(), "tmp-tests-metrics-fact-query");

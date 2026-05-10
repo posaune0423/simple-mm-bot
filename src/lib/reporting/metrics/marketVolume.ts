@@ -1,4 +1,4 @@
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { ReportFill } from "../types.ts";
 
 interface MarketVolume {
   market: string;
@@ -6,7 +6,7 @@ interface MarketVolume {
   fillCount: number;
 }
 
-export function computeMarketVolume(fills: ReadonlyArray<Fill>): MarketVolume[] {
+export function computeMarketVolume(fills: ReadonlyArray<ReportFill>): MarketVolume[] {
   const totals = new Map<string, MarketVolume>();
   for (const fill of fills) {
     const existing = totals.get(fill.market) ?? {
@@ -30,7 +30,7 @@ interface FeeVsPnlPoint {
 
 const HOURS = 24;
 
-export function computeFeeVsPnl(fills: ReadonlyArray<Fill>): FeeVsPnlPoint[] {
+export function computeFeeVsPnl(fills: ReadonlyArray<ReportFill>): FeeVsPnlPoint[] {
   const buckets: FeeVsPnlPoint[] = Array.from({ length: HOURS }, (_, hour) => ({
     hour,
     fee: 0,

@@ -1,11 +1,11 @@
-import type { EquityPoint } from "../../domain/entities/PerformanceMetrics.ts";
+import type { ReportEquityPoint } from "../types.ts";
 
 interface DrawdownPoint {
   timestamp: number;
   drawdown: number;
 }
 
-export function computeDrawdown(equityCurve: ReadonlyArray<EquityPoint>): DrawdownPoint[] {
+export function computeDrawdown(equityCurve: ReadonlyArray<ReportEquityPoint>): DrawdownPoint[] {
   let peak = 0;
   return equityCurve.map((point) => {
     peak = Math.max(peak, point.value);

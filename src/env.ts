@@ -1,7 +1,7 @@
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
-import { DEFAULT_CONFIG_PATH, DEFAULT_SQLITE_DB_PATH } from "./runtimePaths.ts";
+import { DEFAULT_CONFIG_PATH, DEFAULT_SQLITE_DB_PATH } from "./constants.ts";
 
 export const env = createEnv({
   server: {

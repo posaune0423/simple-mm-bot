@@ -13,7 +13,7 @@ simple-mm-bot/
 │   ├── main.ts
 │   ├── env.ts
 │   ├── config.ts
-│   ├── runtimePaths.ts
+│   ├── constants.ts
 │   ├── application/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
@@ -56,14 +56,14 @@ simple-mm-bot/
 │   │           ├── bootstrap.ts
 │   │           ├── client.ts
 │   │           └── schema.ts
-│   ├── reporting/
-│   │   ├── metrics/
-│   │   ├── queries/
-│   │   ├── report/
-│   │   └── svg/
 │   ├── utils/
 │   └── lib/
-│       └── hyperliquid/
+│       ├── hyperliquid/
+│       └── reporting/
+│           ├── metrics/
+│           ├── queries/
+│           ├── report/
+│           └── svg/
 ├── config/
 │   ├── config.bulk.beta.yml
 │   ├── config.bulk.mainnet.yml
@@ -206,7 +206,7 @@ runtime source ではなく tool 用 script の実装詳細として扱う。
 
 `scripts/lib/` は bot runtime の意思決定に import しない。
 
-### `src/runtimePaths.ts`
+### `src/constants.ts`
 
 Default config、SQLite DB path (`data/mm.db`)、Drizzle schema / migration output、metrics result output の path registry。
 新しい生成先や default path を増やす場合は、まずここへ追加してから scripts / docs / tests で参照する。
@@ -230,7 +230,7 @@ Default config、SQLite DB path (`data/mm.db`)、Drizzle schema / migration outp
 - `docs/reports/`
   - 人間が review / commit する performance dashboard。`report:generate` の default 出力であり、runtime state ではなく git 管理可能な report snapshot として扱う。
 
-### `src/reporting/`
+### `src/lib/reporting/`
 
 backtest / paper / live の分析出力を置く。
 

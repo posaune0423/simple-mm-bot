@@ -1,6 +1,5 @@
-import type { Fill } from "../../domain/entities/Fill.ts";
-import type { FillAnalysis, PerformanceMetrics } from "../../domain/entities/PerformanceMetrics.ts";
-import { writeTextFile } from "../../utils/fs.ts";
+import type { ReportFill, ReportFillAnalysis, ReportPerformanceMetrics } from "../types.ts";
+import { writeTextFile } from "../../../utils/fs.ts";
 import { computeHourlyAdverseRate } from "../metrics/adverseRate.ts";
 import { computeDrawdown } from "../metrics/drawdown.ts";
 import { computeHistogram } from "../metrics/histogram.ts";
@@ -25,7 +24,7 @@ import {
   reportPaths,
   snapshotDateFromMs,
 } from "./paths.ts";
-import { REPORTS_DIR } from "../../runtimePaths.ts";
+import { REPORTS_DIR } from "../../../constants.ts";
 
 export interface PeriodWindow {
   key: string;
@@ -38,7 +37,7 @@ interface GenerateReportInput {
     venue?: string;
     periodStart: number;
     periodEnd: number;
-  }) => Promise<Fill[]>;
+  }) => Promise<ReportFill[]>;
   now: number;
   mode: string;
   venue?: string;
@@ -170,7 +169,7 @@ function buildSections(
 
 interface BuildPeriodChartsArgs {
   period: PeriodWindow;
-  fills: ReadonlyArray<Fill>;
+  fills: ReadonlyArray<ReportFill>;
   equityCurve: ReadonlyArray<{ timestamp: number; value: number }>;
 }
 
@@ -369,7 +368,7 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function collectMarkoutBps(fills: ReadonlyArray<Fill>, horizon: "5s" | "30s"): number[] {
+function collectMarkoutBps(fills: ReadonlyArray<ReportFill>, horizon: "5s" | "30s"): number[] {
   const values: number[] = [];
   for (const fill of fills) {
     const future = horizon === "5s" ? fill.markPrice5s : fill.markPrice30s;
@@ -382,9 +381,9 @@ function collectMarkoutBps(fills: ReadonlyArray<Fill>, horizon: "5s" | "30s"): n
   return values;
 }
 
-function buildReportStats(fills: ReadonlyArray<Fill>): {
-  metrics: PerformanceMetrics;
-  fillAnalysis: FillAnalysis;
+function buildReportStats(fills: ReadonlyArray<ReportFill>): {
+  metrics: ReportPerformanceMetrics;
+  fillAnalysis: ReportFillAnalysis;
   equityCurve: Array<{ timestamp: number; value: number }>;
 } {
   let cumulative = 0;
@@ -435,7 +434,7 @@ function buildReportStats(fills: ReadonlyArray<Fill>): {
   };
 }
 
-function fillHasAdverseMarkout(fill: Fill): boolean {
+function fillHasAdverseMarkout(fill: ReportFill): boolean {
   return collectMarkoutBps([fill], "5s").some((value) => value < 0);
 }
 
