@@ -1,19 +1,19 @@
 import { createEnv } from "@t3-oss/env-core";
-import { z } from "zod";
+import * as v from "valibot";
 
 export const env = createEnv({
   server: {
-    CONFIG_PATH: z.string().min(1).default("config/config.bulk.beta.yml"),
-    MODE: z.enum(["live", "paper", "backtest"]).optional(),
-    DATABASE_URL: z.url().optional(),
-    DB_PATH: z.string().min(1).default("data/mm.db"),
-    SLACK_WEBHOOK_URL: z.url().optional(),
-    HL_WS_URL: z.url().optional(),
-    HL_HTTP_URL: z.url().optional(),
-    HL_SECRET_KEY: z.string().min(1).optional(),
-    HL_ACCOUNT_ADDRESS: z.string().min(1).optional(),
-    BULK_PRIVATE_KEY: z.string().min(1).optional(),
-    LOG_LEVEL: z.enum(["ERROR", "WARN", "LOG", "INFO", "DEBUG"]).default("INFO"),
+    CONFIG_PATH: v.optional(v.pipe(v.string(), v.minLength(1)), "config/config.bulk.beta.yml"),
+    MODE: v.optional(v.picklist(["live", "paper", "backtest"])),
+    DATABASE_URL: v.optional(v.pipe(v.string(), v.url())),
+    DB_PATH: v.optional(v.pipe(v.string(), v.minLength(1)), "data/mm.db"),
+    SLACK_WEBHOOK_URL: v.optional(v.pipe(v.string(), v.url())),
+    HL_WS_URL: v.optional(v.pipe(v.string(), v.url())),
+    HL_HTTP_URL: v.optional(v.pipe(v.string(), v.url())),
+    HL_SECRET_KEY: v.optional(v.pipe(v.string(), v.minLength(1))),
+    HL_ACCOUNT_ADDRESS: v.optional(v.pipe(v.string(), v.minLength(1))),
+    BULK_PRIVATE_KEY: v.optional(v.pipe(v.string(), v.minLength(1))),
+    LOG_LEVEL: v.optional(v.picklist(["ERROR", "WARN", "LOG", "INFO", "DEBUG"]), "INFO"),
   },
   runtimeEnv: Bun.env,
   emptyStringAsUndefined: true,

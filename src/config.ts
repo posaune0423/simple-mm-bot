@@ -1,124 +1,143 @@
 import type { ResultAsync } from "neverthrow";
+import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
-import { z } from "zod";
 
-import { avellanedaStoikovParamsSchema } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
+import type { AvellanedaStoikovParams } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
 import { env } from "./env.ts";
 import type { AppError } from "./utils/errors.ts";
 import { createAppError } from "./utils/errors.ts";
 import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";
 
-const timeInForceSchema = z.enum(["ALO", "GTC", "IOC"]);
-const quoteSizingSchema = z.object({
-  positionSize: z.number().positive(),
-  budgetUsd: z.number().positive().optional(),
-  bidSizeMultiplier: z.number().min(0).optional(),
-  askSizeMultiplier: z.number().min(0).optional(),
-  bidDistanceMultiplier: z.number().positive().optional(),
-  askDistanceMultiplier: z.number().positive().optional(),
+const modeSchema = v.picklist(["live", "paper", "backtest"]);
+const positiveNumberSchema = v.pipe(v.number(), v.gtValue(0));
+const nonNegativeNumberSchema = v.pipe(v.number(), v.minValue(0));
+const zeroToOneNumberSchema = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
+const positiveIntegerSchema = v.pipe(v.number(), v.integer(), v.gtValue(0));
+const nonEmptyStringSchema = v.pipe(v.string(), v.minLength(1));
+const urlStringSchema = v.pipe(v.string(), v.url());
+
+const timeInForceSchema = v.picklist(["ALO", "GTC", "IOC"]);
+const quoteSizingSchema = v.object({
+  positionSize: positiveNumberSchema,
+  budgetUsd: v.optional(positiveNumberSchema),
+  bidSizeMultiplier: v.optional(nonNegativeNumberSchema),
+  askSizeMultiplier: v.optional(nonNegativeNumberSchema),
+  bidDistanceMultiplier: v.optional(positiveNumberSchema),
+  askDistanceMultiplier: v.optional(positiveNumberSchema),
 });
-const quoteLevelSchema = z.object({
-  halfSpreadBps: z.number().positive(),
-  sizeUsd: z.number().positive(),
+const quoteLevelSchema = v.object({
+  halfSpreadBps: positiveNumberSchema,
+  sizeUsd: positiveNumberSchema,
 });
-const quoteQualityGateSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-    minAverageMarkoutBps: z.number().default(0),
-    minSamples: z.number().int().positive().default(20),
-    lookbackFills: z.number().int().positive().default(100),
-    horizonsSec: z.array(z.number().int().positive()).min(1).default([5, 30, 300]),
-  })
-  .default({
+const quoteQualityGateSchema = v.optional(
+  v.object({
+    enabled: v.optional(v.boolean(), false),
+    minAverageMarkoutBps: v.optional(v.number(), 0),
+    minSamples: v.optional(positiveIntegerSchema, 20),
+    lookbackFills: v.optional(positiveIntegerSchema, 100),
+    horizonsSec: v.optional(v.pipe(v.array(positiveIntegerSchema), v.minLength(1)), [5, 30, 300]),
+  }),
+  {
     enabled: false,
     minAverageMarkoutBps: 0,
     minSamples: 20,
     lookbackFills: 100,
     horizonsSec: [5, 30, 300],
-  });
+  },
+);
 
-const strategySchema = z.object({
-  type: z.literal("avellaneda-stoikov"),
+const avellanedaStoikovParamsSchema = v.object({
+  gamma: v.pipe(v.number(), v.minValue(0), v.maxValue(0.5)),
+  kappa: positiveNumberSchema,
+  kInv: v.pipe(v.number(), v.minValue(0), v.maxValue(2)),
+}) satisfies v.GenericSchema<unknown, AvellanedaStoikovParams>;
+
+const strategySchema = v.object({
+  type: v.literal("avellaneda-stoikov"),
   params: avellanedaStoikovParamsSchema,
 });
 
-const shutdownSchema = z
-  .object({
-    closePositionPolicy: z.enum(["always", "emergency_only"]).default("always"),
-  })
-  .default({ closePositionPolicy: "always" as const });
+const shutdownSchema = v.optional(
+  v.object({
+    closePositionPolicy: v.optional(v.picklist(["always", "emergency_only"]), "always"),
+  }),
+  { closePositionPolicy: "always" as const },
+);
 
-const commonConfigSchema = z.object({
-  mode: z.enum(["live", "paper", "backtest"]),
-  quoteEngine: z.object({
-    markWeight: z.number().min(0).max(1),
-    inventoryScale: z.number().positive(),
-    timeHorizonSec: z.number().positive(),
-    minSpreadBps: z.number().min(0).optional(),
-    slideMarginThreshold: z.number().min(0).max(1),
-    defaultTimeInForce: timeInForceSchema.default("ALO"),
+const commonConfigEntries = {
+  mode: modeSchema,
+  quoteEngine: v.object({
+    markWeight: zeroToOneNumberSchema,
+    inventoryScale: positiveNumberSchema,
+    timeHorizonSec: positiveNumberSchema,
+    minSpreadBps: v.optional(nonNegativeNumberSchema),
+    slideMarginThreshold: zeroToOneNumberSchema,
+    defaultTimeInForce: v.optional(timeInForceSchema, "ALO"),
     sizing: quoteSizingSchema,
-    levels: z.array(quoteLevelSchema).min(1).optional(),
+    levels: v.optional(v.pipe(v.array(quoteLevelSchema), v.minLength(1))),
     qualityGate: quoteQualityGateSchema,
     strategy: strategySchema,
   }),
-  risk: z.object({
-    imrBuffer: z.number().min(0).max(1),
-    mmrBuffer: z.number().min(0).max(1),
-    maxPositionQty: z.number().positive(),
-    reduceTriggerQty: z.number().positive().optional(),
-    reduceTargetQty: z.number().min(0).optional(),
-    maxUnrealizedLossUsd: z.number().positive().optional(),
-    maxAdverseMoveBps: z.number().positive().optional(),
+  risk: v.object({
+    imrBuffer: zeroToOneNumberSchema,
+    mmrBuffer: zeroToOneNumberSchema,
+    maxPositionQty: positiveNumberSchema,
+    reduceTriggerQty: v.optional(positiveNumberSchema),
+    reduceTargetQty: v.optional(nonNegativeNumberSchema),
+    maxUnrealizedLossUsd: v.optional(positiveNumberSchema),
+    maxAdverseMoveBps: v.optional(positiveNumberSchema),
   }),
-  bot: z.object({
-    intervalMs: z.number().int().positive(),
+  bot: v.object({
+    intervalMs: positiveIntegerSchema,
   }),
   shutdown: shutdownSchema,
-  paper: z
-    .object({
-      touchFillRatio: z.number().min(0).max(1).default(0.5),
-    })
-    .default({ touchFillRatio: 0.5 }),
-  backtest: z.object({
-    market: z.string().min(1),
-    timeframe: z.string().min(1),
-    from: z.string().min(1),
-    to: z.string().min(1),
+  paper: v.optional(
+    v.object({
+      touchFillRatio: v.optional(zeroToOneNumberSchema, 0.5),
+    }),
+    { touchFillRatio: 0.5 },
+  ),
+  backtest: v.object({
+    market: nonEmptyStringSchema,
+    timeframe: nonEmptyStringSchema,
+    from: nonEmptyStringSchema,
+    to: nonEmptyStringSchema,
   }),
-});
+};
 
-const appConfigSchema = z.discriminatedUnion("venue", [
-  commonConfigSchema.extend({
-    venue: z.literal("hyperliquid"),
-    connections: z.object({
-      hyperliquid: z.object({
-        wsUrl: z.string().url(),
-        httpUrl: z.string().url(),
-        market: z.string().min(1),
-        secretKey: z.string().optional(),
-        accountAddress: z.string().optional(),
+const appConfigSchema = v.variant("venue", [
+  v.object({
+    ...commonConfigEntries,
+    venue: v.literal("hyperliquid"),
+    connections: v.object({
+      hyperliquid: v.object({
+        wsUrl: urlStringSchema,
+        httpUrl: urlStringSchema,
+        market: nonEmptyStringSchema,
+        secretKey: v.optional(v.string()),
+        accountAddress: v.optional(v.string()),
       }),
     }),
   }),
-  commonConfigSchema.extend({
-    venue: z.literal("bulk"),
-    connections: z.object({
-      bulk: z.object({
-        wsUrl: z.string().url(),
-        httpUrl: z.string().url(),
-        market: z.string().min(1),
-        environment: z.enum(["beta", "mainnet"]).default("mainnet"),
-        nlevels: z.number().int().positive().optional(),
-        timeoutMs: z.number().int().positive().optional(),
-        maxLeverage: z.number().min(1).max(50).optional(),
-        privateKey: z.string().optional(),
+  v.object({
+    ...commonConfigEntries,
+    venue: v.literal("bulk"),
+    connections: v.object({
+      bulk: v.object({
+        wsUrl: urlStringSchema,
+        httpUrl: urlStringSchema,
+        market: nonEmptyStringSchema,
+        environment: v.optional(v.picklist(["beta", "mainnet"]), "mainnet"),
+        nlevels: v.optional(positiveIntegerSchema),
+        timeoutMs: v.optional(positiveIntegerSchema),
+        maxLeverage: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(50))),
+        privateKey: v.optional(v.string()),
       }),
     }),
   }),
 ]);
 
-export type AppConfig = z.infer<typeof appConfigSchema>;
+export type AppConfig = v.InferOutput<typeof appConfigSchema>;
 export type AppMode = AppConfig["mode"];
 
 interface LoadConfigOptions {
@@ -171,7 +190,7 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, App
   ).andThen((text) =>
     fromResult(
       tryCatch(
-        () => applyEnvOverrides(appConfigSchema.parse(parseYaml(interpolateEnv(text)))),
+        () => applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
         (error) => createAppError("config.invalid", "Config validation failed", error),
       ),
     ),

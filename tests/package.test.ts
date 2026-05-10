@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 
 import { describe, expect, test } from "bun:test";
 
@@ -6,6 +6,8 @@ import { toKeychainMarketOrder } from "../node_modules/bulk-ts-sdk/esm/builders/
 import { KeychainSigner } from "../node_modules/bulk-ts-sdk/esm/signing/keychain_signer.js";
 
 interface PackageJson {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
 }
 
@@ -73,6 +75,30 @@ describe("package scripts", () => {
   });
 });
 
+describe("validation dependencies", () => {
+  test("uses valibot as the only direct runtime validation dependency", async () => {
+    const packageJson = (await Bun.file("package.json").json()) as PackageJson;
+
+    expect(packageJson.dependencies?.valibot).toBeDefined();
+    expect(packageJson.dependencies?.zod).toBeUndefined();
+    expect(packageJson.devDependencies?.zod).toBeUndefined();
+  });
+
+  test("does not import zod from source or tests", async () => {
+    const sourceFiles = listTypeScriptFiles(["src", "tests"]);
+    const zodImports = (
+      await Promise.all(
+        sourceFiles.map(async (file) => ({
+          file,
+          text: await Bun.file(file).text(),
+        })),
+      )
+    ).filter(({ text }) => /\bfrom\s+["']zod["']/.test(text));
+
+    expect(zodImports.map(({ file }) => file)).toEqual([]);
+  });
+});
+
 describe("bulk-ts-sdk package", () => {
   test("signs reduce-only market orders as Bulk API market actions", async () => {
     const signer = KeychainSigner.fromPrivateKey(dummyPrivateKey);
@@ -98,3 +124,17 @@ describe("bulk-ts-sdk package", () => {
     ]);
   });
 });
+
+function listTypeScriptFiles(paths: string[]): string[] {
+  return paths.flatMap((path) => {
+    if (!existsSync(path)) {
+      return [];
+    }
+    if (statSync(path).isFile()) {
+      return path.endsWith(".ts") ? [path] : [];
+    }
+    return readdirSync(path, { withFileTypes: true }).flatMap((entry) =>
+      listTypeScriptFiles([`${path}/${entry.name}`]),
+    );
+  });
+}

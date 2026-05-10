@@ -35,9 +35,9 @@
     "drizzle-orm": "^0.44.7",
     "neverthrow": "^8.2.0",
     "postgres": "^3.4.9",
+    "valibot": "^1.4.0",
     "viem": "^2.48.8",
-    "yaml": "^2.8.4",
-    "zod": "^4.4.3"
+    "yaml": "^2.8.4"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { formatMetricsReportMarkdown } from "../../scripts/generateMetricsReport.ts";
 import type { MetricsEvaluation } from "../../scripts/lib/MetricsEvaluation.ts";
-import type { TradingRunFact } from "../../src/infrastructure/Metrics.ts";
+import type { TradingRunFact } from "../../src/domain/ports/IMetricsRepository.ts";
 
 describe("generateMetricsReport", () => {
   test("prints multi-horizon adverse selection and 14d volume pace", () => {

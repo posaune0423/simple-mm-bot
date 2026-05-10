@@ -1,6 +1,6 @@
-import type { AppMode } from "../config.ts";
-import type { OrderSide, OrderTimeInForce } from "../domain/entities/Quote.ts";
+import type { OrderSide, OrderTimeInForce } from "../entities/Quote.ts";
 
+export type TradingRunMode = "live" | "paper" | "backtest";
 export type CapitalMode = "beta_mock" | "paper" | "backtest" | "real";
 type RunStatus = "running" | "completed" | "failed";
 type OrderIntent = "quote" | "reduce" | "close";
@@ -10,7 +10,7 @@ type MakerTaker = "maker" | "taker" | "unknown";
 
 export interface TradingRunFact {
   id: string;
-  mode: AppMode;
+  mode: TradingRunMode;
   venue: string;
   market: string;
   capitalMode: CapitalMode;
@@ -94,4 +94,19 @@ export interface AccountStateObservationFact {
   positionQty?: number;
   marginRatio?: number | null;
   rawJson?: unknown;
+}
+
+export interface IMetricsRepository {
+  startRun(run: TradingRunFact): Promise<void>;
+  finishRun(
+    runId: string,
+    endedAt: number,
+    status: TradingRunFact["status"],
+    stopReason?: string,
+  ): Promise<void>;
+  recordOrderbookSnapshot(snapshot: OrderbookSnapshotFact): Promise<void>;
+  recordSubmittedOrder(order: SubmittedOrderFact): Promise<void>;
+  recordTradeFill(fill: TradeFillFact): Promise<void>;
+  recordAccountStateObservation(observation: AccountStateObservationFact): Promise<void>;
+  findRun(runId: string): Promise<TradingRunFact | null>;
 }

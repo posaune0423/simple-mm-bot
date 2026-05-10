@@ -2,12 +2,12 @@ import { eq } from "drizzle-orm";
 
 import type {
   AccountStateObservationFact,
+  IMetricsRepository,
   OrderbookSnapshotFact,
   SubmittedOrderFact,
   TradeFillFact,
   TradingRunFact,
-} from "../../../Metrics.ts";
-import type { IMetricsRepository } from "../../../MetricsRepository.ts";
+} from "../../../../domain/ports/IMetricsRepository.ts";
 import {
   accountStateObservationsTable,
   orderbookSnapshotsTable,

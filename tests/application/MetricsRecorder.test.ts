@@ -8,8 +8,8 @@ import type {
   SubmittedOrderFact,
   TradeFillFact,
   TradingRunFact,
-} from "../../src/infrastructure/Metrics.ts";
-import type { IMetricsRepository } from "../../src/infrastructure/MetricsRepository.ts";
+} from "../../src/domain/ports/IMetricsRepository.ts";
+import type { IMetricsRepository } from "../../src/domain/ports/IMetricsRepository.ts";
 
 class MemoryMetricsRepository implements IMetricsRepository {
   runs = new Map<string, TradingRunFact>();
