@@ -45,7 +45,7 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.nlevels).toBe(20);
     expect(config.connections.bulk.timeoutMs).toBe(30_000);
     expect(config.connections.bulk.maxLeverage).toBe(50);
-    expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
+    expect(config.quoteEngine.defaultTimeInForce).toBe("ALO");
     expect(config.quoteEngine.markWeight).toBe(0.25);
     expect(config.quoteEngine.minSpreadBps).toBe(1.7);
     expect(config.quoteEngine.sizing.budgetUsd).toBe(90_000);
@@ -255,6 +255,7 @@ backtest:
     }
     expect(config.connections.bulk.environment).toBe("mainnet");
     expect(config.quoteEngine.minSpreadBps).toBe(8);
+    expect(config.quoteEngine.defaultTimeInForce).toBe("ALO");
     expect(config.quoteEngine.sizing.positionSize).toBe(0.01);
     expect(config.quoteEngine.sizing.budgetUsd).toBe(100);
     expect(config.risk.maxPositionQty).toBe(0.05);

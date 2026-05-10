@@ -108,7 +108,6 @@ type BulkMarketRules = {
   tickSize?: number;
   lotSize?: number;
   minNotional?: number;
-  timeInForces: Set<string>;
 };
 
 const openStatusKeys = new Set(["resting", "working"]);
@@ -361,12 +360,8 @@ export class BulkOrderGateway implements IOrderGateway {
       return order;
     }
 
-    if (rules.timeInForces.size > 0 && !rules.timeInForces.has(order.timeInForce)) {
-      throw new Error(
-        `Bulk ${order.market} does not support timeInForce=${order.timeInForce}; supported=${[...rules.timeInForces].join(",")}`,
-      );
-    }
-
+    // Bulk exchangeInfo may omit ALO even when the order endpoint accepts it.
+    // Use metadata for numeric filters only; let the venue validate TIF support.
     const qty = order.reduceOnly
       ? normalizeReduceOnlySize(order.qty, rules)
       : normalizeSize(order.qty, rules);
@@ -412,7 +407,6 @@ export class BulkOrderGateway implements IOrderGateway {
       tickSize: market.tickSize,
       lotSize: market.lotSize,
       minNotional: market.minNotional,
-      timeInForces: new Set(market.timeInForces ?? []),
     };
   }
 

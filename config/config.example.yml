@@ -22,7 +22,9 @@ quoteEngine:
   timeHorizonSec: 10
   minSpreadBps: 3
   slideMarginThreshold: 0.06
-  defaultTimeInForce: GTC
+  # Bulk exchangeInfo may omit ALO from timeInForces even when post-only works.
+  # Prefer ALO for maker quotes and let the order endpoint validate support.
+  defaultTimeInForce: ALO
   sizing:
     positionSize: 1.25
     budgetUsd: 9600

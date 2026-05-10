@@ -220,6 +220,68 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("allows ALO even when exchangeInfo omits it from timeInForces", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [
+              {
+                symbol: "BTC-USD",
+                pricePrecision: 3,
+                sizePrecision: 6,
+                tickSize: 0.001,
+                lotSize: 0.000001,
+                timeInForces: ["GTC", "IOC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeLimitOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ resting: { oid: "alo-1" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "ALO",
+    });
+
+    expect(placed).toMatchObject({
+      id: "alo-1",
+      request: { price: 81_532.123, qty: 0.003066, timeInForce: "ALO" },
+      status: "open",
+    });
+    expect(calls).toEqual([
+      {
+        symbol: "BTC-USD",
+        side: "buy",
+        price: 81_532.123,
+        size: 0.003066,
+        tif: "ALO",
+        reduceOnly: false,
+      },
+    ]);
+  });
+
   test("rounds reduce-only dust size up to the minimum Bulk lot for close orders", async () => {
     const calls: unknown[] = [];
     const gateway = new BulkOrderGateway(

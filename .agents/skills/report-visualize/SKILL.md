@@ -50,6 +50,20 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 | 3    | Market notional volume            | 24h, 7d         |
 | 3    | Fill price vs mid (scatter)       | 24h             |
 
+## Required KPI Table Fields
+
+The report must keep these fields visible whenever the source data exists. These fields are the minimum evidence needed before recommending bot changes:
+
+- Fill count, fill rate, notional/min, and projected pace vs **50M/15d**.
+- Net PnL, trade PnL, fee/rebate, PnL per volume bps, and max drawdown.
+- 5s/30s/300s average and VW markout, markout coverage by horizon, 30s tail, and adverse selection by horizon.
+- Maker ratio, configured TIF, reject rate, cancel-before-fill rate, average latency, and average order live time.
+- Quote distance to mid/best, market spread, and stale rate.
+- Buy/sell and quote/reduce split for fill count, notional, PnL, markout, and adverse selection.
+- Average/max position, close cost, and shutdown/risk incidents.
+
+When a field is unavailable, the report should show it as missing rather than silently treating it as zero. Missing quote competitiveness, maker quality, or side/intent split is itself an analysis gap.
+
 ## Workflow
 
 1. **Run**: `bun run report:generate -- --period both`.

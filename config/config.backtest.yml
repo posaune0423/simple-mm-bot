@@ -15,7 +15,7 @@ quoteEngine:
   timeHorizonSec: 10
   minSpreadBps: 2
   slideMarginThreshold: 0.06
-  defaultTimeInForce: GTC
+  defaultTimeInForce: ALO
   sizing:
     positionSize: 1.25
     budgetUsd: 50000

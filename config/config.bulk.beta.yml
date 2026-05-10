@@ -2,7 +2,8 @@
 # - Faucet deposits 10,000 mock USD once per 24 hours per account.
 # - This preset is a PnL-first guarded baseline. Do not scale notional solely
 #   for leaderboard volume unless live PnL and 5s/30s/300s markouts pass.
-# - Bulk beta BTC-USD currently exposes GTC/IOC time in force, not ALO/post-only.
+# - Bulk exchangeInfo may omit ALO from timeInForces, but the order endpoint
+#   accepts tif=ALO as post-only; keep quotes ALO to avoid accidental taker fills.
 # - Use this for virtual trading only, not for real-capital mainnet.
 mode: live
 venue: bulk
@@ -27,7 +28,7 @@ quoteEngine:
   timeHorizonSec: 10
   minSpreadBps: 1.7
   slideMarginThreshold: 0.06
-  defaultTimeInForce: GTC
+  defaultTimeInForce: ALO
   sizing:
     positionSize: 1.0
     # 90k no-churn baseline: backtest PnL/vol was positive with 0 rejects, but

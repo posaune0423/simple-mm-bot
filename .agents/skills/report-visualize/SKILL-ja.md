@@ -50,6 +50,20 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 | 3    | 通貨ペア別 Notional Volume      | 24h, 7d     |
 | 3    | 約定価格 vs Mid (散布図)        | 24h         |
 
+## 必須 KPI Table Fields
+
+bot修正案を出す前提として、source dataが存在する場合は以下をreportに必ず見える形で残す。
+
+- fill count、fill rate、notional/min、**50M/15d** に対するprojected pace。
+- net PnL、trade PnL、fee/rebate、PnL per volume bps、max drawdown。
+- 5s/30s/300s average/VW markout、horizon別coverage、30s tail、horizon別adverse selection。
+- maker ratio、設定TIF、reject rate、cancel-before-fill rate、平均latency、平均order live time。
+- quote distance to mid/best、market spread、stale rate。
+- buy/sell、quote/reduce別のfill count、notional、PnL、markout、adverse selection。
+- average/max position、close cost、shutdown/risk incident。
+
+取得できないfieldは0扱いせず、missingとして表示する。quote competitiveness、maker quality、side/intent splitが欠けていること自体を分析gapとして扱う。
+
 ## ワークフロー
 
 1. `bun run report:generate -- --period both` を実行
