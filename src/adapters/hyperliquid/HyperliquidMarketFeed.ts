@@ -157,7 +157,16 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       throw new Error(`No order book levels for ${this.params.market}`);
     }
 
-    const observedAt = marginRatio === null ? null : Date.now();
+    const stamp = marginRatio === null ? null : Date.now();
+    const bumpFreshness = (prev: number | null): number | null => {
+      if (stamp === null) {
+        return prev ?? null;
+      }
+      if (prev === null) {
+        return stamp;
+      }
+      return stamp > prev ? stamp : prev + 1;
+    };
     this.snapshot = {
       market: this.params.market,
       bestBid: bestBid.price,
@@ -168,8 +177,8 @@ export class HyperliquidMarketFeed implements IMarketFeed {
       bookUpdatedAt: book.time,
       tickerUpdatedAt: Date.now(),
       candleUpdatedAt: null,
-      accountUpdatedAt: observedAt ?? this.snapshot?.accountUpdatedAt ?? null,
-      positionUpdatedAt: observedAt ?? this.snapshot?.positionUpdatedAt ?? null,
+      accountUpdatedAt: bumpFreshness(this.snapshot?.accountUpdatedAt ?? null),
+      positionUpdatedAt: bumpFreshness(this.snapshot?.positionUpdatedAt ?? null),
       positionQty: null,
       marginRatio,
     };
