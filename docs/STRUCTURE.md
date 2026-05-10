@@ -13,7 +13,6 @@ simple-mm-bot/
 │   ├── main.ts
 │   ├── env.ts
 │   ├── config.ts
-│   ├── constants.ts
 │   ├── application/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
@@ -85,6 +84,7 @@ simple-mm-bot/
 │   ├── createDesignIssues.ts
 │   ├── generateMetricsReport.ts
 │   └── lib/
+│       ├── paths.ts
 │       ├── MetricsEvaluation.ts
 │       ├── BulkConfigTuning.ts
 │       └── DesignIssuePlanner.ts
@@ -203,13 +203,13 @@ runtime source ではなく tool 用 script の実装詳細として扱う。
   - `config/config.bulk.beta.yml` への最小YAML tuningだけを扱うBulk固有tool logic
 - `DesignIssuePlanner.ts`
   - SDK/API/code/design修正が必要な metrics signal をGitHub issue案へ変換する
+- `paths.ts`
+  - script / agent loop 用の default config、DB、metrics output、report output path を定義する
 
 `scripts/lib/` は bot runtime の意思決定に import しない。
 
-### `src/constants.ts`
-
-Default config、SQLite DB path (`data/mm.db`)、Drizzle schema / migration output、metrics result output の path registry。
-新しい生成先や default path を増やす場合は、まずここへ追加してから scripts / docs / tests で参照する。
+Runtime default は `src/env.ts`、Drizzle schema / migration path は `drizzle.config.ts`、script / report / agent loop の default path は `scripts/lib/paths.ts` に置く。
+`src` 直下に repo 運用用の path registry を作らない。
 
 ## Data Layout
 

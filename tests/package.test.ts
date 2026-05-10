@@ -50,14 +50,18 @@ describe("package scripts", () => {
     expect(dockerfile).not.toContain("config/config.yml");
   });
 
-  test("keeps agent helper logic in scripts and persistence contracts in infrastructure", () => {
+  test("keeps agent helper logic in scripts and persistence contracts in infrastructure", async () => {
+    const drizzleConfig = await Bun.file("drizzle.config.ts").text();
+
     expect(existsSync("src/ops")).toBe(false);
     expect(existsSync("src/telemetry")).toBe(false);
     expect(existsSync("src/reporting")).toBe(false);
     expect(existsSync("src/lib/reporting")).toBe(true);
     expect(existsSync("src/runtimePaths.ts")).toBe(false);
-    expect(existsSync("src/constants.ts")).toBe(true);
+    expect(existsSync("src/constants.ts")).toBe(false);
     expect(existsSync("tests/ops")).toBe(false);
+    expect(existsSync("scripts/lib/paths.ts")).toBe(true);
+    expect(drizzleConfig).not.toContain("./src/constants.ts");
     expect(existsSync("scripts/lib/MetricsEvaluation.ts")).toBe(true);
     expect(existsSync("src/application/MetricsRecorder.ts")).toBe(true);
     expect(existsSync("src/application/TelemetryRecorder.ts")).toBe(false);

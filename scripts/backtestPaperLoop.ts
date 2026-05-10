@@ -16,7 +16,7 @@ import {
   DEFAULT_SQLITE_DB_PATH,
   PAPER_CONFIG_PATH,
   STRATEGY_RUNS_DIR,
-} from "../src/constants.ts";
+} from "./lib/paths.ts";
 import { evaluateMetricsRun, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 
 interface BacktestPaperLoopSummary {

@@ -24,7 +24,6 @@ import {
   reportPaths,
   snapshotDateFromMs,
 } from "./paths.ts";
-import { REPORTS_DIR } from "../../../constants.ts";
 
 export interface PeriodWindow {
   key: string;
@@ -442,7 +441,3 @@ export const DEFAULT_PERIODS: PeriodWindow[] = [
   { key: "24h", label: "24h", durationMs: 24 * 60 * 60 * 1000 },
   { key: "7d", label: "7d", durationMs: 7 * 24 * 60 * 60 * 1000 },
 ];
-
-export function defaultOutputDir(): string {
-  return REPORTS_DIR;
-}

@@ -1,13 +1,9 @@
 import { ResultAsync } from "neverthrow";
 
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
-import { DEFAULT_SQLITE_DB_PATH } from "../src/constants.ts";
+import { DEFAULT_SQLITE_DB_PATH, REPORTS_DIR } from "./lib/paths.ts";
 import { fetchReportFills } from "../src/lib/reporting/queries/MetricsFactQuery.ts";
-import {
-  DEFAULT_PERIODS,
-  defaultOutputDir,
-  generateReport,
-} from "../src/lib/reporting/report/generator.ts";
+import { DEFAULT_PERIODS, generateReport } from "../src/lib/reporting/report/generator.ts";
 import type { PeriodWindow } from "../src/lib/reporting/report/generator.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import type { AppError } from "../src/utils/errors.ts";
@@ -27,7 +23,7 @@ function parseOptions(argv: string[]): RunOptions {
   const flags = parseFlagOptions(argv);
   const mode = flags.mode ?? "live";
   const venue = flags.venue;
-  const outputDir = flags["output"] ?? flags["output-dir"] ?? defaultOutputDir();
+  const outputDir = flags["output"] ?? flags["output-dir"] ?? REPORTS_DIR;
   const dbPath = flags.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH;
   const now = flags.now ? Number(flags.now) : Date.now();
   const periodKey = flags.period ?? "both";

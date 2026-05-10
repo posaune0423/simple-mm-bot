@@ -1,7 +1,7 @@
 import { BulkClient } from "bulk-ts-sdk";
 
 import { ConfigLoader } from "../src/config.ts";
-import { DEFAULT_BULK_BETA_CONFIG_PATH } from "../src/constants.ts";
+import { DEFAULT_BULK_BETA_CONFIG_PATH } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { logger } from "../src/utils/logger.ts";
 

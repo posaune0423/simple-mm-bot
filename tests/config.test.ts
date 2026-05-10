@@ -2,11 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
 
 import { ConfigLoader } from "../src/config.ts";
-import {
-  DEFAULT_BULK_BETA_CONFIG_PATH,
-  DEFAULT_CONFIG_PATH,
-  DEFAULT_SQLITE_DB_PATH,
-} from "../src/constants.ts";
+
+const DEFAULT_BULK_BETA_CONFIG_PATH = "config/config.bulk.beta.yml";
+const DEFAULT_CONFIG_PATH = DEFAULT_BULK_BETA_CONFIG_PATH;
+const DEFAULT_SQLITE_DB_PATH = "data/mm.db";
 
 describe("ConfigLoader", () => {
   test("uses data/mm.db as the default SQLite database path", () => {
