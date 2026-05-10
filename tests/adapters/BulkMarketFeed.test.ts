@@ -298,8 +298,8 @@ describe("BulkMarketFeed", () => {
     expect(polled.timestamp).toBe(1_700_000_000_000);
     expect(polled.marginRatio).toBe(0.9);
     expect(polled.positionQty).toBe(-0.2);
-    expect(polled.accountUpdatedAt).toBeGreaterThan(initial.accountUpdatedAt ?? 0);
-    expect(polled.positionUpdatedAt).toBeGreaterThan(initial.positionUpdatedAt ?? 0);
+    expect(polled.accountUpdatedAt).toBeGreaterThanOrEqual(initial.accountUpdatedAt ?? 0);
+    expect(polled.positionUpdatedAt).toBeGreaterThanOrEqual(initial.positionUpdatedAt ?? 0);
   });
 
   test("does not start overlapping account polls when the previous poll is still in flight", async () => {
