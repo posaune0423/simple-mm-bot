@@ -1,7 +1,11 @@
-import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
+import type { IMarketFeed, MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
 import { logger } from "../../utils/logger.ts";
 
 export type RiskState = "OK" | "PAUSE_QUOTING" | "EMERGENCY_STOP";
+
+const MAX_BOOK_AGE_MS = 750;
+const MAX_TICKER_AGE_MS = 1_500;
+const EPOCH_MS_LOWER_BOUND = 1_000_000_000_000;
 
 export class GuardRiskUseCase {
   constructor(
@@ -11,6 +15,14 @@ export class GuardRiskUseCase {
 
   async execute(): Promise<RiskState> {
     const snapshot = await this.marketFeed.getSnapshot();
+    const freshnessReason = staleMarketReason(snapshot);
+    if (freshnessReason !== null) {
+      logger.warn(
+        `guard_risk.pause_quoting market=${snapshot.market} reason=${freshnessReason} bookAgeMs=${bookAgeMs(snapshot)} tickerAgeMs=${tickerAgeMs(snapshot)}`,
+      );
+      return "PAUSE_QUOTING";
+    }
+
     const marginRatio = snapshot.marginRatio;
 
     if (marginRatio === null) {
@@ -32,4 +44,37 @@ export class GuardRiskUseCase {
     logger.debug(`guard_risk.ok market=${snapshot.market} marginRatio=${marginRatio}`);
     return "OK";
   }
+}
+
+function staleMarketReason(snapshot: MarketSnapshot): string | null {
+  if (snapshot.bestBid <= 0 || snapshot.bestAsk <= 0 || snapshot.bestBid >= snapshot.bestAsk) {
+    return "invalid_book";
+  }
+  if (snapshot.bookUpdatedAt !== undefined && isEpochMs(snapshot.bookUpdatedAt)) {
+    if (bookAgeMs(snapshot) > MAX_BOOK_AGE_MS) {
+      return "book_stale";
+    }
+  }
+  if (snapshot.tickerUpdatedAt !== undefined && isEpochMs(snapshot.tickerUpdatedAt)) {
+    if (tickerAgeMs(snapshot) > MAX_TICKER_AGE_MS) {
+      return "ticker_stale";
+    }
+  }
+  return null;
+}
+
+function bookAgeMs(snapshot: MarketSnapshot): number {
+  return snapshot.bookUpdatedAt === undefined
+    ? 0
+    : Math.max(0, Date.now() - snapshot.bookUpdatedAt);
+}
+
+function tickerAgeMs(snapshot: MarketSnapshot): number {
+  return snapshot.tickerUpdatedAt === undefined
+    ? 0
+    : Math.max(0, Date.now() - snapshot.tickerUpdatedAt);
+}
+
+function isEpochMs(timestamp: number): boolean {
+  return timestamp >= EPOCH_MS_LOWER_BOUND;
 }

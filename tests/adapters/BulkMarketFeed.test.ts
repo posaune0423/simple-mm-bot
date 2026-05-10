@@ -52,16 +52,20 @@ describe("BulkMarketFeed", () => {
     await feed.connect();
     const snapshot = await feed.getSnapshot();
 
-    expect(snapshot).toEqual({
+    expect(snapshot).toMatchObject({
       market: "ETH-USD",
       bestBid: 99,
       bestAsk: 101,
       microPrice: 100.33333333333333,
       markPrice: 101,
       timestamp: 1_700_000_000_123,
+      tickerUpdatedAt: 1_700_000_000_123,
+      candleUpdatedAt: null,
+      accountUpdatedAt: null,
       marginRatio: null,
       availableMarginUsd: null,
     });
+    expect(snapshot.bookUpdatedAt).toBeGreaterThan(1_000_000_000_000);
   });
 
   test("logs HTTP snapshot seed and websocket subscriptions", async () => {

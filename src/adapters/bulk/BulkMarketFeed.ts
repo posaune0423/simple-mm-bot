@@ -20,6 +20,7 @@ type BulkAccount = { margin?: { totalBalance?: number; marginUsed?: number } };
 interface BulkMarginState {
   marginRatio: number | null;
   availableMarginUsd: number | null;
+  accountUpdatedAt: number | null;
 }
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
 
@@ -90,6 +91,10 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     microPrice: snapshot.microPrice,
     markPrice: snapshot.markPrice,
     timestamp: snapshot.timestamp,
+    bookUpdatedAt: snapshot.bookUpdatedAt,
+    tickerUpdatedAt: snapshot.tickerUpdatedAt,
+    candleUpdatedAt: snapshot.candleUpdatedAt,
+    accountUpdatedAt: snapshot.accountUpdatedAt,
     marginRatio: snapshot.marginRatio,
     availableMarginUsd: snapshot.availableMarginUsd,
   };
@@ -226,6 +231,8 @@ export class BulkMarketFeed implements IMarketFeed {
     if (bestBid === undefined || bestAsk === undefined) {
       throw new Error(`No Bulk order book levels for ${this.params.market}`);
     }
+    const bookUpdatedAt = nsToMs(book.timestamp);
+    const tickerUpdatedAt = nsToMs(ticker.timestamp);
     return {
       market: this.params.market,
       bestBid,
@@ -233,7 +240,11 @@ export class BulkMarketFeed implements IMarketFeed {
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
       markPrice:
         ticker.markPrice ?? ticker.fairBookPx ?? ticker.lastPrice ?? (bestBid + bestAsk) / 2,
-      timestamp: nsToMs(book.timestamp ?? ticker.timestamp),
+      timestamp: book.timestamp === undefined ? tickerUpdatedAt : bookUpdatedAt,
+      bookUpdatedAt,
+      tickerUpdatedAt,
+      candleUpdatedAt: null,
+      accountUpdatedAt: marginState.accountUpdatedAt,
       marginRatio: marginState.marginRatio,
       availableMarginUsd: marginState.availableMarginUsd,
     };
@@ -252,6 +263,7 @@ export class BulkMarketFeed implements IMarketFeed {
       ...quoteSnapshot(this.snapshot),
       markPrice,
       timestamp: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
+      tickerUpdatedAt: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
     };
     logger.debug(
       `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
@@ -280,6 +292,7 @@ export class BulkMarketFeed implements IMarketFeed {
       bestAsk,
       microPrice: microPrice(bestBid, bestAsk, levelSize(bidLevel), levelSize(askLevel)),
       timestamp: nsToMs(data.timestamp),
+      bookUpdatedAt: nsToMs(data.timestamp),
     };
     logger.debug(
       `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
@@ -327,6 +340,7 @@ export class BulkMarketFeed implements IMarketFeed {
       ...this.snapshot,
       markPrice: close,
       timestamp: ts,
+      candleUpdatedAt: ts,
       open,
       high,
       low,
@@ -358,7 +372,7 @@ export class BulkMarketFeed implements IMarketFeed {
 
   private async fetchMarginState(): Promise<BulkMarginState> {
     if (!this.params.accountId) {
-      return { marginRatio: null, availableMarginUsd: null };
+      return { marginRatio: null, availableMarginUsd: null, accountUpdatedAt: null };
     }
     const account = await retryTransientBulk(
       async () => this.client.account.fullAccount(this.params.accountId ?? ""),
@@ -382,6 +396,7 @@ export class BulkMarketFeed implements IMarketFeed {
     return {
       marginRatio: availableMarginUsd / totalBalance,
       availableMarginUsd,
+      accountUpdatedAt: Date.now(),
     };
   }
 

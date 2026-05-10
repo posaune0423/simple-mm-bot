@@ -12,6 +12,10 @@ export interface MarketSnapshot extends CandleLike {
   microPrice: number;
   markPrice: number;
   timestamp: number;
+  bookUpdatedAt?: number;
+  tickerUpdatedAt?: number;
+  candleUpdatedAt?: number | null;
+  accountUpdatedAt?: number | null;
   volume?: number;
   marginRatio: number | null;
   availableMarginUsd?: number | null;
