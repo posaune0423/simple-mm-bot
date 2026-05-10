@@ -117,14 +117,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
   async getRecentSideQuality(query: QuoteQualityQuery): Promise<QuoteSideQuality[]> {
     const rows = this.db.all<MarkoutRow>(
       sql`
-        WITH latest_run AS (
-          SELECT id
-          FROM trading_runs
-          WHERE market = ${query.market}
-          ORDER BY started_at DESC
-          LIMIT 1
-        ),
-        ranked AS (
+        WITH ranked AS (
           SELECT
             side,
             markout_5s_bps,
@@ -132,8 +125,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
             markout_300s_bps,
             ROW_NUMBER() OVER (PARTITION BY side ORDER BY filled_at DESC, fill_id DESC) AS side_rank
           FROM v_fill_markouts
-          WHERE run_id = (SELECT id FROM latest_run)
-            AND market = ${query.market}
+          WHERE market = ${query.market}
             AND side IN ('buy', 'sell')
         )
         SELECT side, markout_5s_bps, markout_30s_bps, markout_300s_bps

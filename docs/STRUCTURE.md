@@ -92,6 +92,7 @@ simple-mm-bot/
 │       └── DesignIssuePlanner.ts
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── EDGE_DISCOVERY_LOOP.md
 │   ├── PRD.md
 │   ├── TECH.md
 │   ├── STRUCTURE.md

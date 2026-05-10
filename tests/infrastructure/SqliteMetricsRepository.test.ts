@@ -507,6 +507,87 @@ describe("SqliteMetricsRepository", () => {
     ]);
   });
 
+  test("reads side quality across recent runs instead of resetting on a new run", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-quality-history",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 1_000,
+      status: "completed",
+    });
+    for (const snapshot of [
+      { id: "history-5s", observedAt: 7_000, midPrice: 99 },
+      { id: "history-30s", observedAt: 32_000, midPrice: 98 },
+      { id: "history-300s", observedAt: 302_000, midPrice: 97 },
+    ]) {
+      await repository.recordOrderbookSnapshot({
+        id: snapshot.id,
+        runId: "run-quality-history",
+        venue: "bulk",
+        market: "BTC-USD",
+        observedAt: snapshot.observedAt,
+        bestBid: snapshot.midPrice - 1,
+        bestAsk: snapshot.midPrice + 1,
+        midPrice: snapshot.midPrice,
+        microPrice: snapshot.midPrice,
+        markPrice: snapshot.midPrice,
+        spreadBps: 200,
+        stalenessMs: 0,
+      });
+    }
+    await repository.recordTradeFill({
+      id: "history-buy",
+      runId: "run-quality-history",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "history-buy",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 2_000,
+    });
+    await repository.startRun({
+      id: "run-quality-current-empty",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 400_000,
+      status: "running",
+    });
+
+    const quality = await repository.getRecentSideQuality({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      horizonsSec: [5, 30, 300],
+    });
+
+    expect(quality).toEqual([
+      {
+        side: "buy",
+        horizons: [
+          { horizonSec: 5, sampleCount: 1, averageMarkoutBps: -100 },
+          { horizonSec: 30, sampleCount: 1, averageMarkoutBps: -200 },
+          { horizonSec: 300, sampleCount: 1, averageMarkoutBps: -300 },
+        ],
+      },
+    ]);
+  });
+
   test("computes analysis views from fact tables instead of OHLCV", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
