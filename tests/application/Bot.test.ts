@@ -140,6 +140,77 @@ describe("Bot", () => {
     expect(calls).toEqual(["cancelAll", "closePosition"]);
   });
 
+  test("records risk gate pauses as runtime health facts", async () => {
+    const healthEvents: Array<{ level: string; code: string; rawSummary?: unknown }> = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "PAUSE_QUOTING" as const },
+        refreshQuotes: {
+          execute: async () => {
+            throw new Error("should not refresh while paused");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "ETH",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("should not place");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      {
+        runId: "run-risk-pause",
+        start: async () => {},
+        finish: async () => {},
+        recordMarketSnapshot: async () => {},
+        recordRuntimeHealth: async (
+          level: "info" | "warn" | "error",
+          code: string,
+          _message: string,
+          rawSummary?: unknown,
+        ) => {
+          healthEvents.push({ level, code, rawSummary });
+        },
+      } as never,
+    );
+
+    await bot.start(1);
+
+    expect(healthEvents).toEqual([
+      {
+        level: "warn",
+        code: "risk_gate_pause_quoting",
+        rawSummary: { tick: 1, riskState: "PAUSE_QUOTING" },
+      },
+    ]);
+  });
+
   test("initializes the live position before placing the first quote", async () => {
     const calls: string[] = [];
     const bot = new Bot(

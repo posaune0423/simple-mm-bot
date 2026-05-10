@@ -181,9 +181,23 @@ export class Bot {
     logger.debug(`bot.tick tick=${tick} riskState=${riskState}`);
 
     if (riskState === "EMERGENCY_STOP") {
+      await this.metrics?.recordRuntimeHealth(
+        "error",
+        "risk_gate_emergency_stop",
+        "Risk gate requested emergency stop",
+        { tick, riskState },
+      );
       logger.warn(`bot.stopping reason=emergency_stop tick=${tick}`);
       this.emergencyStopRequested = true;
       return "stop";
+    }
+    if (riskState === "PAUSE_QUOTING") {
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "risk_gate_pause_quoting",
+        "Risk gate paused quote refresh",
+        { tick, riskState },
+      );
     }
 
     await this.drainEventTasks();
