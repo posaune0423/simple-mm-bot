@@ -3,6 +3,16 @@ import { describe, expect, test } from "bun:test";
 import { OrderManager, type ManagedOrderRequest } from "../../src/application/OrderManager.ts";
 import type { IOrderGateway, PlacedOrder } from "../../src/domain/ports/IOrderGateway.ts";
 
+async function expectUnknownStateError(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(String(error)).toContain("cancel_failed_unknown_order_state");
+    return;
+  }
+  throw new Error("Expected reconcile to reject with unknown order state");
+}
+
 function quoteOrder(overrides: Partial<ManagedOrderRequest> = {}): ManagedOrderRequest {
   return {
     key: "bid",
@@ -248,6 +258,89 @@ describe("OrderManager", () => {
     await manager.reconcile([quoteOrder({ clientOrderId: "quote-2" })]);
 
     expect(calls).toEqual(["place:quote-1", "cancel:orphan"]);
+  });
+
+  test("marks tracked orders unknown and cancels all when cancel fails", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+        throw new Error("cancel failed");
+      },
+      async cancelAll() {
+        calls.push("cancelAll");
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway);
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-1" })]);
+
+    await expectUnknownStateError(manager.reconcile([]));
+    expect(manager.state()).toEqual({
+      unknownOrderState: true,
+      cancelFailures: 1,
+      unknownOrderKeys: ["bid"],
+    });
+    expect(calls).toEqual(["place:quote-1", "cancel:quote-1", "cancelAll"]);
+  });
+
+  test("marks untracked exchange orders unknown when orphan cancel fails", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+        throw new Error("orphan cancel failed");
+      },
+      async cancelAll() {
+        calls.push("cancelAll");
+      },
+      async getOpenOrders() {
+        return [
+          {
+            id: "orphan",
+            market: "BTC-USD",
+            side: "sell",
+            price: 101,
+            qty: 1,
+            reduceOnly: false,
+            timeInForce: "GTC",
+            status: "open",
+          },
+        ];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway);
+
+    await expectUnknownStateError(manager.reconcile([]));
+    expect(manager.state()).toEqual({
+      unknownOrderState: true,
+      cancelFailures: 1,
+      unknownOrderKeys: ["untracked_exchange_order:orphan"],
+    });
+    expect(calls).toEqual(["cancel:orphan", "cancelAll"]);
   });
 
   test("keeps orders when price drift is below 0.8 bps and size drift is below 15 percent", async () => {

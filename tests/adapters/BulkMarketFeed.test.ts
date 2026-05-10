@@ -3,6 +3,16 @@ import { describe, expect, test } from "bun:test";
 import { BulkMarketFeed } from "../../src/adapters/bulk/BulkMarketFeed.ts";
 import { logger } from "../../src/utils/logger.ts";
 
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await Bun.sleep(1);
+  }
+  throw new Error("Timed out waiting for condition");
+}
+
 function captureLogs() {
   const info = logger.info;
   const debug = logger.debug;
@@ -52,16 +62,20 @@ describe("BulkMarketFeed", () => {
     await feed.connect();
     const snapshot = await feed.getSnapshot();
 
-    expect(snapshot).toEqual({
+    expect(snapshot).toMatchObject({
       market: "ETH-USD",
       bestBid: 99,
       bestAsk: 101,
       microPrice: 100.33333333333333,
       markPrice: 101,
       timestamp: 1_700_000_000_123,
+      tickerUpdatedAt: 1_700_000_000_123,
+      candleUpdatedAt: null,
+      accountUpdatedAt: null,
       marginRatio: null,
       availableMarginUsd: null,
     });
+    expect(snapshot.bookUpdatedAt).toBeGreaterThan(1_000_000_000_000);
   });
 
   test("logs HTTP snapshot seed and websocket subscriptions", async () => {
@@ -121,7 +135,10 @@ describe("BulkMarketFeed", () => {
       },
       account: {
         async fullAccount() {
-          return { margin: { totalBalance: 1000, marginUsed: 250 } };
+          return {
+            margin: { totalBalance: 1000, marginUsed: 250 },
+            positions: [{ symbol: "ETH-USD", size: 0.4 }],
+          };
         },
       },
       ws: {
@@ -154,6 +171,62 @@ describe("BulkMarketFeed", () => {
     expect(snapshot.microPrice).toBe(103);
     expect(snapshot.timestamp).toBe(1_700_000_002_000);
     expect(snapshot.marginRatio).toBe(0.75);
+    expect(snapshot.positionQty).toBe(0.4);
+    expect(snapshot.accountUpdatedAt).toBeGreaterThan(0);
+    expect(snapshot.positionUpdatedAt).toBeGreaterThan(0);
+  });
+
+  test("polls account and position state without refreshing market timestamps", async () => {
+    const handlers: Array<(message: unknown) => void> = [];
+    let accountCalls = 0;
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            timestamp: 1_700_000_000_000 * 1_000_000,
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          accountCalls += 1;
+          return {
+            margin: { totalBalance: 1000, marginUsed: accountCalls === 1 ? 250 : 100 },
+            positions: [{ symbol: "BTC-USD", size: accountCalls === 1 ? 0.1 : -0.2 }],
+          };
+        },
+      },
+      ws: {
+        async subscribe(_subscription: unknown, handler: (message: unknown) => void) {
+          handlers.push(handler);
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "BTC-USD",
+      accountId: "account",
+      accountPollIntervalMs: 1,
+    });
+
+    await feed.connect();
+    const initial = await feed.getSnapshot();
+    await waitFor(() => accountCalls >= 2);
+    const polled = await feed.getSnapshot();
+    await feed.disconnect();
+
+    expect(handlers).toHaveLength(3);
+    expect(initial.timestamp).toBe(1_700_000_000_000);
+    expect(polled.timestamp).toBe(1_700_000_000_000);
+    expect(polled.marginRatio).toBe(0.9);
+    expect(polled.positionQty).toBe(-0.2);
+    expect(polled.accountUpdatedAt).toBeGreaterThan(initial.accountUpdatedAt ?? 0);
+    expect(polled.positionUpdatedAt).toBeGreaterThan(initial.positionUpdatedAt ?? 0);
   });
 
   test("updates snapshot with real OHLCV data from websocket candles", async () => {

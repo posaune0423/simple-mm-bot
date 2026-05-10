@@ -79,7 +79,7 @@ export class MetricsRecorder {
       microPrice: snapshot.microPrice,
       markPrice: snapshot.markPrice,
       spreadBps: spreadBps(snapshot),
-      stalenessMs: Math.max(0, Date.now() - snapshot.timestamp),
+      stalenessMs: Math.max(0, Date.now() - (snapshot.bookUpdatedAt ?? snapshot.timestamp)),
       rawJson: snapshotPayload(snapshot),
     });
     if (snapshot.marginRatio !== null) {
@@ -386,6 +386,12 @@ function rawSummary(payload: OrderGatewayEvent, cancelSource?: "cancelAll"): unk
 function snapshotPayload(snapshot: MarketSnapshot): Record<string, unknown> {
   return {
     timestamp: snapshot.timestamp,
+    bookUpdatedAt: snapshot.bookUpdatedAt,
+    tickerUpdatedAt: snapshot.tickerUpdatedAt,
+    candleUpdatedAt: snapshot.candleUpdatedAt,
+    accountUpdatedAt: snapshot.accountUpdatedAt,
+    positionUpdatedAt: snapshot.positionUpdatedAt,
+    positionQty: snapshot.positionQty,
     marginRatio: snapshot.marginRatio,
     ohlcvPresent:
       snapshot.open !== undefined ||
