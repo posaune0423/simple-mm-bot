@@ -8,14 +8,20 @@ import type {
 import type {
   AccountStateObservationFact,
   IMetricsRepository,
+  OrderLifecycleEventFact,
   OrderbookSnapshotFact,
+  QuoteDecisionFact,
+  RuntimeHealthEventFact,
   SubmittedOrderFact,
   TradeFillFact,
   TradingRunFact,
 } from "../../../../domain/ports/IMetricsRepository.ts";
 import {
   accountStateObservationsTable,
+  orderLifecycleEventsTable,
   orderbookSnapshotsTable,
+  quoteDecisionsTable,
+  runtimeHealthEventsTable,
   submittedOrdersTable,
   tradeFillsTable,
   tradingRunsTable,
@@ -104,6 +110,45 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
       });
   }
 
+  async recordRuntimeHealthEvent(event: RuntimeHealthEventFact): Promise<void> {
+    const row = serializeRuntimeHealthEvent(event);
+    await this.db
+      .insert(runtimeHealthEventsTable)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          runtimeHealthEventsTable.runId,
+          runtimeHealthEventsTable.code,
+          runtimeHealthEventsTable.observedAt,
+        ],
+        set: row,
+      });
+  }
+
+  async recordQuoteDecision(decision: QuoteDecisionFact): Promise<void> {
+    const row = serializeQuoteDecision(decision);
+    await this.db
+      .insert(quoteDecisionsTable)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          quoteDecisionsTable.runId,
+          quoteDecisionsTable.quoteCycleId,
+          quoteDecisionsTable.side,
+          quoteDecisionsTable.level,
+        ],
+        set: row,
+      });
+  }
+
+  async recordOrderLifecycleEvent(event: OrderLifecycleEventFact): Promise<void> {
+    const row = serializeOrderLifecycleEvent(event);
+    await this.db.insert(orderLifecycleEventsTable).values(row).onConflictDoUpdate({
+      target: orderLifecycleEventsTable.id,
+      set: row,
+    });
+  }
+
   async findRun(runId: string): Promise<TradingRunFact | null> {
     const rows = await this.db
       .select()
@@ -117,29 +162,115 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
   async getRecentSideQuality(query: QuoteQualityQuery): Promise<QuoteSideQuality[]> {
     const rows = this.db.all<MarkoutRow>(
       sql`
-        WITH latest_run AS (
-          SELECT id
-          FROM trading_runs
-          WHERE market = ${query.market}
-          ORDER BY started_at DESC
-          LIMIT 1
+        WITH recent AS (
+          SELECT *
+          FROM (
+            SELECT
+              f.id,
+              f.run_id,
+              f.market,
+              f.side,
+              f.price,
+              f.filled_at
+            FROM trade_fills f
+            WHERE f.market = ${query.market}
+              AND f.side = 'buy'
+              AND EXISTS (
+                SELECT 1
+                FROM submitted_orders o
+                WHERE o.run_id = f.run_id
+                  AND o.intent = 'quote'
+                  AND (
+                    o.id = f.submitted_order_id
+                    OR (f.venue_order_id IS NOT NULL AND o.venue_order_id = f.venue_order_id)
+                  )
+              )
+            ORDER BY f.filled_at DESC, f.id DESC
+            LIMIT ${query.lookbackFills}
+          )
+          UNION ALL
+          SELECT *
+          FROM (
+            SELECT
+              f.id,
+              f.run_id,
+              f.market,
+              f.side,
+              f.price,
+              f.filled_at
+            FROM trade_fills f
+            WHERE f.market = ${query.market}
+              AND f.side = 'sell'
+              AND EXISTS (
+                SELECT 1
+                FROM submitted_orders o
+                WHERE o.run_id = f.run_id
+                  AND o.intent = 'quote'
+                  AND (
+                    o.id = f.submitted_order_id
+                    OR (f.venue_order_id IS NOT NULL AND o.venue_order_id = f.venue_order_id)
+                  )
+              )
+            ORDER BY f.filled_at DESC, f.id DESC
+            LIMIT ${query.lookbackFills}
+          )
         ),
-        ranked AS (
+        snapshots AS (
           SELECT
-            side,
-            markout_5s_bps,
-            markout_30s_bps,
-            markout_300s_bps,
-            ROW_NUMBER() OVER (PARTITION BY side ORDER BY filled_at DESC, fill_id DESC) AS side_rank
-          FROM v_fill_markouts
-          WHERE run_id = (SELECT id FROM latest_run)
-            AND market = ${query.market}
-            AND side IN ('buy', 'sell')
+            r.side,
+            r.price,
+            r.filled_at,
+            (
+              SELECT s.mid_price
+              FROM orderbook_snapshots s
+              WHERE s.run_id = r.run_id
+                AND s.market = r.market
+                AND s.observed_at >= r.filled_at + 5000
+                AND s.observed_at <= r.filled_at + 10000
+              ORDER BY s.observed_at ASC
+              LIMIT 1
+            ) AS mid_5s,
+            (
+              SELECT s.mid_price
+              FROM orderbook_snapshots s
+              WHERE s.run_id = r.run_id
+                AND s.market = r.market
+                AND s.observed_at >= r.filled_at + 30000
+                AND s.observed_at <= r.filled_at + 45000
+              ORDER BY s.observed_at ASC
+              LIMIT 1
+            ) AS mid_30s,
+            (
+              SELECT s.mid_price
+              FROM orderbook_snapshots s
+              WHERE s.run_id = r.run_id
+                AND s.market = r.market
+                AND s.observed_at >= r.filled_at + 300000
+                AND s.observed_at <= r.filled_at + 330000
+              ORDER BY s.observed_at ASC
+              LIMIT 1
+            ) AS mid_300s
+          FROM recent r
         )
-        SELECT side, markout_5s_bps, markout_30s_bps, markout_300s_bps
-        FROM ranked
-        WHERE side_rank <= ${query.lookbackFills}
-        ORDER BY side ASC, side_rank ASC
+        SELECT
+          side,
+          CASE
+            WHEN mid_5s IS NULL THEN NULL
+            WHEN side = 'buy' THEN ((mid_5s - price) / price) * 10000
+            ELSE ((price - mid_5s) / price) * 10000
+          END AS markout_5s_bps,
+          CASE
+            WHEN mid_30s IS NULL THEN NULL
+            WHEN side = 'buy' THEN ((mid_30s - price) / price) * 10000
+            ELSE ((price - mid_30s) / price) * 10000
+          END AS markout_30s_bps,
+          CASE
+            WHEN mid_300s IS NULL THEN NULL
+            WHEN side = 'buy' THEN ((mid_300s - price) / price) * 10000
+            ELSE ((price - mid_300s) / price) * 10000
+          END AS markout_300s_bps
+        FROM snapshots
+        ORDER BY side ASC, filled_at DESC
       `,
     );
 
@@ -250,6 +381,53 @@ function serializeAccountStateObservation(
   return {
     ...observation,
     rawJson: stringifyOptional(observation.rawJson),
+  };
+}
+
+function serializeRuntimeHealthEvent(
+  event: RuntimeHealthEventFact,
+): typeof runtimeHealthEventsTable.$inferInsert {
+  return {
+    ...event,
+    rawJson: stringifyOptional(event.rawJson),
+  };
+}
+
+function serializeQuoteDecision(
+  decision: QuoteDecisionFact,
+): typeof quoteDecisionsTable.$inferInsert {
+  return {
+    id: decision.id,
+    runId: decision.runId,
+    venue: decision.venue,
+    market: decision.market,
+    quoteCycleId: decision.quoteCycleId,
+    side: decision.side,
+    level: decision.level,
+    intent: decision.intent,
+    price: decision.price,
+    quantity: decision.quantity,
+    fairPrice: decision.fairPrice,
+    sigma: decision.sigma,
+    policy: decision.policy,
+    positionQty: decision.positionQty,
+    midPrice: decision.midPrice,
+    microPrice: decision.microPrice,
+    markPrice: decision.markPrice,
+    spreadBps: decision.spreadBps,
+    stalenessMs: decision.stalenessMs,
+    controlReasonsJson: JSON.stringify(decision.controlReasons),
+    createdAt: decision.createdAt,
+    rawJson: stringifyOptional(decision.rawJson),
+  };
+}
+
+function serializeOrderLifecycleEvent(
+  event: OrderLifecycleEventFact,
+): typeof orderLifecycleEventsTable.$inferInsert {
+  return {
+    ...event,
+    rawJson: stringifyOptional(event.rawJson),
   };
 }
 

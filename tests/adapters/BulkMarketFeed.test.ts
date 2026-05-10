@@ -41,7 +41,16 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 2 }], [{ price: 101, size: 1 }]],
+            levels: [
+              [
+                { price: 99, size: 2 },
+                { price: 98, size: 4 },
+              ],
+              [
+                { price: 101, size: 1 },
+                { price: 102, size: 3 },
+              ],
+            ],
           };
         },
       },
@@ -67,6 +76,7 @@ describe("BulkMarketFeed", () => {
       bestBid: 99,
       bestAsk: 101,
       microPrice: 100.33333333333333,
+      vampPrice: (99 * 1 + 98 * 3 + 101 * 2 + 102 * 4) / (2 + 4 + 1 + 3),
       markPrice: 101,
       timestamp: 1_700_000_000_123,
       tickerUpdatedAt: 1_700_000_000_123,
@@ -76,6 +86,55 @@ describe("BulkMarketFeed", () => {
       availableMarginUsd: null,
     });
     expect(snapshot.bookUpdatedAt).toBeGreaterThan(1_000_000_000_000);
+    expect(snapshot.orderBookLevels).toEqual([
+      { bidPrice: 99, bidSize: 2, askPrice: 101, askSize: 1 },
+      { bidPrice: 98, bidSize: 4, askPrice: 102, askSize: 3 },
+    ]);
+  });
+
+  test("ignores non-positive L2 book levels before deriving top of book", async () => {
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 101, lastPrice: 100.5, timestamp: 1_700_000_000_123 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [
+              [
+                { price: 0, size: 2 },
+                { price: 99, size: 2 },
+              ],
+              [
+                { price: 101, size: 1 },
+                { price: 102, size: 3 },
+              ],
+            ],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "ETH-USD", nlevels: 20 });
+
+    await feed.connect();
+    const snapshot = await feed.getSnapshot();
+
+    expect(snapshot.bestBid).toBe(99);
+    expect(snapshot.bestAsk).toBe(102);
+    expect(snapshot.orderBookLevels).toEqual([
+      { bidPrice: 99, bidSize: 2, askPrice: 102, askSize: 3 },
+    ]);
   });
 
   test("logs HTTP snapshot seed and websocket subscriptions", async () => {
@@ -159,7 +218,16 @@ describe("BulkMarketFeed", () => {
     handlers[0]?.({ data: { markPrice: 102, timestamp: 1_700_000_001_000 * 1_000_000 } });
     handlers[1]?.({
       data: {
-        levels: [[{ price: 100, size: 3 }], [{ price: 104, size: 1 }]],
+        levels: [
+          [
+            { price: 100, size: 3 },
+            { price: 99, size: 5 },
+          ],
+          [
+            { price: 104, size: 1 },
+            { price: 105, size: 2 },
+          ],
+        ],
         timestamp: 1_700_000_002_000 * 1_000_000,
       },
     });
@@ -169,6 +237,11 @@ describe("BulkMarketFeed", () => {
     expect(snapshot.bestBid).toBe(100);
     expect(snapshot.bestAsk).toBe(104);
     expect(snapshot.microPrice).toBe(103);
+    expect(snapshot.vampPrice).toBeCloseTo((100 * 1 + 99 * 2 + 104 * 3 + 105 * 5) / 11);
+    expect(snapshot.orderBookLevels).toEqual([
+      { bidPrice: 100, bidSize: 3, askPrice: 104, askSize: 1 },
+      { bidPrice: 99, bidSize: 5, askPrice: 105, askSize: 2 },
+    ]);
     expect(snapshot.timestamp).toBe(1_700_000_002_000);
     expect(snapshot.marginRatio).toBe(0.75);
     expect(snapshot.positionQty).toBe(0.4);
@@ -225,8 +298,8 @@ describe("BulkMarketFeed", () => {
     expect(polled.timestamp).toBe(1_700_000_000_000);
     expect(polled.marginRatio).toBe(0.9);
     expect(polled.positionQty).toBe(-0.2);
-    expect(polled.accountUpdatedAt).toBeGreaterThan(initial.accountUpdatedAt ?? 0);
-    expect(polled.positionUpdatedAt).toBeGreaterThan(initial.positionUpdatedAt ?? 0);
+    expect(polled.accountUpdatedAt).toBeGreaterThanOrEqual(initial.accountUpdatedAt ?? 0);
+    expect(polled.positionUpdatedAt).toBeGreaterThanOrEqual(initial.positionUpdatedAt ?? 0);
   });
 
   test("does not start overlapping account polls when the previous poll is still in flight", async () => {

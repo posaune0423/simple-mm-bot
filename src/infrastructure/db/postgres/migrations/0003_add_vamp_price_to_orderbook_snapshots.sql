@@ -1,0 +1,2 @@
+ALTER TABLE orderbook_snapshots
+  ADD COLUMN IF NOT EXISTS vamp_price DOUBLE PRECISION;

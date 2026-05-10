@@ -70,7 +70,8 @@ export class RefreshQuotesUseCase {
     logger.info(
       `refresh_quotes.quote_created market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} policy=${quote.policy} positionQty=${position.qty}`,
     );
-    await this.metrics?.recordQuote(snapshot, position.qty, quote);
+    const quoteCycleId = randomUUID();
+    await this.metrics?.recordQuote(snapshot, position.qty, quote, quoteCycleId);
     const trendSnapshot = await this.marketFeed.getSnapshot();
     const placementMid = midPrice(trendSnapshot);
     const trendBps =
@@ -78,7 +79,6 @@ export class RefreshQuotesUseCase {
         ? ((placementMid - this.previousPlacementMid) / this.previousPlacementMid) * 10_000
         : 0;
     this.previousPlacementMid = placementMid;
-    const quoteCycleId = randomUUID();
     const targetOrders: ManagedOrderRequest[] = [];
     for (const level of quoteLevels(quote)) {
       const suffix = quote.levels === undefined ? "" : `:${level.level}`;

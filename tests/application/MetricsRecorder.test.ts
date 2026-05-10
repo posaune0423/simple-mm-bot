@@ -4,7 +4,10 @@ import { MetricsRecorder } from "../../src/application/MetricsRecorder.ts";
 import type { Fill } from "../../src/domain/entities/Fill.ts";
 import type {
   AccountStateObservationFact,
+  OrderLifecycleEventFact,
   OrderbookSnapshotFact,
+  QuoteDecisionFact,
+  RuntimeHealthEventFact,
   SubmittedOrderFact,
   TradeFillFact,
   TradingRunFact,
@@ -17,6 +20,9 @@ class MemoryMetricsRepository implements IMetricsRepository {
   orders: SubmittedOrderFact[] = [];
   fills: TradeFillFact[] = [];
   accounts: AccountStateObservationFact[] = [];
+  runtimeHealth: RuntimeHealthEventFact[] = [];
+  quoteDecisions: QuoteDecisionFact[] = [];
+  lifecycleEvents: OrderLifecycleEventFact[] = [];
 
   async startRun(run: TradingRunFact): Promise<void> {
     this.runs.set(run.id, run);
@@ -48,6 +54,18 @@ class MemoryMetricsRepository implements IMetricsRepository {
 
   async recordAccountStateObservation(observation: AccountStateObservationFact): Promise<void> {
     this.accounts.push(observation);
+  }
+
+  async recordRuntimeHealthEvent(event: RuntimeHealthEventFact): Promise<void> {
+    this.runtimeHealth.push(event);
+  }
+
+  async recordQuoteDecision(decision: QuoteDecisionFact): Promise<void> {
+    this.quoteDecisions.push(decision);
+  }
+
+  async recordOrderLifecycleEvent(event: OrderLifecycleEventFact): Promise<void> {
+    this.lifecycleEvents.push(event);
   }
 
   async findRun(runId: string): Promise<TradingRunFact | null> {
@@ -212,6 +230,23 @@ describe("MetricsRecorder", () => {
         latencyMs: 25,
       }),
     ]);
+    expect(repository.lifecycleEvents).toEqual([
+      expect.objectContaining({
+        runId: "run-order",
+        action: "submit",
+        clientOrderId: "client-1",
+        side: "buy",
+        observedAt: expect.any(Number),
+      }),
+      expect.objectContaining({
+        runId: "run-order",
+        action: "ack",
+        clientOrderId: "client-1",
+        venueOrderId: "venue-1",
+        status: "open",
+        latencyMs: 25,
+      }),
+    ]);
   });
 
   test("records bare cancelAll events against tracked open orders", async () => {
@@ -317,6 +352,61 @@ describe("MetricsRecorder", () => {
     });
   });
 
+  test("links late venue fills back to the submitted client order", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-late-fill",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordOrder({
+      action: "submit",
+      clientOrderId: "cycle-1:ask:0",
+      intent: "quote",
+      side: "sell",
+      orderType: "limit",
+      price: 101,
+      qty: 1,
+      timeInForce: "ALO",
+    });
+    await recorder.recordOrder({
+      action: "ack",
+      clientOrderId: "cycle-1:ask:0",
+      orderId: "venue-fill-later",
+      intent: "quote",
+      side: "sell",
+      orderType: "limit",
+      price: 101,
+      qty: 1,
+      timeInForce: "ALO",
+      status: "filled",
+    });
+    await recorder.recordFill({
+      id: "fill-late",
+      venue: "bulk",
+      market: "BTC-USD",
+      side: "sell",
+      price: 101,
+      qty: 1,
+      fee: 0,
+      tradePnl: 0,
+      filledAt: 1000,
+      quoteId: "venue-fill-later",
+    });
+
+    expect(repository.fills.at(-1)).toMatchObject({
+      id: "fill-late",
+      submittedOrderId: "run-late-fill:cycle-1:ask:0",
+      venueOrderId: "venue-fill-later",
+    });
+  });
+
   test("records quote diagnostics as account state observations", async () => {
     const repository = new MemoryMetricsRepository();
     const recorder = new MetricsRecorder(repository, {
@@ -350,6 +440,7 @@ describe("MetricsRecorder", () => {
         fairPrice: 100,
         sigma: 0.01,
       },
+      "cycle-quote",
     );
 
     expect(repository.accounts).toEqual([
@@ -366,6 +457,59 @@ describe("MetricsRecorder", () => {
           bidDistanceBps: 50.25125628140704,
           askDistanceBps: 50,
         }),
+      }),
+    ]);
+    expect(repository.quoteDecisions).toEqual([
+      expect.objectContaining({
+        runId: "run-quote",
+        market: "BTC-USD",
+        quoteCycleId: "cycle-quote",
+        side: "buy",
+        level: 0,
+        intent: "quote",
+        price: 99.5,
+        quantity: 0.1,
+        fairPrice: 100,
+        positionQty: -0.25,
+      }),
+      expect.objectContaining({
+        runId: "run-quote",
+        quoteCycleId: "cycle-quote",
+        side: "sell",
+        level: 0,
+        intent: "quote",
+        price: 100.5,
+        quantity: 0.2,
+      }),
+    ]);
+  });
+
+  test("records runtime health events", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-health",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordRuntimeHealth("warn", "quote_side_skipped", "Skipped quote side", {
+      reason: "stale_touch",
+    });
+
+    expect(repository.runtimeHealth).toEqual([
+      expect.objectContaining({
+        runId: "run-health",
+        venue: "bulk",
+        market: "BTC-USD",
+        level: "warn",
+        code: "quote_side_skipped",
+        message: "Skipped quote side",
+        rawJson: { reason: "stale_touch" },
       }),
     ]);
   });

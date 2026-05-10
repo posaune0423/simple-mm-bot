@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
 
+import type { BucketEvidence } from "./evaluateLiveRun.ts";
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { LATEST_METRICS_EVALUATION_PATH, LATEST_METRICS_RESULTS_DIR } from "./lib/paths.ts";
@@ -12,6 +13,7 @@ import { logger } from "../src/utils/logger.ts";
 interface EvaluationResult {
   run: TradingRunFact;
   evaluation: MetricsEvaluation;
+  bucketEvidence?: BucketEvidence;
 }
 
 export function formatMetricsReportMarkdown(result: EvaluationResult): string {
@@ -76,14 +78,18 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
     "## Volume Pace",
     "",
     `- Current notional: ${formatNullableUsd(evaluation.volume.notionalUsd)}`,
-    `- Required 14d volume: ${evaluation.volume.required14dUsd.toFixed(2)}`,
-    `- Projected 14d volume: ${formatNullableUsd(evaluation.volume.projected14dUsd)}`,
+    `- Phase1 required ${evaluation.volume.targetDays}d volume: ${evaluation.volume.requiredTargetUsd.toFixed(2)}`,
+    `- Phase1 projected ${evaluation.volume.targetDays}d volume: ${formatNullableUsd(evaluation.volume.projectedTargetUsd)}`,
     `- Projected shortfall: ${formatNullableUsd(evaluation.volume.projectedShortfallUsd)}`,
     `- Required multiplier: ${formatNullableMultiplier(evaluation.volume.requiredMultiplier)}`,
     `- Required daily volume: ${evaluation.volume.requiredDailyUsd.toFixed(2)}`,
     `- Required hourly volume: ${(evaluation.volume.requiredDailyUsd / 24).toFixed(2)}`,
     `- Required minute volume: ${(evaluation.volume.requiredDailyUsd / 24 / 60).toFixed(2)}`,
     `- Balanced daily volume: ${evaluation.volume.balancedDailyUsd.toFixed(2)}`,
+    `- Rebate reference ${evaluation.volume.rebateReferenceDays}d volume: ${evaluation.volume.rebateReferenceUsd.toFixed(2)}`,
+    `- Rebate projected ${evaluation.volume.rebateReferenceDays}d volume: ${formatNullableUsd(evaluation.volume.projected14dUsd)}`,
+    "",
+    ...formatBucketEvidence(result.bucketEvidence),
     "",
     "## A-S Gate",
     "",
@@ -104,8 +110,47 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
   ].join("\n");
 }
 
+function formatBucketEvidence(bucketEvidence: BucketEvidence | undefined): string[] {
+  if (bucketEvidence === undefined) {
+    return [];
+  }
+  return [
+    "## Bucket Evidence",
+    "",
+    "### Side Intent",
+    "",
+    formatBucketTable(bucketEvidence.sideIntent),
+    "",
+    "### Quote Level",
+    "",
+    formatBucketTable(bucketEvidence.quoteLevel),
+    "",
+    "### Quote Age",
+    "",
+    formatBucketTable(bucketEvidence.quoteAge),
+  ];
+}
+
+function formatBucketTable(rows: BucketEvidence["sideIntent"]): string {
+  if (rows.length === 0) {
+    return "No fills.";
+  }
+  return [
+    "| bucket | fills | notional | net pnl | pnl bps | avg 5s | avg 30s | avg 300s | adverse 5s | adverse 30s | live ms |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...rows.map(
+      (row) =>
+        `| ${row.bucket} | ${row.fillCount} | ${row.notionalUsd.toFixed(2)} | ${row.netPnl.toFixed(4)} | ${formatNullableNumber(row.pnlPerVolumeBps)} | ${formatNullableNumber(row.avg5sMarkoutBps)} | ${formatNullableNumber(row.avg30sMarkoutBps)} | ${formatNullableNumber(row.avg300sMarkoutBps)} | ${formatNullablePercent(row.adverseSelectionRate5s)} | ${formatNullablePercent(row.adverseSelectionRate30s)} | ${formatNullableNumber(row.avgOrderLiveMs)} |`,
+    ),
+  ].join("\n");
+}
+
 function formatNullableUsd(value: number | null): string {
   return value === null ? "n/a" : value.toFixed(2);
+}
+
+function formatNullableNumber(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(4);
 }
 
 function formatNullableBps(value: number | null): string {

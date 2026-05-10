@@ -86,6 +86,36 @@ interface QuoteCompetitivenessRow {
   avg_distance_to_best_bps: number | null;
 }
 
+export interface BucketEvidenceRow {
+  bucket: string;
+  fillCount: number;
+  notionalUsd: number;
+  netPnl: number;
+  pnlPerVolumeBps: number | null;
+  avg5sMarkoutBps: number | null;
+  avg30sMarkoutBps: number | null;
+  avg300sMarkoutBps: number | null;
+  vw5sMarkoutBps: number | null;
+  vw30sMarkoutBps: number | null;
+  vw300sMarkoutBps: number | null;
+  adverseSelectionRate5s: number | null;
+  adverseSelectionRate30s: number | null;
+  adverseSelectionRate300s: number | null;
+  avgOrderLiveMs: number | null;
+}
+
+export interface BucketEvidence {
+  sideIntent: BucketEvidenceRow[];
+  quoteLevel: BucketEvidenceRow[];
+  quoteAge: BucketEvidenceRow[];
+}
+
+export interface EvaluationResult {
+  run: TradingRunFact;
+  evaluation: ReturnType<typeof evaluateMetricsRun>;
+  bucketEvidence: BucketEvidence;
+}
+
 export function normalizeQuoteCycleId(clientOrderId: string): string {
   if (clientOrderId.includes(":bid:")) {
     return clientOrderId.replace(":bid:", ":");
@@ -114,7 +144,7 @@ function latestRunId(dbPath: string): string | null {
   }
 }
 
-export function loadEvaluationResult(dbPath: string, runId: string) {
+export function loadEvaluationResult(dbPath: string, runId: string): EvaluationResult {
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db
@@ -342,10 +372,100 @@ export function loadEvaluationResult(dbPath: string, runId: string) {
       positionSkew: row.avg_position ?? 0,
       issueSignals: row.status === "failed" ? ["order_lifecycle_inconsistency"] : [],
     });
-    return { run, evaluation };
+    return { run, evaluation, bucketEvidence: loadBucketEvidence(db, runId) };
   } finally {
     db.close();
   }
+}
+
+function loadBucketEvidence(db: Database, runId: string): BucketEvidence {
+  return {
+    sideIntent: bucketRows(db, runId, "f.side || ':' || COALESCE(o.intent, 'unlinked')"),
+    quoteLevel: bucketRows(
+      db,
+      runId,
+      "CASE WHEN o.quote_level IS NULL THEN 'unlinked' ELSE 'level_' || o.quote_level END",
+    ),
+    quoteAge: bucketRows(
+      db,
+      runId,
+      `
+        CASE
+          WHEN o.submitted_at IS NULL THEN 'unlinked'
+          WHEN f.filled_at - o.submitted_at < 1000 THEN '<1s'
+          WHEN f.filled_at - o.submitted_at < 3000 THEN '1-3s'
+          WHEN f.filled_at - o.submitted_at < 10000 THEN '3-10s'
+          ELSE '>=10s'
+        END
+      `,
+    ),
+  };
+}
+
+function bucketRows(db: Database, runId: string, bucketExpression: string): BucketEvidenceRow[] {
+  return db
+    .query<BucketEvidenceRow, [string]>(
+      `
+        WITH enriched AS (
+          SELECT
+            f.id,
+            f.price,
+            f.quantity,
+            f.trade_pnl,
+            f.fee,
+            f.filled_at,
+            ${bucketExpression} AS bucket,
+            o.live_ms,
+            m.markout_5s_bps,
+            m.markout_30s_bps,
+            m.markout_300s_bps
+          FROM trade_fills f
+          LEFT JOIN v_order_lifecycle o
+            ON o.id = COALESCE(
+              (
+                SELECT matched.id
+                FROM v_order_lifecycle matched
+                WHERE matched.run_id = f.run_id
+                  AND matched.id = f.submitted_order_id
+                LIMIT 1
+              ),
+              (
+                SELECT matched.id
+                FROM v_order_lifecycle matched
+                WHERE matched.run_id = f.run_id
+                  AND f.venue_order_id IS NOT NULL
+                  AND matched.venue_order_id = f.venue_order_id
+                LIMIT 1
+              )
+            )
+          LEFT JOIN v_fill_markouts m ON m.fill_id = f.id
+          WHERE f.run_id = ?
+        )
+        SELECT
+          bucket,
+          COUNT(*) AS fillCount,
+          SUM(price * quantity) AS notionalUsd,
+          SUM(trade_pnl - fee) AS netPnl,
+          CASE
+            WHEN SUM(price * quantity) > 0 THEN SUM(trade_pnl - fee) / SUM(price * quantity) * 10000
+            ELSE NULL
+          END AS pnlPerVolumeBps,
+          AVG(markout_5s_bps) AS avg5sMarkoutBps,
+          AVG(markout_30s_bps) AS avg30sMarkoutBps,
+          AVG(markout_300s_bps) AS avg300sMarkoutBps,
+          SUM(markout_5s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw5sMarkoutBps,
+          SUM(markout_30s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_30s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw30sMarkoutBps,
+          SUM(markout_300s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_300s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw300sMarkoutBps,
+          AVG(CASE WHEN markout_5s_bps IS NULL THEN NULL WHEN markout_5s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate5s,
+          AVG(CASE WHEN markout_30s_bps IS NULL THEN NULL WHEN markout_30s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate30s,
+          AVG(CASE WHEN markout_300s_bps IS NULL THEN NULL WHEN markout_300s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate300s,
+          AVG(live_ms) AS avgOrderLiveMs
+        FROM enriched
+        GROUP BY bucket
+        ORDER BY fillCount DESC, bucket ASC
+      `,
+    )
+    .all(runId);
 }
 
 function evaluationWindowDays(startedAt: number, endedAt: number | null): number {

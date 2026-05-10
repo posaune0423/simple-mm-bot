@@ -47,6 +47,7 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.maxLeverage).toBe(50);
     expect(config.quoteEngine.defaultTimeInForce).toBe("ALO");
     expect(config.quoteEngine.markWeight).toBe(0.25);
+    expect(config.quoteEngine.bookPriceSource).toBe("micro");
     expect(config.quoteEngine.minSpreadBps).toBe(1.7);
     expect(config.quoteEngine.sizing.budgetUsd).toBe(90_000);
     expect(config.quoteEngine.levels).toEqual([
@@ -101,6 +102,7 @@ describe("ConfigLoader", () => {
       }
       expect(config.connections.bulk.environment).toBe("beta");
       expect(config.quoteEngine.sizing.budgetUsd).toBe(90_000);
+      expect(config.quoteEngine.bookPriceSource).toBe("micro");
       expect(config.quoteEngine.strategy.type).toBe("avellaneda-stoikov");
       expect(config.quoteEngine.levels).toHaveLength(5);
     } finally {
@@ -328,6 +330,7 @@ backtest:
       expect(config.connections.bulk.nlevels).toBe(20);
       expect(config.connections.bulk.privateKey).toBeDefined();
       expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
+      expect(config.quoteEngine.bookPriceSource).toBe("micro");
     } finally {
       if (previousPrivateKey === undefined) {
         delete Bun.env.BULK_PRIVATE_KEY;

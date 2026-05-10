@@ -204,11 +204,11 @@ describe("evaluateMetricsRun", () => {
     expect(result.issueSignals).toContain("quotes_far_from_touch");
   });
 
-  test("flags runs below the required and balanced 14d volume pace", () => {
+  test("flags runs below the required and balanced phase1 volume pace", () => {
     const result = evaluateMetricsRun({
       fillCount: 30,
       markoutCoverage: 1,
-      notionalUsd: 4_578_556.1,
+      notionalUsd: 2_000_000,
       windowDays: 1,
       netPnl: -182.52,
       tradePnl: 0,
@@ -224,15 +224,44 @@ describe("evaluateMetricsRun", () => {
       minMarkoutCoverage: 0.8,
     });
 
-    expect(result.volume.projected14dUsd).toBeCloseTo(64_099_785.4);
+    expect(result.volume.targetDays).toBe(15);
+    expect(result.volume.projectedTargetUsd).toBe(30_000_000);
+    expect(result.volume.requiredTargetUsd).toBe(50_000_000);
     expect(result.volume.required14dUsd).toBe(150_000_000);
-    expect(result.volume.requiredMultiplier).toBeCloseTo(2.3401, 4);
-    expect(result.volume.projectedShortfallUsd).toBeCloseTo(85_900_214.6);
+    expect(result.volume.requiredMultiplier).toBeCloseTo(1.6667, 4);
+    expect(result.volume.projectedShortfallUsd).toBe(20_000_000);
+    expect(result.volume.projected14dUsd).toBe(28_000_000);
     expect(result.passFail.volumeRequiredPace).toBe(false);
     expect(result.passFail.volumeBalancedPace).toBe(false);
     expect(result.passFail.sizeIncreaseAllowed).toBe(false);
     expect(result.issueSignals).toContain("volume_below_required_pace");
     expect(result.issueSignals).toContain("volume_below_balanced_pace");
     expect(result.issueSignals).toContain("adverse_selection_high");
+  });
+
+  test("guards volume target days against zero or negative inputs", () => {
+    const result = evaluateMetricsRun({
+      fillCount: 3,
+      markoutCoverage: 1,
+      notionalUsd: 2_000_000,
+      windowDays: 1,
+      volumeTargetDays: 0,
+      netPnl: 1,
+      tradePnl: 1,
+      fee: 0,
+      pnlPerNotional: 0.0001,
+      maxDrawdown: 0,
+      avg5sMarkoutBps: 1,
+      adverseSelectionRate: 0,
+      fillRate: 0.5,
+      rejectRate: 0,
+      cancelRate: 0,
+      minMarkoutCoverage: 0.8,
+    });
+
+    expect(result.volume.targetDays).toBe(1);
+    expect(result.volume.requiredDailyUsd).toBe(50_000_000);
+    expect(result.volume.projectedTargetUsd).toBe(2_000_000);
+    expect(Number.isFinite(result.volume.requiredDailyUsd)).toBe(true);
   });
 });

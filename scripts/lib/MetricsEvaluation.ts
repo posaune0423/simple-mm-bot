@@ -6,6 +6,9 @@ export interface MetricsEvaluationInput {
   snapshotFreshnessMs?: number | null;
   notionalUsd?: number;
   windowDays?: number;
+  requiredVolumeUsd?: number;
+  balancedVolumeUsd?: number;
+  volumeTargetDays?: number;
   required14dVolumeUsd?: number;
   balanced14dVolumeUsd?: number;
   netPnl: number;
@@ -141,6 +144,10 @@ export interface MetricsEvaluation {
   };
   volume: {
     notionalUsd: number | null;
+    targetDays: number;
+    requiredTargetUsd: number;
+    balancedTargetUsd: number;
+    projectedTargetUsd: number | null;
     projected14dUsd: number | null;
     projectedShortfallUsd: number | null;
     requiredMultiplier: number | null;
@@ -148,6 +155,8 @@ export interface MetricsEvaluation {
     balancedDailyUsd: number;
     required14dUsd: number;
     balanced14dUsd: number;
+    rebateReferenceDays: number;
+    rebateReferenceUsd: number;
   };
   verdict: "pass" | "review";
   parameterAction: ParameterAction;
@@ -237,9 +246,11 @@ function passFailFor(input: MetricsEvaluationInput): MetricsEvaluation["passFail
     markoutTail: tail.p10 >= -150,
     sideImbalance: Math.abs(input.sideImbalance ?? 0) < 0.7,
     volumeRequiredPace:
-      volume.projected14dUsd === null || volume.projected14dUsd >= inputRequired14dVolume(input),
+      volume.projectedTargetUsd === null ||
+      volume.projectedTargetUsd >= inputRequiredTargetVolume(input),
     volumeBalancedPace:
-      volume.projected14dUsd === null || volume.projected14dUsd >= inputBalanced14dVolume(input),
+      volume.projectedTargetUsd === null ||
+      volume.projectedTargetUsd >= inputBalancedTargetVolume(input),
     sizeIncreaseAllowed:
       input.netPnl > 0 &&
       pnlPerVolumeBps > 0 &&
@@ -357,37 +368,67 @@ function normalizedMarkoutCoverage(input: MetricsEvaluationInput): MarkoutCovera
 }
 
 function volumeFor(input: MetricsEvaluationInput): MetricsEvaluation["volume"] {
-  const required14dUsd = inputRequired14dVolume(input);
+  const targetDays = Math.max(inputVolumeTargetDays(input), 1);
+  const requiredTargetUsd = inputRequiredTargetVolume(input);
+  const balancedTargetUsd = inputBalancedTargetVolume(input);
+  const requiredDailyUsd = requiredTargetUsd / targetDays;
+  const balancedDailyUsd = balancedTargetUsd / targetDays;
+  const rebateReferenceDays = 14;
+  const rebateReferenceUsd = inputRebateReferenceVolume(input);
   const balanced14dUsd = inputBalanced14dVolume(input);
-  const requiredDailyUsd = required14dUsd / 14;
-  const balancedDailyUsd = balanced14dUsd / 14;
   if (input.notionalUsd === undefined || input.windowDays === undefined || input.windowDays <= 0) {
     return {
       notionalUsd: input.notionalUsd ?? null,
+      targetDays,
+      requiredTargetUsd,
+      balancedTargetUsd,
+      projectedTargetUsd: null,
       projected14dUsd: null,
       projectedShortfallUsd: null,
       requiredMultiplier: null,
       requiredDailyUsd,
       balancedDailyUsd,
-      required14dUsd,
+      required14dUsd: rebateReferenceUsd,
       balanced14dUsd,
+      rebateReferenceDays,
+      rebateReferenceUsd,
     };
   }
-  const projected14dUsd = (input.notionalUsd / input.windowDays) * 14;
+  const dailyPaceUsd = input.notionalUsd / input.windowDays;
+  const projectedTargetUsd = dailyPaceUsd * targetDays;
+  const projected14dUsd = dailyPaceUsd * rebateReferenceDays;
 
   return {
     notionalUsd: input.notionalUsd,
+    targetDays,
+    requiredTargetUsd,
+    balancedTargetUsd,
+    projectedTargetUsd,
     projected14dUsd,
-    projectedShortfallUsd: Math.max(0, required14dUsd - projected14dUsd),
-    requiredMultiplier: projected14dUsd > 0 ? required14dUsd / projected14dUsd : null,
+    projectedShortfallUsd: Math.max(0, requiredTargetUsd - projectedTargetUsd),
+    requiredMultiplier: projectedTargetUsd > 0 ? requiredTargetUsd / projectedTargetUsd : null,
     requiredDailyUsd,
     balancedDailyUsd,
-    required14dUsd,
+    required14dUsd: rebateReferenceUsd,
     balanced14dUsd,
+    rebateReferenceDays,
+    rebateReferenceUsd,
   };
 }
 
-function inputRequired14dVolume(input: MetricsEvaluationInput): number {
+function inputVolumeTargetDays(input: MetricsEvaluationInput): number {
+  return input.volumeTargetDays ?? 15;
+}
+
+function inputRequiredTargetVolume(input: MetricsEvaluationInput): number {
+  return input.requiredVolumeUsd ?? 50_000_000;
+}
+
+function inputBalancedTargetVolume(input: MetricsEvaluationInput): number {
+  return input.balancedVolumeUsd ?? 60_000_000;
+}
+
+function inputRebateReferenceVolume(input: MetricsEvaluationInput): number {
   return input.required14dVolumeUsd ?? 150_000_000;
 }
 

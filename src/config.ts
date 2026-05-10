@@ -3,6 +3,7 @@ import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
 
 import type { AvellanedaStoikovParams } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
+import type { BookPriceSource } from "./domain/FairPriceCalculator.ts";
 import { env } from "./env.ts";
 import type { AppError } from "./utils/errors.ts";
 import { createAppError } from "./utils/errors.ts";
@@ -17,6 +18,10 @@ const nonEmptyStringSchema = v.pipe(v.string(), v.minLength(1));
 const urlStringSchema = v.pipe(v.string(), v.url());
 
 const timeInForceSchema = v.picklist(["ALO", "GTC", "IOC"]);
+const bookPriceSourceSchema = v.optional(
+  v.picklist(["micro", "vamp"]) satisfies v.GenericSchema<unknown, BookPriceSource>,
+  "micro" as const,
+);
 const quoteSizingSchema = v.object({
   positionSize: positiveNumberSchema,
   budgetUsd: v.optional(positiveNumberSchema),
@@ -68,6 +73,7 @@ const commonConfigEntries = {
   mode: modeSchema,
   quoteEngine: v.object({
     markWeight: zeroToOneNumberSchema,
+    bookPriceSource: bookPriceSourceSchema,
     inventoryScale: positiveNumberSchema,
     timeHorizonSec: positiveNumberSchema,
     minSpreadBps: v.optional(nonNegativeNumberSchema),

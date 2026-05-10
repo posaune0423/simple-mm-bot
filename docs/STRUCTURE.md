@@ -92,6 +92,7 @@ simple-mm-bot/
 │       └── DesignIssuePlanner.ts
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── EDGE_DISCOVERY_LOOP.md
 │   ├── PRD.md
 │   ├── TECH.md
 │   ├── STRUCTURE.md
@@ -187,8 +188,9 @@ DB など外部 storage の詳細を置く。
 - `MetricsRepository.ts` は metrics repository port を定義する
 - SQLite の runtime DDL と table / view name list は `src/infrastructure/db/sqlite/bootstrap.ts`
 - SQLite / Drizzle table mapping は `src/infrastructure/db/sqlite/schema.ts`
-- metrics は `trading_runs`, `orderbook_snapshots`, `submitted_orders`, `trade_fills`, `account_state_observations` に保存する
-- `telemetry_events`, `markouts`, `quote_decisions`, `runtime_incidents` は作らず、分析結果は view で計算する
+- metrics は `trading_runs`, `orderbook_snapshots`, `submitted_orders`, `trade_fills`, `account_state_observations`, `runtime_health_events`, `quote_decisions`, `order_lifecycle_events` に保存する
+- `telemetry_events`, `markouts`, `runtime_incidents` は作らず、分析結果は view で計算する
+- `quote_decisions` と `runtime_health_events` は edge 探索に必要な raw fact として保存し、bucket別EVは view で再集計する
 
 ### `src/application/MetricsRecorder.ts`
 
