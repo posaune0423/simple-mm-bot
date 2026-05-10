@@ -3,14 +3,20 @@ import { eq } from "drizzle-orm";
 import type {
   AccountStateObservationFact,
   IMetricsRepository,
+  OrderLifecycleEventFact,
   OrderbookSnapshotFact,
+  QuoteDecisionFact,
+  RuntimeHealthEventFact,
   SubmittedOrderFact,
   TradeFillFact,
   TradingRunFact,
 } from "../../../../domain/ports/IMetricsRepository.ts";
 import {
   accountStateObservationsTable,
+  orderLifecycleEventsTable,
   orderbookSnapshotsTable,
+  quoteDecisionsTable,
+  runtimeHealthEventsTable,
   submittedOrdersTable,
   tradeFillsTable,
   tradingRunsTable,
@@ -93,6 +99,45 @@ export class PostgresMetricsRepository implements IMetricsRepository {
       });
   }
 
+  async recordRuntimeHealthEvent(event: RuntimeHealthEventFact): Promise<void> {
+    const row = serializeRuntimeHealthEvent(event);
+    await this.db
+      .insert(runtimeHealthEventsTable)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          runtimeHealthEventsTable.runId,
+          runtimeHealthEventsTable.code,
+          runtimeHealthEventsTable.observedAt,
+        ],
+        set: row,
+      });
+  }
+
+  async recordQuoteDecision(decision: QuoteDecisionFact): Promise<void> {
+    const row = serializeQuoteDecision(decision);
+    await this.db
+      .insert(quoteDecisionsTable)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          quoteDecisionsTable.runId,
+          quoteDecisionsTable.quoteCycleId,
+          quoteDecisionsTable.side,
+          quoteDecisionsTable.level,
+        ],
+        set: row,
+      });
+  }
+
+  async recordOrderLifecycleEvent(event: OrderLifecycleEventFact): Promise<void> {
+    const row = serializeOrderLifecycleEvent(event);
+    await this.db.insert(orderLifecycleEventsTable).values(row).onConflictDoUpdate({
+      target: orderLifecycleEventsTable.id,
+      set: row,
+    });
+  }
+
   async findRun(runId: string): Promise<TradingRunFact | null> {
     const rows = await this.db
       .select()
@@ -171,6 +216,34 @@ function serializeAccountStateObservation(
   return {
     ...observation,
     rawJson: stringifyOptional(observation.rawJson),
+  };
+}
+
+function serializeRuntimeHealthEvent(
+  event: RuntimeHealthEventFact,
+): typeof runtimeHealthEventsTable.$inferInsert {
+  return {
+    ...event,
+    rawJson: stringifyOptional(event.rawJson),
+  };
+}
+
+function serializeQuoteDecision(
+  decision: QuoteDecisionFact,
+): typeof quoteDecisionsTable.$inferInsert {
+  return {
+    ...decision,
+    controlReasonsJson: JSON.stringify(decision.controlReasons),
+    rawJson: stringifyOptional(decision.rawJson),
+  };
+}
+
+function serializeOrderLifecycleEvent(
+  event: OrderLifecycleEventFact,
+): typeof orderLifecycleEventsTable.$inferInsert {
+  return {
+    ...event,
+    rawJson: stringifyOptional(event.rawJson),
   };
 }
 

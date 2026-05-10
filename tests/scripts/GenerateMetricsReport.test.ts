@@ -5,7 +5,7 @@ import type { MetricsEvaluation } from "../../scripts/lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../../src/domain/ports/IMetricsRepository.ts";
 
 describe("generateMetricsReport", () => {
-  test("prints multi-horizon adverse selection and 14d volume pace", () => {
+  test("prints multi-horizon adverse selection and phase1 volume pace", () => {
     const run: TradingRunFact = {
       id: "run-volume",
       mode: "live",
@@ -83,13 +83,19 @@ describe("generateMetricsReport", () => {
       },
       volume: {
         notionalUsd: 500_000,
+        targetDays: 15,
+        requiredTargetUsd: 50_000_000,
+        balancedTargetUsd: 60_000_000,
+        projectedTargetUsd: 54_000_000,
         projected14dUsd: 115_000_000,
-        projectedShortfallUsd: 35_000_000,
-        requiredMultiplier: 1.304347826,
-        requiredDailyUsd: 10_714_285.714285715,
-        balancedDailyUsd: 12_857_142.857142856,
+        projectedShortfallUsd: 0,
+        requiredMultiplier: 0.925925926,
+        requiredDailyUsd: 3_333_333.3333333335,
+        balancedDailyUsd: 4_000_000,
         required14dUsd: 150_000_000,
         balanced14dUsd: 180_000_000,
+        rebateReferenceDays: 14,
+        rebateReferenceUsd: 150_000_000,
       },
       verdict: "review",
       parameterAction: "hold",
@@ -108,10 +114,146 @@ describe("generateMetricsReport", () => {
     expect(markdown).toContain("- VW 5s markout: -0.4000 bps");
     expect(markdown).toContain("- VW 30s markout: 0.3000 bps");
     expect(markdown).toContain("- VW 300s markout: 0.5000 bps");
-    expect(markdown).toContain("- Required 14d volume: 150000000.00");
-    expect(markdown).toContain("- Projected 14d volume: 115000000.00");
-    expect(markdown).toContain("- Required multiplier: 1.30x");
-    expect(markdown).toContain("- Required hourly volume: 446428.57");
-    expect(markdown).toContain("- Required minute volume: 7440.48");
+    expect(markdown).toContain("- Phase1 required 15d volume: 50000000.00");
+    expect(markdown).toContain("- Phase1 projected 15d volume: 54000000.00");
+    expect(markdown).toContain("- Required multiplier: 0.93x");
+    expect(markdown).toContain("- Required hourly volume: 138888.89");
+    expect(markdown).toContain("- Required minute volume: 2314.81");
+    expect(markdown).toContain("- Rebate reference 14d volume: 150000000.00");
+    expect(markdown).toContain("- Rebate projected 14d volume: 115000000.00");
+  });
+
+  test("prints bucket evidence when available", () => {
+    const run: TradingRunFact = {
+      id: "run-buckets",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 1,
+      status: "completed",
+    };
+    const evaluation = minimalEvaluation();
+
+    const markdown = formatMetricsReportMarkdown({
+      run,
+      evaluation,
+      bucketEvidence: {
+        sideIntent: [
+          {
+            bucket: "buy:quote",
+            fillCount: 2,
+            notionalUsd: 20_000,
+            netPnl: -4,
+            pnlPerVolumeBps: -2,
+            avg5sMarkoutBps: -1,
+            avg30sMarkoutBps: -2,
+            avg300sMarkoutBps: null,
+            vw5sMarkoutBps: -1,
+            vw30sMarkoutBps: -2,
+            vw300sMarkoutBps: null,
+            adverseSelectionRate5s: 1,
+            adverseSelectionRate30s: 1,
+            adverseSelectionRate300s: null,
+            avgOrderLiveMs: 5000,
+          },
+        ],
+        quoteLevel: [],
+        quoteAge: [],
+      },
+    });
+
+    expect(markdown).toContain("## Bucket Evidence");
+    expect(markdown).toContain("| buy:quote | 2 | 20000.00 | -4.0000 | -2.0000 |");
   });
 });
+
+function minimalEvaluation(): MetricsEvaluation {
+  return {
+    dataHealth: {
+      fillCount: 0,
+      markoutCoverage: 0,
+      markoutCoverageByHorizon: {
+        "5s": { observed: 0, total: 0, coverage: 0 },
+        "30s": { observed: 0, total: 0, coverage: 0 },
+        "300s": { observed: 0, total: 0, coverage: 0 },
+      },
+      rawFieldCoverage: 1,
+      snapshotFreshnessMs: 0,
+    },
+    pnl: {
+      netPnl: 0,
+      tradePnl: 0,
+      fee: 0,
+      pnlPerNotional: 0,
+      pnlPerVolumeBps: 0,
+      maxDrawdown: 0,
+    },
+    markouts: {
+      avg5sBps: 0,
+      avg30sBps: null,
+      avg300sBps: null,
+      vw5sBps: null,
+      vw30sBps: null,
+      vw300sBps: null,
+      tail30sBps: { p10: 0, p5: 0, worst: 0 },
+      adverseSelectionRate: 0,
+      adverseSelectionRate5s: 0,
+      adverseSelectionRate30s: null,
+      adverseSelectionRate300s: null,
+      spreadCaptureBps: 0,
+      realizedSpreadBps: 0,
+    },
+    orderQuality: {
+      fillRate: 0,
+      rejectRate: 0,
+      cancelRate: 0,
+      cancelBeforeFillRate: 0,
+      makerRatio: 0,
+      avgLatencyMs: 0,
+      avgLiveMs: 0,
+      sideImbalance: 0,
+    },
+    inventory: { positionSkew: 0, closeCost: 0 },
+    market: {
+      avgSpreadBps: 0,
+      avgQuoteDistanceToMidBps: 0,
+      avgQuoteDistanceToBestBps: 0,
+      staleRate: 0,
+    },
+    runtimeHealth: { warningCount: 0, errorCount: 0 },
+    passFail: {
+      netPnl: false,
+      pnlPerVolumeBps: false,
+      avgMarkout30s: false,
+      markoutTail: false,
+      sideImbalance: false,
+      volumeRequiredPace: false,
+      volumeBalancedPace: false,
+      sizeIncreaseAllowed: false,
+    },
+    volume: {
+      notionalUsd: null,
+      targetDays: 15,
+      requiredTargetUsd: 50_000_000,
+      balancedTargetUsd: 60_000_000,
+      projectedTargetUsd: null,
+      projected14dUsd: null,
+      projectedShortfallUsd: null,
+      requiredMultiplier: null,
+      requiredDailyUsd: 3_333_333.3333333335,
+      balancedDailyUsd: 4_000_000,
+      required14dUsd: 150_000_000,
+      balanced14dUsd: 180_000_000,
+      rebateReferenceDays: 14,
+      rebateReferenceUsd: 150_000_000,
+    },
+    verdict: "review",
+    parameterAction: "blocked_by_data_health",
+    tuningAllowed: false,
+    issueSignals: [],
+  };
+}

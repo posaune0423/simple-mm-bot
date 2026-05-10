@@ -7,6 +7,9 @@ export const SQLITE_TABLE_NAMES = [
   "submitted_orders",
   "trade_fills",
   "account_state_observations",
+  "runtime_health_events",
+  "quote_decisions",
+  "order_lifecycle_events",
 ] as const;
 
 export const SQLITE_VIEW_NAMES = [
@@ -18,9 +21,12 @@ export const SQLITE_VIEW_NAMES = [
   "v_quote_level_quality",
   "v_order_quality",
   "v_fill_markouts",
+  "v_fill_context",
+  "v_edge_quote_bucket_quality",
   "v_markout_quality",
   "v_market_quality",
   "v_inventory_risk",
+  "v_runtime_health_summary",
   "v_run_performance",
 ] as const;
 
@@ -128,11 +134,87 @@ export const SQLITE_BOOTSTRAP_SQL = `
     raw_json TEXT,
     UNIQUE (run_id, market, observed_at)
   );
+  CREATE TABLE IF NOT EXISTS runtime_health_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    market TEXT NOT NULL,
+    observed_at INTEGER NOT NULL,
+    level TEXT NOT NULL,
+    code TEXT NOT NULL,
+    message TEXT NOT NULL,
+    raw_json TEXT,
+    UNIQUE (run_id, code, observed_at)
+  );
+  CREATE TABLE IF NOT EXISTS quote_decisions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    market TEXT NOT NULL,
+    quote_cycle_id TEXT NOT NULL,
+    side TEXT NOT NULL,
+    level INTEGER NOT NULL,
+    intent TEXT NOT NULL,
+    price REAL NOT NULL,
+    quantity REAL NOT NULL,
+    fair_price REAL NOT NULL,
+    sigma REAL NOT NULL,
+    policy TEXT NOT NULL,
+    position_qty REAL NOT NULL,
+    mid_price REAL NOT NULL,
+    micro_price REAL NOT NULL,
+    mark_price REAL NOT NULL,
+    spread_bps REAL NOT NULL,
+    staleness_ms INTEGER NOT NULL,
+    control_reasons_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    raw_json TEXT,
+    UNIQUE (run_id, quote_cycle_id, side, level)
+  );
+  CREATE TABLE IF NOT EXISTS order_lifecycle_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    market TEXT NOT NULL,
+    action TEXT NOT NULL,
+    client_order_id TEXT,
+    venue_order_id TEXT,
+    side TEXT,
+    intent TEXT,
+    order_type TEXT,
+    price REAL,
+    quantity REAL,
+    time_in_force TEXT,
+    status TEXT,
+    latency_ms INTEGER,
+    observed_at INTEGER NOT NULL,
+    raw_json TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS trade_fills_market_side_filled_at
+    ON trade_fills (market, side, filled_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS trade_fills_run_submitted_order_id
+    ON trade_fills (run_id, submitted_order_id);
+  CREATE INDEX IF NOT EXISTS trade_fills_run_venue_order_id
+    ON trade_fills (run_id, venue_order_id);
+  CREATE INDEX IF NOT EXISTS submitted_orders_run_venue_order_id
+    ON submitted_orders (run_id, venue_order_id);
+  CREATE INDEX IF NOT EXISTS runtime_health_events_run_code
+    ON runtime_health_events (run_id, code);
+  CREATE INDEX IF NOT EXISTS quote_decisions_run_market_created_at
+    ON quote_decisions (run_id, market, created_at);
+  CREATE INDEX IF NOT EXISTS order_lifecycle_events_run_client_order_id
+    ON order_lifecycle_events (run_id, client_order_id);
+  CREATE INDEX IF NOT EXISTS order_lifecycle_events_run_venue_order_id
+    ON order_lifecycle_events (run_id, venue_order_id);
 
   DROP VIEW IF EXISTS v_run_performance;
+  DROP VIEW IF EXISTS v_runtime_health_summary;
   DROP VIEW IF EXISTS v_inventory_risk;
   DROP VIEW IF EXISTS v_market_quality;
   DROP VIEW IF EXISTS v_markout_quality;
+  DROP VIEW IF EXISTS v_edge_quote_bucket_quality;
+  DROP VIEW IF EXISTS v_fill_context;
   DROP VIEW IF EXISTS v_fill_markouts;
   DROP VIEW IF EXISTS v_order_quality;
   DROP VIEW IF EXISTS v_quote_level_quality;
@@ -317,6 +399,12 @@ export const SQLITE_BOOTSTRAP_SQL = `
       f.market,
       f.side,
       f.price,
+      f.quantity,
+      f.fee,
+      f.trade_pnl,
+      f.maker_taker,
+      f.submitted_order_id,
+      f.venue_order_id,
       f.filled_at,
       s5.mid_price AS mid_5s,
       CASE
@@ -376,6 +464,97 @@ export const SQLITE_BOOTSTRAP_SQL = `
         ORDER BY next_s300.observed_at ASC
         LIMIT 1
       );
+  CREATE VIEW IF NOT EXISTS v_fill_context AS
+    SELECT
+      m.fill_id,
+      m.run_id,
+      m.market,
+      m.side,
+      m.price,
+      m.quantity,
+      m.fee,
+      m.trade_pnl,
+      m.maker_taker,
+      m.submitted_order_id,
+      m.venue_order_id,
+      m.filled_at,
+      m.mid_5s,
+      m.markout_5s_bps,
+      m.adverse_5s,
+      m.mid_30s,
+      m.markout_30s_bps,
+      m.mid_300s,
+      m.markout_300s_bps,
+      o.id AS submitted_order_row_id,
+      o.client_order_id,
+      o.intent AS order_intent,
+      o.time_in_force,
+      o.quote_cycle_id,
+      o.quote_level,
+      q.id AS quote_decision_id,
+      q.intent AS quote_intent,
+      q.price AS quote_price,
+      q.quantity AS quote_quantity,
+      q.fair_price,
+      q.sigma,
+      q.policy,
+      q.position_qty,
+      q.mid_price AS quote_mid_price,
+      q.micro_price AS quote_micro_price,
+      q.mark_price AS quote_mark_price,
+      q.spread_bps AS quote_spread_bps,
+      q.staleness_ms AS quote_staleness_ms,
+      q.control_reasons_json,
+      q.created_at AS quote_created_at,
+      CASE
+        WHEN q.created_at IS NULL THEN NULL
+        ELSE m.filled_at - q.created_at
+      END AS quote_age_ms,
+      CASE
+        WHEN m.price * m.quantity > 0 THEN ((m.trade_pnl - m.fee) / (m.price * m.quantity)) * 10000
+        ELSE NULL
+      END AS net_ev_bps
+    FROM v_fill_markouts m
+    LEFT JOIN v_order_lifecycle o
+      ON o.run_id = m.run_id
+     AND (
+       o.id = m.submitted_order_id
+       OR (m.venue_order_id IS NOT NULL AND o.venue_order_id = m.venue_order_id)
+     )
+    LEFT JOIN quote_decisions q
+      ON q.run_id = m.run_id
+     AND q.market = m.market
+     AND q.quote_cycle_id = o.quote_cycle_id
+     AND q.side = o.side
+     AND q.level = o.quote_level;
+  CREATE VIEW IF NOT EXISTS v_edge_quote_bucket_quality AS
+    SELECT
+      run_id,
+      market,
+      side,
+      quote_level AS level,
+      COALESCE(quote_intent, order_intent) AS intent,
+      CASE
+        WHEN quote_age_ms IS NULL THEN 'unknown'
+        WHEN quote_age_ms < 300 THEN '<300'
+        WHEN quote_age_ms < 1000 THEN '300-1000'
+        WHEN quote_age_ms < 3000 THEN '1000-3000'
+        ELSE '>3000'
+      END AS quote_age_bucket,
+      COUNT(*) AS fill_count,
+      SUM(price * quantity) AS notional,
+      SUM(fee) AS fee,
+      SUM(trade_pnl) AS trade_pnl,
+      SUM(trade_pnl - fee) AS net_pnl,
+      AVG(markout_5s_bps) AS avg_markout_5s_bps,
+      AVG(markout_30s_bps) AS avg_markout_30s_bps,
+      AVG(markout_300s_bps) AS avg_markout_300s_bps,
+      CASE
+        WHEN SUM(price * quantity) > 0 THEN (SUM(trade_pnl - fee) / SUM(price * quantity)) * 10000
+        ELSE NULL
+      END AS net_ev_bps
+    FROM v_fill_context
+    GROUP BY run_id, market, side, quote_level, COALESCE(quote_intent, order_intent), quote_age_bucket;
   CREATE VIEW IF NOT EXISTS v_markout_quality AS
     WITH latest_snapshot AS (
       SELECT
@@ -498,4 +677,15 @@ export const SQLITE_BOOTSTRAP_SQL = `
     LEFT JOIN v_markout_quality mq ON mq.run_id = r.id
     LEFT JOIN v_market_quality mk ON mk.run_id = r.id AND mk.market = r.market
     LEFT JOIN v_inventory_risk ir ON ir.run_id = r.id;
+  CREATE VIEW IF NOT EXISTS v_runtime_health_summary AS
+    SELECT
+      run_id,
+      venue,
+      market,
+      level,
+      code,
+      COUNT(*) AS event_count,
+      MAX(observed_at) AS latest_observed_at
+    FROM runtime_health_events
+    GROUP BY run_id, venue, market, level, code;
 `;

@@ -41,4 +41,21 @@ describe("Postgres metrics migration", () => {
     expect(migration).toContain("ALTER TABLE orderbook_snapshots");
     expect(migration).toContain("ADD COLUMN IF NOT EXISTS vamp_price DOUBLE PRECISION");
   });
+
+  test("adds edge discovery fact tables and analysis views", async () => {
+    const migration = await Bun.file(
+      "src/infrastructure/db/postgres/migrations/0004_edge_discovery_fact_tables.sql",
+    ).text();
+
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS runtime_health_events");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS quote_decisions");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS order_lifecycle_events");
+    expect(migration).toContain("UNIQUE (run_id, quote_cycle_id, side, level)");
+    expect(migration).toContain("DROP VIEW IF EXISTS v_fill_markouts");
+    expect(migration).toContain("CREATE VIEW v_fill_context");
+    expect(migration).toContain("CREATE VIEW v_edge_quote_bucket_quality");
+    expect(migration).toContain("CREATE VIEW v_runtime_health_summary");
+    expect(migration).toContain("quote_age_bucket");
+    expect(migration).toContain("net_ev_bps");
+  });
 });

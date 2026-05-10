@@ -167,7 +167,6 @@ describe("SqliteMetricsRepository", () => {
     expect(tables).not.toContain("telemetry_runs");
     expect(tables).not.toContain("telemetry_events");
     expect(tables).not.toContain("markouts");
-    expect(tables).not.toContain("quote_decisions");
     expect(tables).not.toContain("runtime_incidents");
 
     const run = client.sqlite
@@ -474,12 +473,30 @@ describe("SqliteMetricsRepository", () => {
         stalenessMs: 0,
       });
     }
-    await repository.recordTradeFill({
-      id: "quality-buy",
+    await repository.recordSubmittedOrder({
+      id: "quality-order-buy",
       runId: "run-side-quality",
       venue: "bulk",
       market: "BTC-USD",
+      clientOrderId: "quality-order-buy",
+      venueOrderId: "quality-venue-buy",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 100,
+      quantity: 1,
+      timeInForce: "ALO",
+      submittedAt: 500,
+      finalStatus: "filled",
+    });
+    await repository.recordTradeFill({
+      id: "quality-buy",
+      runId: "run-side-quality",
+      submittedOrderId: "quality-order-buy",
+      venue: "bulk",
+      market: "BTC-USD",
       venueFillId: "quality-buy",
+      venueOrderId: "quality-venue-buy",
       side: "buy",
       price: 100,
       quantity: 1,
@@ -543,14 +560,64 @@ describe("SqliteMetricsRepository", () => {
         stalenessMs: 0,
       });
     }
-    await repository.recordTradeFill({
-      id: "history-buy",
+    await repository.recordSubmittedOrder({
+      id: "history-order-buy",
       runId: "run-quality-history",
       venue: "bulk",
       market: "BTC-USD",
+      clientOrderId: "history-order-buy",
+      venueOrderId: "history-venue-buy",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 100,
+      quantity: 1,
+      timeInForce: "ALO",
+      submittedAt: 1_500,
+      finalStatus: "filled",
+    });
+    await repository.recordSubmittedOrder({
+      id: "history-reduce-buy",
+      runId: "run-quality-history",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "history-reduce-buy",
+      venueOrderId: "history-venue-reduce",
+      intent: "reduce",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 96,
+      quantity: 1,
+      timeInForce: "ALO",
+      submittedAt: 2_500,
+      finalStatus: "filled",
+    });
+    await repository.recordTradeFill({
+      id: "history-buy",
+      runId: "run-quality-history",
+      submittedOrderId: "run-quality-history:history-venue-buy",
+      venue: "bulk",
+      market: "BTC-USD",
       venueFillId: "history-buy",
+      venueOrderId: "history-venue-buy",
       side: "buy",
       price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 2_000,
+    });
+    await repository.recordTradeFill({
+      id: "history-reduce-fill",
+      runId: "run-quality-history",
+      submittedOrderId: "run-quality-history:history-venue-reduce",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "history-reduce-fill",
+      venueOrderId: "history-venue-reduce",
+      side: "buy",
+      price: 96,
       quantity: 1,
       fee: 0,
       tradePnl: 0,
@@ -885,5 +952,261 @@ describe("SqliteMetricsRepository", () => {
       submitted_count: 1,
       fill_rate: 1,
     });
+  });
+
+  test("stores edge discovery facts with duplicate-safe upserts", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-edge-facts",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+
+    await repository.recordRuntimeHealthEvent({
+      id: "runtime-1",
+      runId: "run-edge-facts",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1_000,
+      level: "warn",
+      code: "quote_side_skipped",
+      message: "Skipped stale quote",
+      rawJson: { reason: "stale_touch" },
+    });
+    await repository.recordRuntimeHealthEvent({
+      id: "runtime-1-replacement",
+      runId: "run-edge-facts",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1_000,
+      level: "error",
+      code: "quote_side_skipped",
+      message: "Skipped stale quote replacement",
+      rawJson: { reason: "stale_touch", replacement: true },
+    });
+    await repository.recordQuoteDecision({
+      id: "quote-decision-1",
+      runId: "run-edge-facts",
+      venue: "bulk",
+      market: "BTC-USD",
+      quoteCycleId: "cycle-edge",
+      side: "buy",
+      level: 0,
+      intent: "quote",
+      price: 99,
+      quantity: 2,
+      fairPrice: 100,
+      sigma: 0.01,
+      policy: "ALO",
+      positionQty: 0.25,
+      midPrice: 100,
+      microPrice: 100.1,
+      markPrice: 100.2,
+      spreadBps: 10,
+      stalenessMs: 15,
+      controlReasons: ["edge:test"],
+      createdAt: 900,
+      rawJson: { source: "test" },
+    });
+    await repository.recordOrderLifecycleEvent({
+      id: "lifecycle-1",
+      runId: "run-edge-facts",
+      venue: "bulk",
+      market: "BTC-USD",
+      action: "submit",
+      clientOrderId: "cycle-edge:bid:0",
+      venueOrderId: "venue-edge",
+      side: "buy",
+      intent: "quote",
+      orderType: "limit",
+      price: 99,
+      quantity: 2,
+      timeInForce: "ALO",
+      status: "open",
+      latencyMs: 25,
+      observedAt: 950,
+      rawJson: { status: "open" },
+    });
+
+    const runtimeRows = client.sqlite
+      .query<{ count: number; level: string; message: string }, []>(
+        "SELECT count(*) AS count, level, message FROM runtime_health_events WHERE run_id = 'run-edge-facts'",
+      )
+      .get();
+    const quoteDecision = client.sqlite
+      .query<
+        {
+          quote_cycle_id: string;
+          side: string;
+          level: number;
+          control_reasons_json: string;
+        },
+        []
+      >(
+        "SELECT quote_cycle_id, side, level, control_reasons_json FROM quote_decisions WHERE id = 'quote-decision-1'",
+      )
+      .get();
+    const lifecycle = client.sqlite
+      .query<{ action: string; client_order_id: string; latency_ms: number }, []>(
+        "SELECT action, client_order_id, latency_ms FROM order_lifecycle_events WHERE id = 'lifecycle-1'",
+      )
+      .get();
+    const summary = client.sqlite
+      .query<{ event_count: number; latest_observed_at: number }, []>(
+        "SELECT event_count, latest_observed_at FROM v_runtime_health_summary WHERE run_id = 'run-edge-facts' AND code = 'quote_side_skipped'",
+      )
+      .get();
+
+    expect(runtimeRows).toEqual({
+      count: 1,
+      level: "error",
+      message: "Skipped stale quote replacement",
+    });
+    expect(quoteDecision).toEqual({
+      quote_cycle_id: "cycle-edge",
+      side: "buy",
+      level: 0,
+      control_reasons_json: JSON.stringify(["edge:test"]),
+    });
+    expect(lifecycle).toEqual({
+      action: "submit",
+      client_order_id: "cycle-edge:bid:0",
+      latency_ms: 25,
+    });
+    expect(summary).toEqual({ event_count: 1, latest_observed_at: 1000 });
+  });
+
+  test("joins fills back to quote decisions for edge bucket analysis", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-fill-context",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "fill-context-5s",
+      runId: "run-fill-context",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 6_000,
+      bestBid: 101,
+      bestAsk: 103,
+      midPrice: 102,
+      microPrice: 102,
+      markPrice: 102,
+      spreadBps: 196,
+      stalenessMs: 0,
+    });
+    await repository.recordQuoteDecision({
+      id: "quote-context",
+      runId: "run-fill-context",
+      venue: "bulk",
+      market: "BTC-USD",
+      quoteCycleId: "cycle-context",
+      side: "buy",
+      level: 0,
+      intent: "quote",
+      price: 100,
+      quantity: 1,
+      fairPrice: 100.5,
+      sigma: 0.02,
+      policy: "ALO",
+      positionQty: 0,
+      midPrice: 100.5,
+      microPrice: 100.6,
+      markPrice: 100.4,
+      spreadBps: 10,
+      stalenessMs: 20,
+      controlReasons: [],
+      createdAt: 500,
+    });
+    await repository.recordSubmittedOrder({
+      id: "order-context",
+      runId: "run-fill-context",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle-context:bid:0",
+      venueOrderId: "venue-context",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 100,
+      quantity: 1,
+      timeInForce: "ALO",
+      submittedAt: 600,
+      finalStatus: "filled",
+    });
+    await repository.recordTradeFill({
+      id: "fill-context",
+      runId: "run-fill-context",
+      submittedOrderId: "order-context",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "fill-context",
+      venueOrderId: "venue-context",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0.1,
+      tradePnl: 0.5,
+      makerTaker: "maker",
+      filledAt: 1_000,
+    });
+
+    const fillContext = client.sqlite
+      .query<
+        {
+          fill_id: string;
+          quote_decision_id: string;
+          quote_age_ms: number;
+          markout_5s_bps: number;
+          net_ev_bps: number;
+        },
+        []
+      >(
+        "SELECT fill_id, quote_decision_id, quote_age_ms, markout_5s_bps, net_ev_bps FROM v_fill_context WHERE fill_id = 'fill-context'",
+      )
+      .get();
+    const bucket = client.sqlite
+      .query<
+        {
+          quote_age_bucket: string;
+          fill_count: number;
+          avg_markout_5s_bps: number;
+          net_ev_bps: number;
+        },
+        []
+      >(
+        "SELECT quote_age_bucket, fill_count, avg_markout_5s_bps, net_ev_bps FROM v_edge_quote_bucket_quality WHERE run_id = 'run-fill-context'",
+      )
+      .get();
+
+    expect(fillContext?.fill_id).toBe("fill-context");
+    expect(fillContext?.quote_decision_id).toBe("quote-context");
+    expect(fillContext?.quote_age_ms).toBe(500);
+    expect(fillContext?.markout_5s_bps).toBeCloseTo(200);
+    expect(fillContext?.net_ev_bps).toBeCloseTo(40);
+    expect(bucket?.quote_age_bucket).toBe("300-1000");
+    expect(bucket?.fill_count).toBe(1);
+    expect(bucket?.avg_markout_5s_bps).toBeCloseTo(200);
+    expect(bucket?.net_ev_bps).toBeCloseTo(40);
   });
 });

@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import type { Fill } from "../domain/entities/Fill.ts";
-import type { Quote } from "../domain/entities/Quote.ts";
+import type { OrderSide, Quote, QuoteSideIntent } from "../domain/entities/Quote.ts";
 import type { MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type {
   CapitalMode,
   IMetricsRepository,
+  OrderLifecycleEventFact,
   SubmittedOrderFact,
   TradingRunFact,
 } from "../domain/ports/IMetricsRepository.ts";
@@ -100,7 +101,12 @@ export class MetricsRecorder {
     }
   }
 
-  async recordQuote(snapshot: MarketSnapshot, positionQty: number, quote: Quote): Promise<void> {
+  async recordQuote(
+    snapshot: MarketSnapshot,
+    positionQty: number,
+    quote: Quote,
+    quoteCycleId = `${snapshot.market}:${snapshot.timestamp}`,
+  ): Promise<void> {
     await this.repository.recordAccountStateObservation({
       id: `${this.runId}:${snapshot.market}:${snapshot.timestamp}:quote`,
       runId: this.runId,
@@ -125,32 +131,47 @@ export class MetricsRecorder {
         marketSpreadBps: spreadBps(snapshot),
       },
     });
+    for (const decision of quoteDecisionFacts({
+      runId: this.runId,
+      venue: this.options.venue,
+      snapshot,
+      positionQty,
+      quote,
+      quoteCycleId,
+    })) {
+      await this.repository.recordQuoteDecision(decision);
+    }
   }
 
   async recordOrder(payload: OrderGatewayEvent, market = this.options.market): Promise<void> {
     const orderKey = this.orderKeyFor(payload);
+    const previous = orderKey === undefined ? undefined : this.openOrders.get(orderKey);
+    const now = Date.now();
+    await this.repository.recordOrderLifecycleEvent(
+      orderLifecycleEvent(this.runId, this.options.venue, market, payload, orderKey, previous, now),
+    );
     if (payload.action === "cancel" && orderKey === undefined) {
-      await this.recordCancelAll(payload);
+      await this.recordCancelAll(payload, market, now);
       return;
     }
     if (
       orderKey === undefined ||
-      (payload.side === undefined && this.openOrders.get(orderKey)?.side === undefined) ||
-      (payload.qty === undefined && this.openOrders.get(orderKey)?.quantity === undefined) ||
-      (payload.timeInForce === undefined &&
-        this.openOrders.get(orderKey)?.timeInForce === undefined)
+      (payload.side === undefined && previous?.side === undefined) ||
+      (payload.qty === undefined && previous?.quantity === undefined) ||
+      (payload.timeInForce === undefined && previous?.timeInForce === undefined)
     ) {
       return;
     }
-    const previous = this.openOrders.get(orderKey);
-    const now = Date.now();
     const order = this.orderFactFrom(payload, orderKey, now, market, previous);
     await this.repository.recordSubmittedOrder(order);
     this.updateOrderState(order);
   }
 
-  private async recordCancelAll(payload: OrderGatewayEvent, market = this.options.market) {
-    const now = Date.now();
+  private async recordCancelAll(
+    payload: OrderGatewayEvent,
+    market = this.options.market,
+    now = Date.now(),
+  ) {
     const openOrders = [...this.openOrders.entries()].filter(
       ([, order]) => order.market === market,
     );
@@ -163,10 +184,26 @@ export class MetricsRecorder {
         rawJson: rawSummary(payload, "cancelAll"),
       };
       await this.repository.recordSubmittedOrder(canceledOrder);
+      await this.repository.recordOrderLifecycleEvent({
+        id: `${this.runId}:${order.clientOrderId}:cancelAll:${now}`,
+        runId: this.runId,
+        venue: this.options.venue,
+        market: order.market,
+        action: "cancel",
+        clientOrderId: order.clientOrderId,
+        venueOrderId: order.venueOrderId,
+        side: order.side,
+        intent: order.intent,
+        orderType: order.orderType,
+        price: order.limitPrice,
+        quantity: order.quantity,
+        timeInForce: order.timeInForce,
+        status: "canceled",
+        latencyMs: payload.latencyMs,
+        observedAt: now,
+        rawJson: rawSummary(payload, "cancelAll"),
+      });
       this.openOrders.delete(orderKey);
-      if (order.venueOrderId !== undefined) {
-        this.orderAliases.delete(order.venueOrderId);
-      }
     }
   }
 
@@ -229,9 +266,6 @@ export class MetricsRecorder {
       order.finalStatus === "filled"
     ) {
       this.openOrders.delete(orderKey);
-      if (order.venueOrderId !== undefined) {
-        this.orderAliases.delete(order.venueOrderId);
-      }
       return;
     }
     this.openOrders.set(orderKey, order);
@@ -239,11 +273,14 @@ export class MetricsRecorder {
 
   async recordFill(fill: Fill): Promise<void> {
     const tradePnl = this.computeTradePnl(fill);
+    const orderKey = fill.quoteId === undefined ? undefined : this.orderAliases.get(fill.quoteId);
     await this.repository.recordTradeFill({
       id: fill.id,
       runId: this.runId,
       submittedOrderId:
-        fill.quoteId === undefined ? undefined : submittedOrderId(this.runId, fill.quoteId),
+        fill.quoteId === undefined
+          ? undefined
+          : submittedOrderId(this.runId, orderKey ?? fill.quoteId),
       venue: fill.venue,
       market: fill.market,
       venueFillId: fill.id,
@@ -265,10 +302,18 @@ export class MetricsRecorder {
     message: string,
     rawSummary?: unknown,
   ): Promise<void> {
-    void level;
-    void code;
-    void message;
-    void rawSummary;
+    const observedAt = Date.now();
+    await this.repository.recordRuntimeHealthEvent({
+      id: `${this.runId}:${code}:${observedAt}`,
+      runId: this.runId,
+      venue: this.options.venue,
+      market: this.options.market,
+      observedAt,
+      level,
+      code,
+      message,
+      rawJson: rawSummary,
+    });
   }
 
   private computeTradePnl(fill: Fill): number {
@@ -324,6 +369,115 @@ function secondBucket(timestamp: number): number {
 
 function submittedOrderId(runId: string, orderKey: string): string {
   return `${runId}:${orderKey}`;
+}
+
+function orderLifecycleEvent(
+  runId: string,
+  venue: string,
+  market: string,
+  payload: OrderGatewayEvent,
+  orderKey: string | undefined,
+  previous: SubmittedOrderFact | undefined,
+  observedAt: number,
+): OrderLifecycleEventFact {
+  const eventKey = orderKey ?? payload.clientOrderId ?? payload.orderId ?? "unknown";
+  return {
+    id: `${runId}:${eventKey}:${payload.action}:${observedAt}`,
+    runId,
+    venue,
+    market: previous?.market ?? market,
+    action: payload.action,
+    clientOrderId: previous?.clientOrderId ?? payload.clientOrderId,
+    venueOrderId: payload.orderId ?? previous?.venueOrderId,
+    side: payload.side ?? previous?.side,
+    intent: payload.intent ?? previous?.intent,
+    orderType: payload.orderType ?? previous?.orderType,
+    price: payload.price ?? previous?.limitPrice,
+    quantity: payload.qty ?? previous?.quantity,
+    timeInForce: payload.timeInForce ?? previous?.timeInForce,
+    status:
+      payload.status ?? (previous?.finalStatus === undefined ? undefined : previous.finalStatus),
+    latencyMs: payload.latencyMs,
+    observedAt,
+    rawJson: rawSummary(payload),
+  };
+}
+
+function quoteDecisionFacts(input: {
+  runId: string;
+  venue: string;
+  snapshot: MarketSnapshot;
+  positionQty: number;
+  quote: Quote;
+  quoteCycleId: string;
+}) {
+  const levels = input.quote.levels ?? [
+    {
+      level: 0,
+      bid: input.quote.bid,
+      ask: input.quote.ask,
+      bidSize: input.quote.bidSize,
+      askSize: input.quote.askSize,
+      bidIntent: input.quote.bidIntent,
+      askIntent: input.quote.askIntent,
+      bidControlReasons: input.quote.bidControlReasons,
+      askControlReasons: input.quote.askControlReasons,
+    },
+  ];
+  const createdAt = input.snapshot.timestamp;
+  const base = {
+    runId: input.runId,
+    venue: input.venue,
+    market: input.snapshot.market,
+    quoteCycleId: input.quoteCycleId,
+    fairPrice: input.quote.fairPrice,
+    sigma: input.quote.sigma,
+    policy: input.quote.policy,
+    positionQty: input.positionQty,
+    midPrice: midPrice(input.snapshot),
+    microPrice: input.snapshot.microPrice,
+    markPrice: input.snapshot.markPrice,
+    spreadBps: spreadBps(input.snapshot),
+    stalenessMs: Math.max(
+      0,
+      Date.now() - (input.snapshot.bookUpdatedAt ?? input.snapshot.timestamp),
+    ),
+    createdAt,
+  };
+  return levels.flatMap((level) => [
+    {
+      ...base,
+      id: `${input.runId}:${input.quoteCycleId}:buy:${level.level}`,
+      side: "buy" as OrderSide,
+      level: level.level,
+      intent: quoteDecisionIntent(level.bidIntent),
+      price: level.bid,
+      quantity: level.bidSize,
+      controlReasons: level.bidControlReasons ?? [],
+      rawJson: { halfSpreadBps: "halfSpreadBps" in level ? level.halfSpreadBps : undefined },
+    },
+    {
+      ...base,
+      id: `${input.runId}:${input.quoteCycleId}:sell:${level.level}`,
+      side: "sell" as OrderSide,
+      level: level.level,
+      intent: quoteDecisionIntent(level.askIntent),
+      price: level.ask,
+      quantity: level.askSize,
+      controlReasons: level.askControlReasons ?? [],
+      rawJson: { halfSpreadBps: "halfSpreadBps" in level ? level.halfSpreadBps : undefined },
+    },
+  ]);
+}
+
+function quoteDecisionIntent(intent: QuoteSideIntent | undefined): "quote" | "reduce" | "disabled" {
+  if (intent === "reduce_inventory") {
+    return "reduce";
+  }
+  if (intent === "disabled") {
+    return "disabled";
+  }
+  return "quote";
 }
 
 function finalStatus(

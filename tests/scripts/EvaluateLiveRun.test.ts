@@ -228,6 +228,36 @@ describe("evaluateLiveRun", () => {
     expect(result.evaluation.markouts.vw30sBps).toBeCloseTo(-50);
     expect(result.evaluation.markouts.vw300sBps).toBeCloseTo(100);
     expect(result.evaluation.orderQuality.makerRatio).toBe(0.5);
+    expect(result.bucketEvidence.sideIntent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          bucket: "sell:quote",
+          fillCount: 1,
+          notionalUsd: 300,
+          netPnl: 1,
+        }),
+        expect.objectContaining({
+          bucket: "buy:quote",
+          fillCount: 1,
+          notionalUsd: 100,
+          netPnl: 1,
+        }),
+      ]),
+    );
+    expect(result.bucketEvidence.quoteLevel).toEqual([
+      expect.objectContaining({
+        bucket: "level_0",
+        fillCount: 2,
+        notionalUsd: 400,
+      }),
+    ]);
+    expect(result.bucketEvidence.quoteAge).toEqual([
+      expect.objectContaining({
+        bucket: "<1s",
+        fillCount: 2,
+        avgOrderLiveMs: 100,
+      }),
+    ]);
     client.sqlite.close();
   });
 

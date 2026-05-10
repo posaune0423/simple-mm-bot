@@ -209,8 +209,12 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 | `submitted_orders`           | order quality                     | client_order_id, venue_order_id, intent, status, latency       |
 | `trade_fills`                | PnL / fee / volume / fill quality | venue_fill_id, venue_order_id, price, quantity, fee, trade_pnl |
 | `account_state_observations` | inventory / margin / equity risk  | equity, realized_pnl, unrealized_pnl, position_qty, margin     |
+| `runtime_health_events`      | runtime health / skip fact        | level, code, message, observed_at, raw_json                    |
+| `quote_decisions`            | side / level quote decision fact  | quote_cycle_id, side, level, intent, price, quantity, context  |
+| `order_lifecycle_events`     | raw gateway lifecycle event       | action, client_order_id, venue_order_id, status, latency       |
 
-`telemetry_events`, `markouts`, `quote_decisions`, `runtime_incidents` は作らない。
+`telemetry_events`, `markouts`, `runtime_incidents` は作らない。
+`quote_decisions` と `runtime_health_events` は edge 探索に必要な raw fact として保存する。
 `v_run_performance` を run 評価の入口にし、PnL、drawdown、order quality、markout、market quality、inventory risk は view で集計する。
 
 `ohlcv` は backtest / historical cache 用の別枠として残す。Bulk live / paper の成績評価では OHLCV ではなく `orderbook_snapshots` を使う。

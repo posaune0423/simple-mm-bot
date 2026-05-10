@@ -12,16 +12,20 @@ SQLite / PostgreSQL の metrics DB は、後から評価できる fact だけを
 
 ## Core Metrics Tables
 
-| Table                        | 用途                              | Primary / unique key                            |
-| ---------------------------- | --------------------------------- | ----------------------------------------------- |
-| `trading_runs`               | run 単位の分析軸                  | `id`                                            |
-| `orderbook_snapshots`        | spread、staleness、markout join   | PK `id`, unique `(run_id, market, observed_at)` |
-| `submitted_orders`           | 注文品質、reject/cancel/fill rate | PK `id`, unique `(run_id, client_order_id)`     |
-| `trade_fills`                | PnL、fee、volume、fill 品質       | PK `id`, unique `(venue, venue_fill_id)`        |
-| `account_state_observations` | inventory、margin、equity risk    | PK `id`, unique `(run_id, market, observed_at)` |
+| Table                        | 用途                               | Primary / unique key                                    |
+| ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
+| `trading_runs`               | run 単位の分析軸                   | `id`                                                    |
+| `orderbook_snapshots`        | spread、staleness、markout join    | PK `id`, unique `(run_id, market, observed_at)`         |
+| `submitted_orders`           | 注文品質、reject/cancel/fill rate  | PK `id`, unique `(run_id, client_order_id)`             |
+| `trade_fills`                | PnL、fee、volume、fill 品質        | PK `id`, unique `(venue, venue_fill_id)`                |
+| `account_state_observations` | inventory、margin、equity risk     | PK `id`, unique `(run_id, market, observed_at)`         |
+| `runtime_health_events`      | skip / stale / runtime health fact | PK `id`, unique `(run_id, code, observed_at)`           |
+| `quote_decisions`            | side / level 別 quote 判断 fact    | PK `id`, unique `(run_id, quote_cycle_id, side, level)` |
+| `order_lifecycle_events`     | gateway raw lifecycle event        | PK `id`                                                 |
 
-`telemetry_events`, `markouts`, `quote_decisions`, `runtime_incidents` は core metrics DB には作らない。
+`telemetry_events`, `markouts`, `runtime_incidents` は core metrics DB には作らない。
 Markout や run performance は保存済み fact から view で計算する。
+`quote_decisions` と `runtime_health_events` は分析結果ではなく edge 探索に必要な raw fact として保存する。
 
 既存の `fills` と `ohlcv` は legacy / historical path 用に残っている。
 `reports` table は作らない。run 評価の入口は `trade_fills` と metrics views。
@@ -121,12 +125,73 @@ erDiagram
         text raw_json "account summary"
     }
 
+    runtime_health_events {
+        text id PK "event id"
+        text run_id FK "logical ref: trading_runs.id"
+        text venue
+        text market
+        bigint observed_at UK "epoch ms"
+        text level "info/warn/error"
+        text code UK "stable machine-readable code"
+        text message
+        text raw_json "event context"
+    }
+
+    quote_decisions {
+        text id PK "run_id:quote_cycle_id:side:level"
+        text run_id FK "logical ref: trading_runs.id"
+        text venue
+        text market
+        text quote_cycle_id UK "join to client_order_id prefix"
+        text side UK "buy/sell"
+        int level UK "ladder level"
+        text intent "quote/reduce/disabled"
+        double price
+        double quantity
+        double fair_price
+        double sigma
+        text policy "TIF policy"
+        double position_qty
+        double mid_price
+        double micro_price
+        double mark_price
+        double spread_bps
+        bigint staleness_ms
+        text control_reasons_json
+        bigint created_at
+        text raw_json
+    }
+
+    order_lifecycle_events {
+        text id PK "raw lifecycle event id"
+        text run_id FK "logical ref: trading_runs.id"
+        text venue
+        text market
+        text action "submit/ack/cancel/reject/fill"
+        text client_order_id
+        text venue_order_id
+        text side
+        text intent
+        text order_type
+        double price
+        double quantity
+        text time_in_force
+        text status
+        bigint latency_ms
+        bigint observed_at
+        text raw_json
+    }
+
     trading_runs ||--o{ orderbook_snapshots : "has snapshots"
     trading_runs ||--o{ submitted_orders : "submits"
     trading_runs ||--o{ trade_fills : "records fills"
     trading_runs ||--o{ account_state_observations : "observes risk"
+    trading_runs ||--o{ runtime_health_events : "records health"
+    trading_runs ||--o{ quote_decisions : "records decisions"
+    trading_runs ||--o{ order_lifecycle_events : "records events"
     submitted_orders ||..o{ trade_fills : "matched by submitted_order_id"
     submitted_orders ||..o{ trade_fills : "matched by venue_order_id"
+    quote_decisions ||..o{ submitted_orders : "matched by quote_cycle_id side level"
     orderbook_snapshots ||..o{ trade_fills : "markout horizon join"
 ```
 
@@ -241,6 +306,73 @@ Unique: `(venue, venue_fill_id)`.
 
 Unique: `(run_id, market, observed_at)`.
 
+### `runtime_health_events`
+
+| Column        | Type     | Null | Key     | 用途                          |
+| ------------- | -------- | ---- | ------- | ----------------------------- |
+| `id`          | `text`   | no   | PK      | event id                      |
+| `run_id`      | `text`   | no   | UK part | run 別 health / skip 分析     |
+| `venue`       | `text`   | no   | -       | venue 別分析                  |
+| `market`      | `text`   | no   | -       | market 別分析                 |
+| `observed_at` | `bigint` | no   | UK part | event timestamp               |
+| `level`       | `text`   | no   | -       | `info` / `warn` / `error`     |
+| `code`        | `text`   | no   | UK part | stable code                   |
+| `message`     | `text`   | no   | -       | human-readable summary        |
+| `raw_json`    | `text`   | yes  | -       | skip reason / runtime context |
+
+Unique: `(run_id, code, observed_at)`.
+
+### `quote_decisions`
+
+| Column                 | Type     | Null | Key     | 用途                                  |
+| ---------------------- | -------- | ---- | ------- | ------------------------------------- |
+| `id`                   | `text`   | no   | PK      | decision row id                       |
+| `run_id`               | `text`   | no   | UK part | run 別 quote 判断                     |
+| `venue`                | `text`   | no   | -       | venue 別分析                          |
+| `market`               | `text`   | no   | -       | market 別分析                         |
+| `quote_cycle_id`       | `text`   | no   | UK part | client order id prefix                |
+| `side`                 | `text`   | no   | UK part | `buy` / `sell`                        |
+| `level`                | `int`    | no   | UK part | ladder level                          |
+| `intent`               | `text`   | no   | -       | `quote` / `reduce` / `disabled`       |
+| `price`                | `double` | no   | -       | planned quote price                   |
+| `quantity`             | `double` | no   | -       | planned quote size                    |
+| `fair_price`           | `double` | no   | -       | quote generation fair price           |
+| `sigma`                | `double` | no   | -       | strategy volatility input             |
+| `policy`               | `text`   | no   | -       | TIF policy                            |
+| `position_qty`         | `double` | no   | -       | inventory context                     |
+| `mid_price`            | `double` | no   | -       | market context at decision            |
+| `micro_price`          | `double` | no   | -       | micro price at decision               |
+| `mark_price`           | `double` | no   | -       | mark price at decision                |
+| `spread_bps`           | `double` | no   | -       | market spread at decision             |
+| `staleness_ms`         | `bigint` | no   | -       | component freshness at decision       |
+| `control_reasons_json` | `text`   | no   | -       | quote control / gate reason tags      |
+| `created_at`           | `bigint` | no   | -       | quote generation timestamp            |
+| `raw_json`             | `text`   | yes  | -       | implementation-specific decision data |
+
+Unique: `(run_id, quote_cycle_id, side, level)`.
+
+### `order_lifecycle_events`
+
+| Column            | Type     | Null | Key | 用途                                  |
+| ----------------- | -------- | ---- | --- | ------------------------------------- |
+| `id`              | `text`   | no   | PK  | event id                              |
+| `run_id`          | `text`   | no   | -   | run 別 event 分析                     |
+| `venue`           | `text`   | no   | -   | venue 別分析                          |
+| `market`          | `text`   | no   | -   | market 別分析                         |
+| `action`          | `text`   | no   | -   | submit / ack / cancel / reject / fill |
+| `client_order_id` | `text`   | yes  | -   | client order id                       |
+| `venue_order_id`  | `text`   | yes  | -   | venue order id                        |
+| `side`            | `text`   | yes  | -   | buy / sell                            |
+| `intent`          | `text`   | yes  | -   | quote / reduce / close                |
+| `order_type`      | `text`   | yes  | -   | limit / market                        |
+| `price`           | `double` | yes  | -   | event price                           |
+| `quantity`        | `double` | yes  | -   | event quantity                        |
+| `time_in_force`   | `text`   | yes  | -   | TIF                                   |
+| `status`          | `text`   | yes  | -   | venue / normalized status             |
+| `latency_ms`      | `bigint` | yes  | -   | observed latency                      |
+| `observed_at`     | `bigint` | no   | -   | event timestamp                       |
+| `raw_json`        | `text`   | yes  | -   | raw event summary                     |
+
 ## Fact Sources
 
 | Table                        | 保存タイミング                                                                                                                                                                          |
@@ -250,20 +382,26 @@ Unique: `(run_id, market, observed_at)`.
 | `submitted_orders`           | order gateway の submit / ack / reject / cancel event から client order id 単位で upsert する。                                                                                         |
 | `trade_fills`                | `syncFills()` / fill subscription 由来の normalized fill を `(venue, venue_fill_id)` で upsert する。                                                                                   |
 | `account_state_observations` | snapshot に account risk 情報がある場合、低頻度 risk observation として保存する。                                                                                                       |
+| `runtime_health_events`      | guarded skip、no active orders、runtime health signal を発生時点の raw fact として保存する。                                                                                            |
+| `quote_decisions`            | quote cycle ごとに side / level / intent / price / size / freshness / control reason を保存する。                                                                                       |
+| `order_lifecycle_events`     | gateway event 単位で submit / ack / cancel / reject / fill の raw lifecycle を保存する。                                                                                                |
 
 ## Analysis Views
 
-| View                | 内容                                                                                            |
-| ------------------- | ----------------------------------------------------------------------------------------------- |
-| `v_run_pnl`         | notional, fee, trade PnL, net PnL, PnL per notional                                             |
-| `v_equity_curve`    | fill 順の cumulative net PnL                                                                    |
-| `v_run_drawdown`    | equity curve から max drawdown                                                                  |
-| `v_order_quality`   | submit 数、reject rate、cancel rate、fill rate、avg latency                                     |
-| `v_fill_markouts`   | `trade_fills` と `orderbook_snapshots` を `filled_at + 5s/30s/300s` で join した signed markout |
-| `v_markout_quality` | avg markout、adverse selection rate、markout coverage                                           |
-| `v_market_quality`  | avg/p95 spread、stale rate、observation count                                                   |
-| `v_inventory_risk`  | max abs position、avg position、min margin ratio、equity drawdown                               |
-| `v_run_performance` | run 単位の最終評価入口                                                                          |
+| View                          | 内容                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `v_run_pnl`                   | notional, fee, trade PnL, net PnL, PnL per notional                                |
+| `v_equity_curve`              | fill 順の cumulative net PnL                                                       |
+| `v_run_drawdown`              | equity curve から max drawdown                                                     |
+| `v_fill_markouts`             | fill ごとの future mid markout と fee / trade PnL / order join key                 |
+| `v_fill_context`              | fill -> submitted order -> quote decision -> markout を joinした edge探索用context |
+| `v_edge_quote_bucket_quality` | side / level / intent / quote age bucket ごとの fill count, markout, fee, net EV   |
+| `v_runtime_health_summary`    | runtime health event の code / level 別件数と最新発生時刻                          |
+| `v_order_quality`             | submit 数、reject rate、cancel rate、fill rate、avg latency                        |
+| `v_markout_quality`           | avg markout、adverse selection rate、markout coverage                              |
+| `v_market_quality`            | avg/p95 spread、stale rate、observation count                                      |
+| `v_inventory_risk`            | max abs position、avg position、min margin ratio、equity drawdown                  |
+| `v_run_performance`           | run 単位の最終評価入口                                                             |
 
 `v_fill_markouts` は OHLCV を参照しない。Markout の価格 fact は `orderbook_snapshots` から取る。
 

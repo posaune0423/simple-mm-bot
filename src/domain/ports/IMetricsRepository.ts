@@ -7,6 +7,9 @@ type OrderIntent = "quote" | "reduce" | "close";
 type OrderType = "limit" | "market";
 type OrderFinalStatus = "submitted" | "accepted" | "rejected" | "canceled" | "filled";
 type MakerTaker = "maker" | "taker" | "unknown";
+type RuntimeHealthLevel = "info" | "warn" | "error";
+type QuoteDecisionIntent = "quote" | "reduce" | "disabled";
+type OrderLifecycleAction = "submit" | "ack" | "cancel" | "reject" | "fill";
 
 export interface TradingRunFact {
   id: string;
@@ -97,6 +100,63 @@ export interface AccountStateObservationFact {
   rawJson?: unknown;
 }
 
+export interface RuntimeHealthEventFact {
+  id: string;
+  runId: string;
+  venue: string;
+  market: string;
+  observedAt: number;
+  level: RuntimeHealthLevel;
+  code: string;
+  message: string;
+  rawJson?: unknown;
+}
+
+export interface QuoteDecisionFact {
+  id: string;
+  runId: string;
+  venue: string;
+  market: string;
+  quoteCycleId: string;
+  side: OrderSide;
+  level: number;
+  intent: QuoteDecisionIntent;
+  price: number;
+  quantity: number;
+  fairPrice: number;
+  sigma: number;
+  policy: OrderTimeInForce;
+  positionQty: number;
+  midPrice: number;
+  microPrice: number;
+  markPrice: number;
+  spreadBps: number;
+  stalenessMs: number;
+  controlReasons: string[];
+  createdAt: number;
+  rawJson?: unknown;
+}
+
+export interface OrderLifecycleEventFact {
+  id: string;
+  runId: string;
+  venue: string;
+  market: string;
+  action: OrderLifecycleAction;
+  clientOrderId?: string;
+  venueOrderId?: string;
+  side?: OrderSide;
+  intent?: OrderIntent;
+  orderType?: OrderType;
+  price?: number;
+  quantity?: number;
+  timeInForce?: OrderTimeInForce;
+  status?: string;
+  latencyMs?: number;
+  observedAt: number;
+  rawJson?: unknown;
+}
+
 export interface IMetricsRepository {
   startRun(run: TradingRunFact): Promise<void>;
   finishRun(
@@ -109,5 +169,8 @@ export interface IMetricsRepository {
   recordSubmittedOrder(order: SubmittedOrderFact): Promise<void>;
   recordTradeFill(fill: TradeFillFact): Promise<void>;
   recordAccountStateObservation(observation: AccountStateObservationFact): Promise<void>;
+  recordRuntimeHealthEvent(event: RuntimeHealthEventFact): Promise<void>;
+  recordQuoteDecision(decision: QuoteDecisionFact): Promise<void>;
+  recordOrderLifecycleEvent(event: OrderLifecycleEventFact): Promise<void>;
   findRun(runId: string): Promise<TradingRunFact | null>;
 }
