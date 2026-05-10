@@ -7,7 +7,7 @@ RUN bun install --frozen-lockfile
 
 COPY . .
 
-ENV MODE=paper
-ENV CONFIG_PATH=config/config.yml
+ENV MODE=live
+ENV CONFIG_PATH=config/config.bulk.beta.yml
 
 CMD ["bun", "run", "src/main.ts", "run"]

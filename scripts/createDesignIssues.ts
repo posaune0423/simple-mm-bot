@@ -3,12 +3,17 @@ import { ResultAsync } from "neverthrow";
 import { planDesignIssues } from "./lib/DesignIssuePlanner.ts";
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../src/infrastructure/Metrics.ts";
+import {
+  LATEST_METRICS_EVALUATION_PATH,
+  LATEST_METRICS_REPORT_PATH,
+  METRICS_ISSUES_PATH,
+} from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { writeJsonFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
-interface EvaluationArtifact {
+interface EvaluationResult {
   run: TradingRunFact;
   evaluation: MetricsEvaluation;
 }
@@ -28,17 +33,17 @@ async function createGitHubIssue(title: string, body: string, label: string): Pr
 
 function createIssues(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const evaluationPath = options.evaluation ?? "artifacts/metrics/latest/evaluation.json";
-  const reportPath = options.report ?? "artifacts/metrics/latest/metrics-report.md";
-  const outputPath = options.output ?? "artifacts/metrics/issues.json";
+  const evaluationPath = options.evaluation ?? LATEST_METRICS_EVALUATION_PATH;
+  const reportPath = options.report ?? LATEST_METRICS_REPORT_PATH;
+  const outputPath = options.output ?? METRICS_ISSUES_PATH;
   const dryRun = options["dry-run"] === "true";
 
   return ResultAsync.fromPromise(
     (async () => {
-      const artifact = (await Bun.file(evaluationPath).json()) as EvaluationArtifact;
+      const result = (await Bun.file(evaluationPath).json()) as EvaluationResult;
       const issues = planDesignIssues({
-        issueSignals: artifact.evaluation.issueSignals,
-        runId: artifact.run.id,
+        issueSignals: result.evaluation.issueSignals,
+        runId: result.run.id,
         reportPath,
       });
       if (!dryRun) {

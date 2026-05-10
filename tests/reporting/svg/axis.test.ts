@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { bandAxis, xAxis, yAxis } from "../../../src/reporting/svg/axis.ts";
-import { bandScale, linearScale } from "../../../src/reporting/svg/scale.ts";
+import { bandAxis, xAxis, yAxis } from "../../../src/lib/reporting/svg/axis.ts";
+import { bandScale, linearScale } from "../../../src/lib/reporting/svg/scale.ts";
 
 describe("xAxis", () => {
   test("renders baseline and tick labels", () => {

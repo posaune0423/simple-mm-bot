@@ -40,7 +40,7 @@ describe("Bot", () => {
       {
         guardRisk: { execute: async () => "OK" as const },
         refreshQuotes: { execute: async () => {} },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
@@ -89,7 +89,7 @@ describe("Bot", () => {
             calls.push("refresh");
           },
         },
-        recordFill: {
+        updatePositionOnFill: {
           execute: async () => {
             calls.push("fill");
           },
@@ -140,6 +140,130 @@ describe("Bot", () => {
     expect(calls).toEqual(["cancelAll", "closePosition"]);
   });
 
+  test("initializes the live position before placing the first quote", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        initializePosition: {
+          execute: async () => {
+            calls.push("initializePosition");
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "ETH",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place(order) {
+          return { id: "quote", request: order, status: "open" as const };
+        },
+        async cancel() {},
+        async cancelAll() {},
+        async syncFills() {
+          calls.push("syncFills");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    await bot.start(1);
+
+    expect(calls.slice(0, 4)).toEqual(["connect", "syncFills", "initializePosition", "refresh"]);
+  });
+
+  test("runs inventory reduction before normal quote refresh and skips quotes when reducing", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: {
+          execute: async () => {
+            calls.push("guard");
+            return "OK" as const;
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            calls.push("reduce");
+            return true;
+          },
+        },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["guard", "reduce"]);
+  });
+
   test("cleans up subscriptions and order gateway lifecycle after stopping", async () => {
     const calls: string[] = [];
     const bot = new Bot(
@@ -150,7 +274,7 @@ describe("Bot", () => {
             calls.push("refresh");
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: {
@@ -186,12 +310,17 @@ describe("Bot", () => {
           throw new Error("unused");
         },
         async cancel() {},
-        async cancelAll() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
         subscribeFills() {
           calls.push("subscribe");
           return () => {
             calls.push("unsubscribe");
           };
+        },
+        stopBackgroundSync() {
+          calls.push("stopBackgroundSync");
         },
         dispose() {
           calls.push("dispose");
@@ -206,11 +335,127 @@ describe("Bot", () => {
       "connect",
       "subscribe",
       "refresh",
+      "stopBackgroundSync",
+      "cancelAll",
       "closePosition",
       "disconnect",
       "unsubscribe",
       "dispose",
     ]);
+  });
+
+  test("skips normal-stop market close when shutdown policy is emergency only", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["refresh", "cancelAll"]);
+  });
+
+  test("still closes positions on emergency stop with emergency-only shutdown policy", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
+        refreshQuotes: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: 0.01,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["cancelAll", "closePosition"]);
   });
 
   test("syncs existing fills before subscribing to live fill events", async () => {
@@ -219,7 +464,7 @@ describe("Bot", () => {
       {
         guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
         refreshQuotes: { execute: async () => {} },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
@@ -263,7 +508,92 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["connect", "syncFills", "subscribeFills"]);
+    expect(calls).toEqual(["connect", "syncFills", "subscribeFills", "syncFills", "syncFills"]);
+  });
+
+  test("continues startup when the initial Bulk fill sync times out", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          calls.push("subscribeMarket");
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          calls.push("subscribeFills");
+          return () => {};
+        },
+        async syncFills() {
+          calls.push("syncFills");
+          throw Object.assign(new Error("HTTP error 408"), {
+            name: "BulkHttpError",
+            status: 408,
+          });
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    try {
+      await bot.start(1);
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual([
+      "connect",
+      "syncFills",
+      "subscribeMarket",
+      "subscribeFills",
+      "refresh",
+      "cancelAll",
+      "syncFills",
+      "disconnect",
+    ]);
+    expect(logs.messages).toContain(
+      "bot.initial_sync_transient_error error=BulkHttpError: HTTP error 408",
+    );
   });
 
   test("does not sleep after stop is requested during a tick", async () => {
@@ -277,7 +607,7 @@ describe("Bot", () => {
             stopBot();
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },
@@ -323,6 +653,235 @@ describe("Bot", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  test("does not propagate an in-flight tick failure after shutdown is requested", async () => {
+    const calls: string[] = [];
+    let stopBot = () => {};
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            stopBot();
+            calls.push("reduce");
+            throw new Error("HTTP error 408");
+          },
+        },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+    stopBot = () => bot.stop();
+
+    await bot.start();
+
+    expect(calls).toEqual(["connect", "reduce", "cancelAll", "closePosition", "disconnect"]);
+  });
+
+  test("continues after a transient Bulk 408 during a live tick", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+            if (calls.filter((call) => call === "refresh").length === 1) {
+              throw Object.assign(new Error("HTTP error 408"), {
+                name: "BulkHttpError",
+                status: 408,
+              });
+            }
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    try {
+      await bot.start(2);
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual(["connect", "refresh", "refresh", "cancelAll", "disconnect"]);
+    expect(logs.messages).toContain(
+      "bot.tick_transient_error tick=1 error=BulkHttpError: HTTP error 408",
+    );
+  });
+
+  test("syncs late fills during cleanup before finishing the run", async () => {
+    const calls: string[] = [];
+    let fillListener: FillListener | undefined;
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: {
+          execute: async (fill) => {
+            calls.push(`fill:${fill.id}`);
+          },
+        },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills(listener) {
+          calls.push("subscribe");
+          fillListener = listener;
+          return () => {
+            calls.push("unsubscribe");
+          };
+        },
+        async syncFills() {
+          calls.push("syncFills");
+          await fillListener?.({
+            id: "late-fill",
+            venue: "bulk",
+            market: "BTC-USD",
+            side: "buy",
+            price: 100,
+            qty: 0.1,
+            fee: 0,
+            tradePnl: 0,
+            filledAt: 1,
+            quoteId: "late-order",
+          });
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual([
+      "connect",
+      "syncFills",
+      "subscribe",
+      "refresh",
+      "cancelAll",
+      "syncFills",
+      "fill:late-fill",
+      "disconnect",
+      "unsubscribe",
+    ]);
+  });
+
   test("propagates close-position cleanup failures after disconnecting and disposing", async () => {
     const logs = captureLogs();
     const calls: string[] = [];
@@ -334,7 +893,7 @@ describe("Bot", () => {
             calls.push("refresh");
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: {
@@ -371,12 +930,17 @@ describe("Bot", () => {
           throw new Error("unused");
         },
         async cancel() {},
-        async cancelAll() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
         subscribeFills() {
           calls.push("subscribe");
           return () => {
             calls.push("unsubscribe");
           };
+        },
+        stopBackgroundSync() {
+          calls.push("stopBackgroundSync");
         },
         dispose() {
           calls.push("dispose");
@@ -403,6 +967,8 @@ describe("Bot", () => {
       "connect",
       "subscribe",
       "refresh",
+      "stopBackgroundSync",
+      "cancelAll",
       "closePosition",
       "disconnect",
       "unsubscribe",
@@ -423,7 +989,7 @@ describe("Bot", () => {
             throw new Error("refresh failed");
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: {
@@ -534,7 +1100,7 @@ describe("Bot", () => {
             });
           },
         },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: {
           execute: async (snapshot) => {
             recorded.push(snapshot.markPrice);
@@ -606,7 +1172,7 @@ describe("Bot", () => {
             });
           },
         },
-        recordFill: {
+        updatePositionOnFill: {
           execute: async () => {
             calls.push("fill");
           },
@@ -671,7 +1237,93 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["ohlcv:1", "ohlcv:2:start", "ohlcv:2:end", "fill", "reduce"]);
+    expect(calls).toEqual(["ohlcv:1", "reduce", "ohlcv:2:start", "ohlcv:2:end", "fill"]);
+  });
+
+  test("continues quoting when a subscribed event task stalls", async () => {
+    let marketListener: SnapshotListener | undefined;
+    let quoteCount = 0;
+    const logs = captureLogs();
+
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: {
+          execute: async () => {
+            quoteCount += 1;
+            void marketListener?.({
+              market: "BTC-USD",
+              bestBid: 100,
+              bestAsk: 102,
+              microPrice: 101,
+              markPrice: 101,
+              timestamp: quoteCount + 1,
+              volume: 1,
+              marginRatio: null,
+            });
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: {
+          execute: async (snapshot) => {
+            if (snapshot.timestamp === 2) {
+              await new Promise<void>(() => {});
+            }
+          },
+        },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            volume: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe(listener) {
+          marketListener = listener;
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+        dispose() {},
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "always", eventTaskDrainTimeoutMs: 5 },
+    );
+
+    try {
+      const result = await Promise.race([
+        bot.start(2).then(() => "completed" as const),
+        Bun.sleep(100).then(() => "timed_out" as const),
+      ]);
+
+      expect(result).toBe("completed");
+      expect(quoteCount).toBe(2);
+      expect(
+        logs.messages.some((message) => message.startsWith("bot.event_tasks_drain_timeout")),
+      ).toBe(true);
+    } finally {
+      logs.restore();
+    }
   });
 
   test("logs lifecycle, tick state, and cleanup", async () => {
@@ -680,7 +1332,7 @@ describe("Bot", () => {
       {
         guardRisk: { execute: async () => "OK" as const },
         refreshQuotes: { execute: async () => {} },
-        recordFill: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
         closePosition: { execute: async () => {} },

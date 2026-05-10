@@ -22,7 +22,7 @@ New features should add or extend **use cases** in the application layer, keep *
 - Do not use `console.log` in production code. Use the repository logger from `src/utils/logger.ts`.
 - Keep Bulk-specific API details inside `src/adapters/bulk` or `bulk-ts-sdk` boundaries.
 - Do not add Bullet support unless explicitly requested; current docs define Bulk Trade as the active target.
-- Generated outputs belong in `artifacts/` or `data/`, not in source directories.
+- Generated outputs belong in `data/`, not in source directories.
 - Capture lessons after corrections by updating `.agents/memory/lessons.md`.
 - If a bug belongs outside this bot's responsibility, do not add forced workarounds here; fix the owning dependency instead.
 - Do not modify other local projects or repositories unless the user explicitly asks, even when related dependencies exist on disk.
@@ -54,6 +54,12 @@ Use [docs/STRUCTURE.md](./docs/STRUCTURE.md) as the source of truth for folder r
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md): diagrams and high-level architecture overview.
 
 Read these docs before changing runtime behavior, venue support, configuration, or layer boundaries.
+
+## Knowledge Base (Obsidian)
+
+- **Entry note**: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Private/MM bot.md`
+- **High-signal topics**: Avellaneda–Stoikov, markout, queue-awareness, VPIN, toxic flow, order types/book microstructure.
+- **Available skills**: `obsidian-cli`, `obsidian-markdown`, `obsidian-bases`
 
 ## Development Commands
 

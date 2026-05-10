@@ -142,6 +142,13 @@ export class HyperliquidOrderGateway implements IOrderGateway {
     }
   }
 
+  stopBackgroundSync(): void {
+    if (this.fillTimer !== null) {
+      clearInterval(this.fillTimer);
+      this.fillTimer = null;
+    }
+  }
+
   private async cancelByPredicate(
     predicate: (order: { coin: string; oid: number }) => boolean,
   ): Promise<void> {

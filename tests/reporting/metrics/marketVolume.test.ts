@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   computeFeeVsPnl,
   computeMarketVolume,
-} from "../../../src/reporting/metrics/marketVolume.ts";
+} from "../../../src/lib/reporting/metrics/marketVolume.ts";
 import { buildFill } from "../fixtures.ts";
 
 describe("computeMarketVolume", () => {

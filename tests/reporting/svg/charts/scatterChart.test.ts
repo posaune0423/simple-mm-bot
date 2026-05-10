@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderScatterChart } from "../../../../src/reporting/svg/charts/scatterChart.ts";
+import { renderScatterChart } from "../../../../src/lib/reporting/svg/charts/scatterChart.ts";
 
 describe("renderScatterChart", () => {
   test("renders one circle per point", () => {

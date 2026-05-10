@@ -1,41 +1,53 @@
 mode: backtest
-venue: hyperliquid
+venue: bulk
 
 connections:
-  hyperliquid:
-    wsUrl: wss://api.hyperliquid.xyz/ws
-    httpUrl: https://api.hyperliquid.xyz
-    market: ETH
+  bulk:
+    wsUrl: wss://exchange-ws1.bulk.trade
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    market: BTC-USD
+    environment: beta
+    nlevels: 20
 
 quoteEngine:
-  markWeight: 0.6
-  inventoryScale: 0.05
-  timeHorizonSec: 30
-  slideMarginThreshold: 0.12
-  defaultTimeInForce: ALO
+  markWeight: 1
+  inventoryScale: 0.2
+  timeHorizonSec: 10
+  minSpreadBps: 2
+  slideMarginThreshold: 0.06
+  defaultTimeInForce: GTC
   sizing:
-    positionSize: 0.01
-    budgetUsd: 100
+    positionSize: 1.25
+    budgetUsd: 50000
+  levels:
+    - halfSpreadBps: 1
+      sizeUsd: 9400
+    - halfSpreadBps: 2
+      sizeUsd: 18800
+    - halfSpreadBps: 4
+      sizeUsd: 31300
+    - halfSpreadBps: 8
+      sizeUsd: 50000
   strategy:
     type: avellaneda-stoikov
     params:
-      gamma: 0.02
-      kappa: 1.5
-      kInv: 0.3
+      gamma: 0
+      kappa: 625
+      kInv: 2
 
 risk:
-  imrBuffer: 0.15
-  mmrBuffer: 0.08
-  maxPositionQty: 0.05
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxPositionQty: 0.85
 
 bot:
-  intervalMs: 10
+  intervalMs: 1
 
 paper:
-  touchFillRatio: 0.75
+  touchFillRatio: 1
 
 backtest:
-  market: ETH
-  timeframe: 1h
-  from: "2024-01-01"
-  to: "2024-01-07"
+  market: BTC-USD
+  timeframe: 1m
+  from: "2026-05-06"
+  to: "2026-05-07"

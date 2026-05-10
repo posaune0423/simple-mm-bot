@@ -12,12 +12,41 @@ const timeInForceSchema = z.enum(["ALO", "GTC", "IOC"]);
 const quoteSizingSchema = z.object({
   positionSize: z.number().positive(),
   budgetUsd: z.number().positive().optional(),
+  bidSizeMultiplier: z.number().min(0).optional(),
+  askSizeMultiplier: z.number().min(0).optional(),
+  bidDistanceMultiplier: z.number().positive().optional(),
+  askDistanceMultiplier: z.number().positive().optional(),
 });
+const quoteLevelSchema = z.object({
+  halfSpreadBps: z.number().positive(),
+  sizeUsd: z.number().positive(),
+});
+const quoteQualityGateSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    minAverageMarkoutBps: z.number().default(0),
+    minSamples: z.number().int().positive().default(20),
+    lookbackFills: z.number().int().positive().default(100),
+    horizonsSec: z.array(z.number().int().positive()).min(1).default([5, 30, 300]),
+  })
+  .default({
+    enabled: false,
+    minAverageMarkoutBps: 0,
+    minSamples: 20,
+    lookbackFills: 100,
+    horizonsSec: [5, 30, 300],
+  });
 
 const strategySchema = z.object({
   type: z.literal("avellaneda-stoikov"),
   params: avellanedaStoikovParamsSchema,
 });
+
+const shutdownSchema = z
+  .object({
+    closePositionPolicy: z.enum(["always", "emergency_only"]).default("always"),
+  })
+  .default({ closePositionPolicy: "always" as const });
 
 const commonConfigSchema = z.object({
   mode: z.enum(["live", "paper", "backtest"]),
@@ -25,19 +54,27 @@ const commonConfigSchema = z.object({
     markWeight: z.number().min(0).max(1),
     inventoryScale: z.number().positive(),
     timeHorizonSec: z.number().positive(),
+    minSpreadBps: z.number().min(0).optional(),
     slideMarginThreshold: z.number().min(0).max(1),
     defaultTimeInForce: timeInForceSchema.default("ALO"),
     sizing: quoteSizingSchema,
+    levels: z.array(quoteLevelSchema).min(1).optional(),
+    qualityGate: quoteQualityGateSchema,
     strategy: strategySchema,
   }),
   risk: z.object({
     imrBuffer: z.number().min(0).max(1),
     mmrBuffer: z.number().min(0).max(1),
     maxPositionQty: z.number().positive(),
+    reduceTriggerQty: z.number().positive().optional(),
+    reduceTargetQty: z.number().min(0).optional(),
+    maxUnrealizedLossUsd: z.number().positive().optional(),
+    maxAdverseMoveBps: z.number().positive().optional(),
   }),
   bot: z.object({
     intervalMs: z.number().int().positive(),
   }),
+  shutdown: shutdownSchema,
   paper: z
     .object({
       touchFillRatio: z.number().min(0).max(1).default(0.5),
@@ -71,7 +108,9 @@ const appConfigSchema = z.discriminatedUnion("venue", [
         wsUrl: z.string().url(),
         httpUrl: z.string().url(),
         market: z.string().min(1),
+        environment: z.enum(["beta", "mainnet"]).default("mainnet"),
         nlevels: z.number().int().positive().optional(),
+        timeoutMs: z.number().int().positive().optional(),
         maxLeverage: z.number().min(1).max(50).optional(),
         privateKey: z.string().optional(),
       }),

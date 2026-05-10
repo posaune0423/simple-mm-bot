@@ -1,21 +1,5 @@
 import { bigint, boolean, doublePrecision, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 
-export const fillsTable = pgTable("fills", {
-  id: text("id").primaryKey(),
-  venue: text("venue").notNull(),
-  market: text("market").notNull(),
-  side: text("side").notNull(),
-  price: doublePrecision("price").notNull(),
-  qty: doublePrecision("qty").notNull(),
-  fee: doublePrecision("fee").notNull(),
-  tradePnl: doublePrecision("trade_pnl").notNull(),
-  filledAt: bigint("filled_at", { mode: "number" }).notNull(),
-  quoteId: text("quote_id"),
-  markPriceAtFill: doublePrecision("mark_price_at_fill"),
-  markPrice5s: doublePrecision("mark_price_5s"),
-  markPrice30s: doublePrecision("mark_price_30s"),
-});
-
 export const ohlcvTable = pgTable("ohlcv", {
   market: text("market").notNull(),
   timeframe: text("timeframe").notNull(),

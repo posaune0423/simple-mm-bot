@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderLineChart } from "../../../../src/reporting/svg/charts/lineChart.ts";
+import { renderLineChart } from "../../../../src/lib/reporting/svg/charts/lineChart.ts";
 
 describe("renderLineChart", () => {
   test("returns valid svg with polyline for non-empty data", () => {

@@ -4,8 +4,51 @@ import { ClosePositionUseCase } from "../../src/application/usecases/ClosePositi
 import type { OrderRequest } from "../../src/domain/ports/IOrderGateway.ts";
 
 describe("ClosePositionUseCase", () => {
+  test("does not submit a close order for floating-point residual inventory", async () => {
+    const placed: OrderRequest[] = [];
+
+    await new ClosePositionUseCase(
+      {
+        async place(order) {
+          placed.push(order);
+          throw new Error("floating-point residual should not be closed");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      {
+        async get() {
+          return { qty: 1.3877787807814457e-17, avgEntry: 100, unrealizedPnl: 0 };
+        },
+        async update() {
+          throw new Error("unused");
+        },
+        async set() {},
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          throw new Error("unused");
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      "BTC-USD",
+      [0, 0, 0],
+      0,
+    ).execute();
+
+    expect(placed).toEqual([]);
+  });
+
   test("uses a market reduce-only order first to close long inventory", async () => {
     const placed: OrderRequest[] = [];
+    let syncFillsCount = 0;
 
     await new ClosePositionUseCase(
       {
@@ -15,6 +58,9 @@ describe("ClosePositionUseCase", () => {
         },
         async cancel() {},
         async cancelAll() {},
+        async syncFills() {
+          syncFillsCount += 1;
+        },
         subscribeFills() {
           return () => {};
         },
@@ -47,6 +93,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     ).execute();
 
     expect(placed).toEqual([
@@ -61,6 +109,59 @@ describe("ClosePositionUseCase", () => {
     ]);
     expect(placed[0]?.price).toBeUndefined();
     expect(typeof placed[0]?.clientOrderId).toBe("string");
+    expect(syncFillsCount).toBe(4);
+  });
+
+  test("polls fills more than once after a close fill because Bulk fill indexing is delayed", async () => {
+    const syncCalls: number[] = [];
+
+    await new ClosePositionUseCase(
+      {
+        async place(order) {
+          return { id: "close-delayed", request: order, status: "filled" };
+        },
+        async cancel() {},
+        async cancelAll() {},
+        async syncFills() {
+          syncCalls.push(Date.now());
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      {
+        async get() {
+          return { qty: -0.003, avgEntry: 81500, unrealizedPnl: 0 };
+        },
+        async update() {
+          throw new Error("unused");
+        },
+        async set() {},
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 81324.75,
+            bestAsk: 81325.25,
+            microPrice: 81325,
+            markPrice: 81325,
+            timestamp: 1,
+            marginRatio: 0.2,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      "BTC-USD",
+      [0, 0, 0],
+      0,
+    ).execute();
+
+    expect(syncCalls).toHaveLength(4);
   });
 
   test("retries market close orders until one fills", async () => {
@@ -110,6 +211,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     ).execute();
 
     expect(placed).toHaveLength(2);
@@ -165,6 +268,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     ).execute();
 
     expect(placed).toHaveLength(2);
@@ -221,6 +326,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     ).execute();
 
     expect(placed).toHaveLength(2);
@@ -286,6 +393,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     ).execute();
 
     expect(syncCount).toBe(3);
@@ -337,6 +446,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     )
       .execute()
       .then(
@@ -396,6 +507,8 @@ describe("ClosePositionUseCase", () => {
         },
       },
       "BTC-USD",
+      [0, 0, 0],
+      0,
     ).execute();
 
     expect(placed[0]?.price).toBeUndefined();

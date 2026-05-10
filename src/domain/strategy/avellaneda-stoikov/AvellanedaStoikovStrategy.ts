@@ -33,14 +33,16 @@ export class AvellanedaStoikovStrategy implements IQuotingStrategy {
   private computeSpread(context: QuoteContext): number {
     const { gamma, kappa } = this.params;
     const varianceTerm = context.sigma ** 2 * context.timeHorizonSec;
+    const minSpread =
+      context.minSpreadBps === undefined ? 0 : context.fairPrice * (context.minSpreadBps / 10_000);
 
     if (gamma === 0) {
       // gamma=0 is our fixed-spread fallback mode.
-      return 2 / kappa;
+      return Math.max(2 / kappa, minSpread);
     }
 
     // Wider spreads are justified by higher risk aversion and higher variance.
-    return gamma * varianceTerm + (2 / gamma) * Math.log(1 + gamma / kappa);
+    return Math.max(gamma * varianceTerm + (2 / gamma) * Math.log(1 + gamma / kappa), minSpread);
   }
 
   private computeSkew(context: QuoteContext): number {

@@ -115,6 +115,10 @@ export class PaperOrderGateway implements IOrderGateway {
   async cancelAll(): Promise<void> {
     this.openOrders.clear();
     logger.info("paper_order_gateway.cancel_all_submitted");
+    await this.publishOrderEvent({
+      action: "cancel",
+      rawSummary: { request: "cancelAll" },
+    });
   }
 
   subscribeFills(listener: FillListener): () => void {

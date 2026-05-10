@@ -26,7 +26,7 @@ jobs:
       - name: Install Dependencies
         run: bun install --frozen-lockfile
 
-      # These tests call public Hyperliquid endpoints, so they stay out of the
+      # These tests call public Bulk endpoints, so they stay out of the
       # default PR pipeline and run only on demand or on a schedule.
       - name: Run Backtest And Paper Smoke Tests
         run: bun run test:e2e:paper

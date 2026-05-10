@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderBarChart } from "../../../../src/reporting/svg/charts/barChart.ts";
+import { renderBarChart } from "../../../../src/lib/reporting/svg/charts/barChart.ts";
 
 describe("renderBarChart", () => {
   test("renders vertical bars with positive/negative coloring", () => {

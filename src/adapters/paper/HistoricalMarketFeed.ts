@@ -3,9 +3,12 @@ import type {
   MarketSnapshot,
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
-import type { IOhlcvRepository } from "../../domain/ports/IOhlcvRepository.ts";
+import type { IOhlcvRepository, OhlcvRecord } from "../../domain/ports/IOhlcvRepository.ts";
 import { logger } from "../../utils/logger.ts";
-import type { HyperliquidOhlcvFetcher } from "../hyperliquid/HyperliquidOhlcvFetcher.ts";
+
+interface HistoricalOhlcvFetcher {
+  fetch(market: string, timeframe: string, from: number, to: number): Promise<OhlcvRecord[]>;
+}
 
 export class HistoricalMarketFeed implements IMarketFeed {
   private readonly listeners = new Set<SnapshotListener>();
@@ -14,7 +17,7 @@ export class HistoricalMarketFeed implements IMarketFeed {
 
   constructor(
     private readonly ohlcvRepository: IOhlcvRepository,
-    private readonly fetcher: HyperliquidOhlcvFetcher,
+    private readonly fetcher: HistoricalOhlcvFetcher,
     private readonly params: {
       market: string;
       timeframe: string;

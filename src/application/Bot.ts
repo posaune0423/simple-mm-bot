@@ -7,18 +7,34 @@ import type { RiskState } from "./usecases/GuardRiskUseCase.ts";
 
 interface UseCases {
   guardRisk: { execute(): Promise<RiskState> };
+  initializePosition?: { execute(): Promise<void> };
   refreshQuotes: { execute(): Promise<void> };
-  recordFill: { execute(fill: Fill): Promise<void> };
+  updatePositionOnFill: { execute(fill: Fill): Promise<void> };
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
   reduceInventory: { executeIfNeeded(): Promise<boolean> };
   closePosition: { execute(): Promise<void> };
 }
 
 type TickResult = "continue" | "stop";
+type ShutdownClosePositionPolicy = "always" | "emergency_only";
+
+interface BotOptions {
+  closePositionPolicy: ShutdownClosePositionPolicy;
+  eventTaskDrainTimeoutMs?: number;
+}
+
+type ErrorLike = {
+  name?: unknown;
+  status?: unknown;
+  message?: unknown;
+  response?: unknown;
+};
 
 export class Bot {
   private running = false;
   private quotedCount = 0;
+  private stopRequested = false;
+  private emergencyStopRequested = false;
   private eventTasks: Promise<void> = Promise.resolve();
   private readonly unsubscribers: Array<() => void> = [];
 
@@ -28,10 +44,12 @@ export class Bot {
     private readonly orderGateway: IOrderGateway,
     private readonly intervalMs: number,
     private readonly metrics?: MetricsRecorder,
+    private readonly options: BotOptions = { closePositionPolicy: "always" },
   ) {}
 
   async start(maxTicks?: number): Promise<void> {
     this.running = true;
+    this.stopRequested = false;
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(`bot.start intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`);
@@ -41,8 +59,12 @@ export class Bot {
       await this.connectAndSubscribe();
       await this.runLoop(maxTicks);
     } catch (err) {
-      runError = err;
-      await this.metrics?.recordRuntimeHealth("error", "runtime_error", String(err));
+      if (this.wasStopRequested()) {
+        logger.warn(`bot.run_error_ignored_after_stop error=${String(err)}`);
+      } else {
+        runError = err;
+        await this.metrics?.recordRuntimeHealth("error", "runtime_error", String(err));
+      }
     } finally {
       closePositionError = await this.cleanup();
       await this.metrics?.finish(
@@ -60,6 +82,7 @@ export class Bot {
   }
 
   stop(): void {
+    this.stopRequested = true;
     this.running = false;
   }
 
@@ -67,10 +90,15 @@ export class Bot {
     return this.running;
   }
 
+  private wasStopRequested(): boolean {
+    return this.stopRequested;
+  }
+
   private async connectAndSubscribe(): Promise<void> {
     await this.marketFeed.connect();
     logger.info("bot.market_feed_connected");
-    await this.orderGateway.syncFills?.();
+    await this.syncInitialFills();
+    await this.useCases.initializePosition?.execute();
     this.unsubscribers.push(
       this.marketFeed.subscribe((snapshot) => {
         this.enqueueEventTask(async () => this.recordOhlcv(snapshot));
@@ -81,7 +109,7 @@ export class Bot {
         );
         this.enqueueEventTask(async () => {
           await this.metrics?.recordFill(fill);
-          await this.useCases.recordFill.execute(fill);
+          await this.useCases.updatePositionOnFill.execute(fill);
         });
       }),
     );
@@ -99,12 +127,30 @@ export class Bot {
     await this.recordOhlcv(await this.marketFeed.getSnapshot());
   }
 
+  private async syncInitialFills(): Promise<void> {
+    if (this.orderGateway.syncFills === undefined) {
+      return;
+    }
+
+    await this.orderGateway.syncFills().catch(async (error) => {
+      if (!isTransientBulkError(error)) {
+        throw error;
+      }
+      logger.warn(`bot.initial_sync_transient_error error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "initial_sync_transient_error",
+        String(error),
+      );
+    });
+  }
+
   private async runLoop(maxTicks?: number): Promise<void> {
     let ticks = 0;
 
     while (this.isRunning()) {
       const tick = ticks + 1;
-      const tickResult = await this.runTick(tick);
+      const tickResult = await this.runTickSafely(tick);
       ticks = tick;
 
       if (tickResult === "stop" || this.hasReachedMaxTicks(ticks, maxTicks) || !this.isRunning()) {
@@ -115,22 +161,37 @@ export class Bot {
     }
   }
 
+  private async runTickSafely(tick: number): Promise<TickResult> {
+    try {
+      return await this.runTick(tick);
+    } catch (error) {
+      if (!isTransientBulkError(error)) {
+        throw error;
+      }
+      logger.warn(`bot.tick_transient_error tick=${tick} error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth("warn", "transient_tick_error", String(error), {
+        tick,
+      });
+      return "continue";
+    }
+  }
+
   private async runTick(tick: number): Promise<TickResult> {
     const riskState = await this.useCases.guardRisk.execute();
     logger.debug(`bot.tick tick=${tick} riskState=${riskState}`);
 
     if (riskState === "EMERGENCY_STOP") {
       logger.warn(`bot.stopping reason=emergency_stop tick=${tick}`);
+      this.emergencyStopRequested = true;
       return "stop";
     }
 
-    if (riskState === "OK") {
+    await this.drainEventTasks();
+    const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
+    if (riskState === "OK" && !didReduceInventory) {
       await this.useCases.refreshQuotes.execute();
       this.quotedCount += 2;
     }
-
-    await this.drainEventTasks();
-    await this.useCases.reduceInventory.executeIfNeeded();
     return this.advanceMarketFeed(tick);
   }
 
@@ -160,13 +221,18 @@ export class Bot {
     let closePositionError: unknown;
     this.running = false;
     logger.info("bot.cleanup_started");
+    await this.orderGateway.stopBackgroundSync?.();
     await this.orderGateway
       .cancelAll()
       .catch((err) => logger.error(`bot.cleanup.cancel_all_failed: ${err}`));
-    await this.useCases.closePosition.execute().catch((err) => {
-      closePositionError = err;
-      logger.error(`bot.cleanup.close_position_failed: ${err}`);
-    });
+    await this.syncCleanupFills("after_cancel_all");
+    if (this.shouldClosePositionOnCleanup()) {
+      await this.useCases.closePosition.execute().catch((err) => {
+        closePositionError = err;
+        logger.error(`bot.cleanup.close_position_failed: ${err}`);
+      });
+      await this.syncCleanupFills("after_close_position");
+    }
     await this.marketFeed.disconnect();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
       unsubscribe();
@@ -179,6 +245,19 @@ export class Bot {
       logger.error(`bot.cleanup_failed quotedCount=${this.quotedCount} closePositionFailed=true`);
     }
     return closePositionError;
+  }
+
+  private shouldClosePositionOnCleanup(): boolean {
+    return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
+  }
+
+  private async syncCleanupFills(phase: string): Promise<void> {
+    await this.orderGateway.syncFills?.().catch(async (error) => {
+      logger.warn(`bot.cleanup.sync_fills_failed phase=${phase} error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth("warn", "cleanup_sync_fills_failed", String(error), {
+        phase,
+      });
+    });
   }
 
   private async recordOhlcv(snapshot: MarketSnapshot): Promise<void> {
@@ -199,6 +278,78 @@ export class Bot {
   }
 
   private async drainEventTasks(): Promise<void> {
-    await this.eventTasks;
+    const pendingTasks = this.eventTasks;
+    const result = await Promise.race([
+      pendingTasks.then(() => "completed" as const),
+      Bun.sleep(this.eventTaskDrainTimeoutMs()).then(() => "timeout" as const),
+    ]);
+
+    if (result === "completed") {
+      return;
+    }
+
+    const timeoutMs = this.eventTaskDrainTimeoutMs();
+    logger.warn(`bot.event_tasks_drain_timeout timeoutMs=${timeoutMs}`);
+    await this.metrics?.recordRuntimeHealth(
+      "warn",
+      "event_tasks_drain_timeout",
+      `event tasks did not drain within ${timeoutMs}ms`,
+      { timeoutMs },
+    );
+    void pendingTasks.catch((error) => {
+      logger.warn(`bot.event_tasks_detached_failed error=${String(error)}`);
+    });
+    if (this.eventTasks === pendingTasks) {
+      this.eventTasks = Promise.resolve();
+    }
   }
+
+  private eventTaskDrainTimeoutMs(): number {
+    return this.options.eventTaskDrainTimeoutMs ?? Math.max(1_000, this.intervalMs);
+  }
+}
+
+function isTransientBulkError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null) {
+    const errorLike = error as ErrorLike;
+    const status = toHttpStatus(errorLike);
+    if (status === 408) {
+      return true;
+    }
+    if (errorLike.name === "BulkTimeoutError") {
+      return true;
+    }
+  }
+
+  const message = String(error);
+  return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
+}
+
+function toHttpStatus(errorLike: ErrorLike): number | undefined {
+  const maybeStatus = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isInteger(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
+  const directStatus = maybeStatus(errorLike.status);
+  if (directStatus !== undefined) {
+    return directStatus;
+  }
+
+  if (
+    errorLike.response === undefined ||
+    errorLike.response === null ||
+    typeof errorLike.response !== "object"
+  ) {
+    return undefined;
+  }
+
+  const responseStatus = maybeStatus((errorLike.response as { status?: unknown }).status);
+  return responseStatus;
 }

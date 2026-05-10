@@ -27,7 +27,7 @@ flowchart LR
 
     subgraph App["Application layer"]
         Bot["Bot (tick loop)"]
-        UC["UseCases\n- GuardRisk\n- RefreshQuotes\n- RecordFill\n- ReduceInventory"]
+        UC["UseCases\n- GuardRisk\n- RefreshQuotes\n- UpdatePositionOnFill\n- ReduceInventory"]
     end
 
     subgraph Domain["Domain layer (pure)"]
@@ -35,8 +35,7 @@ flowchart LR
         Strat["AvellanedaStoikovStrategy"]
         Fair["FairPriceCalculator"]
         Vol["VolatilityEstimator"]
-        Ana["Analytics"]
-        Ports[["Ports\nIMarketFeed / IOrderGateway\nITradeRepository\nIOhlcvRepository / IPositionRepository"]]
+        Ports[["Ports\nIMarketFeed / IOrderGateway\nIOhlcvRepository / IPositionRepository"]]
     end
 
     subgraph Adapters["Adapters"]
@@ -92,15 +91,16 @@ src/
 ├── application/
 │   ├── Bot.ts              # tick loop 本体
 │   ├── di.ts               # venue × mode → 具体 adapter を解決
+│   ├── OrderManager.ts     # quote order reconcile
+│   ├── QuotingStrategyFactory.ts
 │   └── usecases/           # GuardRisk / RefreshQuotes / RecordFill / ReduceInventory
 ├── domain/
 │   ├── entities/           # Quote / Fill / Position / PerformanceMetrics
 │   ├── ports/              # IMarketFeed / IOrderGateway / I*Repository
-│   ├── strategy/           # IQuotingStrategy + Avellaneda-Stoikov
+│   ├── strategy/           # IQuotingStrategy + strategy implementations
 │   ├── QuoteEngine.ts      # 戦略 + fair + vol + sizing の合成点
 │   ├── FairPriceCalculator.ts
-│   ├── VolatilityEstimator.ts
-│   └── Analytics.ts        # PnL / markout / sharpe / drawdown
+│   └── VolatilityEstimator.ts
 ├── adapters/
 │   ├── bulk/               # primary (BulkMarketFeed / BulkOrderGateway)
 │   ├── hyperliquid/        # legacy + backtest path
@@ -128,8 +128,7 @@ sequenceDiagram
     participant GW as IOrderGateway
     participant Reduce as ReduceInventoryUseCase
     participant Pos as IPositionRepository
-    participant Record as RecordFillUseCase
-    participant Trade as ITradeRepository
+    participant UpdatePos as UpdatePositionOnFillUseCase
 
     Note over Bot: Bot.start() 起動
     Bot->>Feed: connect()
@@ -146,9 +145,8 @@ sequenceDiagram
             Refresh->>Pos: get()
             Refresh->>QE: compute(snapshot, position)
             QE-->>Refresh: Quote{bid, ask, sizes, policy}
-            Refresh->>GW: cancelAll()
-            Refresh->>GW: place(buy)
-            Refresh->>GW: place(sell)
+            Refresh->>GW: cancel/replace changed quote orders only
+            Refresh->>GW: place missing buy/sell quote orders
         else EMERGENCY_STOP
             Bot->>GW: cancelAll()
             Bot->>Bot: stop()
@@ -161,10 +159,9 @@ sequenceDiagram
         end
     end
 
-    Note over GW,Record: 並行: fill が来たら
-    GW-->>Record: onFill(fill)
-    Record->>Trade: save(fill)
-    Record->>Pos: update(fill)
+    Note over GW,UpdatePos: 並行: fill が来たら
+    GW-->>UpdatePos: onFill(fill)
+    UpdatePos->>Pos: update(fill)
 
     Bot->>Feed: disconnect()
     Bot->>Metrics: finish run
@@ -204,8 +201,8 @@ flowchart LR
 | ------------- | ---------- | ----------------------- | ------------------------- | ---------------------------- |
 | `bulk`        | `paper`    | `BulkMarketFeed`        | `PaperOrderGateway`       | **primary**                  |
 | `bulk`        | `live`     | `BulkMarketFeed`        | `BulkOrderGateway`        | **primary** (要 PRIVATE_KEY) |
-| `bulk`        | `backtest` | -                       | -                         | **明示的にエラー**           |
-| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | 暫定の過去検証               |
+| `bulk`        | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | **primary**                  |
+| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | legacy compatibility         |
 | `hyperliquid` | `paper`    | `HyperliquidMarketFeed` | `PaperOrderGateway`       | legacy compatibility         |
 | `hyperliquid` | `live`     | `HyperliquidMarketFeed` | `HyperliquidOrderGateway` | legacy compatibility         |
 
@@ -221,7 +218,7 @@ flowchart TD
     V -- bulk --> M1{mode?}
     M1 -- paper --> BP["BulkMarketFeed + PaperOrderGateway"]
     M1 -- live  --> BL["BulkMarketFeed + BulkOrderGateway"]
-    M1 -- backtest --> ERR["throw: unsupported"]
+    M1 -- backtest --> BB["HistoricalMarketFeed + PaperOrderGateway"]
 
     V -- hyperliquid --> M2{mode?}
     M2 -- backtest --> HB["HistoricalMarketFeed + PaperOrderGateway"]
@@ -242,12 +239,11 @@ flowchart LR
         QE["QuoteEngine / UseCases"]
         IMF[/"IMarketFeed"/]
         IOG[/"IOrderGateway"/]
-        ITR[/"ITradeRepository"/]
         IMR[/"IMetricsRepository"/]
         IOR[/"IOhlcvRepository"/]
         IPR[/"IPositionRepository"/]
         QE --- IMF & IOG & IPR
-        QE --- ITR & IOR
+        QE --- IOR
     end
 
     subgraph Outside["Adapters / Infrastructure"]
@@ -259,8 +255,6 @@ flowchart LR
         HOG["HyperliquidOrderGateway"] --> IOG
         POG["PaperOrderGateway"] --> IOG
 
-        SqTrade["SqliteTradeRepository"] --> ITR
-        PgTrade["PostgresTradeRepository"] --> ITR
         SqMetrics["SqliteMetricsRepository"] --> IMR
         PgMetrics["PostgresMetricsRepository"] --> IMR
         SqOhlcv["SqliteOhlcvRepository"] --> IOR
@@ -285,7 +279,7 @@ flowchart LR
 
 - secret は `BULK_PRIVATE_KEY` (Bulk) / `HL_SECRET_KEY` (Hyperliquid) のみ。
 - secret 系 env は **`src/env.ts` と config 展開以外で読まない**。
-- 既定の `CONFIG_PATH` は `config/config.bulk.yml`。
+- 既定の `CONFIG_PATH` は `config/config.bulk.beta.yml`。
 
 ---
 
@@ -305,7 +299,7 @@ stateDiagram-v2
 ```
 
 - `PAUSE_QUOTING` 中は新規 quote を出さない (= refreshQuotes をスキップ)。
-- `EMERGENCY_STOP` で `cancelAll()` 後 bot を停止。
+- `EMERGENCY_STOP` で bot を停止し、cleanup で `cancelAll()` を実行する。
 
 ---
 
@@ -315,9 +309,8 @@ stateDiagram-v2
 flowchart LR
     Venue["Venue (Bulk WS / poll)"] --> AdpFill["Adapter\nfill normalize"]
     AdpFill --> Listener["GW.subscribeFills"]
-    Listener --> RFU["RecordFillUseCase"]
-    RFU --> TradeRepo[("ITradeRepository")]
-    RFU --> PosRepo[("IPositionRepository")]
+    Listener --> UPU["UpdatePositionOnFillUseCase"]
+    UPU --> PosRepo[("IPositionRepository")]
 
     Listener --> Metrics["MetricsRecorder"]
     Metrics --> FactRepo[("IMetricsRepository")]

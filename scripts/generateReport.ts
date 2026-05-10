@@ -1,14 +1,10 @@
 import { ResultAsync } from "neverthrow";
 
-import type { Fill } from "../src/domain/entities/Fill.ts";
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
-import { fetchFills } from "../src/reporting/queries/FillsQuery.ts";
-import {
-  DEFAULT_PERIODS,
-  defaultOutputDir,
-  generateReport,
-} from "../src/reporting/report/generator.ts";
-import type { PeriodWindow } from "../src/reporting/report/generator.ts";
+import { DEFAULT_SQLITE_DB_PATH, REPORTS_DIR } from "./lib/paths.ts";
+import { fetchReportFills } from "../src/lib/reporting/queries/MetricsFactQuery.ts";
+import { DEFAULT_PERIODS, generateReport } from "../src/lib/reporting/report/generator.ts";
+import type { PeriodWindow } from "../src/lib/reporting/report/generator.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import type { AppError } from "../src/utils/errors.ts";
 import { createAppError, formatAppError } from "../src/utils/errors.ts";
@@ -27,8 +23,8 @@ function parseOptions(argv: string[]): RunOptions {
   const flags = parseFlagOptions(argv);
   const mode = flags.mode ?? "live";
   const venue = flags.venue;
-  const outputDir = flags["output"] ?? flags["output-dir"] ?? defaultOutputDir();
-  const dbPath = flags.db ?? Bun.env.DB_PATH ?? "data/mmbot.db";
+  const outputDir = flags["output"] ?? flags["output-dir"] ?? REPORTS_DIR;
+  const dbPath = flags.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH;
   const now = flags.now ? Number(flags.now) : Date.now();
   const periodKey = flags.period ?? "both";
   const periods = selectPeriods(periodKey);
@@ -52,7 +48,7 @@ function runGenerateReport(argv: string[]): ResultAsync<string, AppError> {
   ).andThen((client) =>
     ResultAsync.fromPromise(
       generateReport({
-        fetchFills: async (input): Promise<Fill[]> => fetchFills({ db: client.db, ...input }),
+        fetchFills: async (input) => fetchReportFills({ sqlite: client.sqlite, ...input }),
         now: options.now,
         mode: options.mode,
         venue: options.venue,

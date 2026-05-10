@@ -33,9 +33,11 @@ describe("backtest and paper smoke", () => {
     await rm(tempDir, { force: true, recursive: true });
   });
 
-  test("runs a short backtest session against public Hyperliquid data", async () => {
+  test("runs a short backtest session against public Bulk historical data", async () => {
     const end = new Date();
     const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+    const previousMode = Bun.env.MODE;
+    Bun.env.MODE = "backtest";
     const config = await ConfigLoader.load({ configPath: "config/config.backtest.yml" });
     config.backtest.from = start.toISOString();
     config.backtest.to = end.toISOString();
@@ -47,14 +49,17 @@ describe("backtest and paper smoke", () => {
       await bot.start(4);
       const performance = latestRunPerformance(dbPath, "backtest");
 
-      expect(performance?.venue).toBe("hyperliquid");
+      expect(performance?.venue).toBe("bulk");
       expect(performance?.fill_rate).toBeGreaterThanOrEqual(0);
     } finally {
-      Bun.env.DB_PATH = previousDbPath;
+      restoreEnv("DB_PATH", previousDbPath);
+      restoreEnv("MODE", previousMode);
     }
   }, 30_000);
 
   test("runs a short paper session against the public live feed", async () => {
+    const previousMode = Bun.env.MODE;
+    Bun.env.MODE = "paper";
     const config = await ConfigLoader.load({ configPath: "config/config.paper.yml" });
     const previousDbPath = Bun.env.DB_PATH;
     const dbPath = join(tempDir, "paper.db");
@@ -67,7 +72,16 @@ describe("backtest and paper smoke", () => {
       expect(performance?.venue).toBe("bulk");
       expect(performance?.fill_rate).toBeGreaterThanOrEqual(0);
     } finally {
-      Bun.env.DB_PATH = previousDbPath;
+      restoreEnv("DB_PATH", previousDbPath);
+      restoreEnv("MODE", previousMode);
     }
   }, 30_000);
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete Bun.env[key];
+    return;
+  }
+  Bun.env[key] = value;
+}

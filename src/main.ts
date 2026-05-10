@@ -6,6 +6,7 @@ import { registerShutdownHandlers } from "./application/shutdown.ts";
 import type { AppError } from "./utils/errors.ts";
 import { formatAppError } from "./utils/errors.ts";
 import { logger } from "./utils/logger.ts";
+import { notifyFatalErrorToSlack } from "./utils/slack-notification.ts";
 
 function isAppError(error: unknown): error is AppError {
   return typeof error === "object" && error !== null && "code" in error && "message" in error;
@@ -22,7 +23,8 @@ try {
   const config = await ConfigLoader.load();
   const mode: AppMode = env.MODE ?? config.mode;
   config.mode = mode;
-  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${marketName(config)}`);
+  const market = marketName(config);
+  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${market}`);
 
   const bot = await new DIContainer(config).buildBot();
   registerShutdownHandlers(
@@ -32,6 +34,7 @@ try {
 
   await bot.start();
 } catch (error) {
+  await notifyFatalErrorToSlack(error);
   if (isAppError(error)) {
     logger.error(formatAppError(error));
   } else if (error instanceof Error) {

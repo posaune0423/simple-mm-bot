@@ -1,15 +1,43 @@
 import { parse, stringify } from "yaml";
 
-import type { MetricsEvaluation } from "./MetricsEvaluation.ts";
-
 export interface TuneResult {
   changed: boolean;
   content: string;
   actions: string[];
 }
 
+interface EvaluationForTuning {
+  tuningAllowed: boolean;
+  markouts: {
+    avg5sBps: number;
+    avg30sBps?: number | null;
+    adverseSelectionRate: number;
+    tail30sBps?: { p10: number };
+    spreadCaptureBps?: number;
+  };
+  orderQuality: {
+    fillRate: number;
+    rejectRate?: number;
+    cancelRate?: number;
+    makerRatio?: number;
+    avgLatencyMs?: number;
+  };
+  pnl: {
+    netPnl: number;
+    tradePnl?: number;
+    fee?: number;
+    pnlPerNotional: number;
+    maxDrawdown: number;
+  };
+  inventory: {
+    positionSkew: number;
+    closeCost: number;
+  };
+}
+
 type MutableConfig = {
   quoteEngine?: {
+    minSpreadBps?: number;
     sizing?: {
       positionSize?: number;
       budgetUsd?: number;
@@ -26,10 +54,7 @@ type MutableConfig = {
 
 export function tuneBulkConfigDocument(
   yamlText: string,
-  evaluation: Pick<
-    MetricsEvaluation,
-    "tuningAllowed" | "markouts" | "orderQuality" | "pnl" | "inventory"
-  >,
+  evaluation: EvaluationForTuning,
 ): TuneResult {
   if (!evaluation.tuningAllowed) {
     return { changed: false, content: yamlText, actions: ["blocked_by_data_health"] };
@@ -45,15 +70,37 @@ export function tuneBulkConfigDocument(
     return { changed: false, content: yamlText, actions: ["missing_strategy_params"] };
   }
 
-  if (evaluation.markouts.avg5sBps < 0 || evaluation.markouts.adverseSelectionRate > 0.3) {
-    params.gamma = bump(params.gamma ?? 0.1, 1.2);
-    actions.push("increase_gamma_for_negative_markout");
+  if (
+    (evaluation.markouts.avg30sBps ?? evaluation.markouts.avg5sBps) < -5 ||
+    (evaluation.markouts.tail30sBps?.p10 ?? 0) < -150 ||
+    evaluation.markouts.adverseSelectionRate > 0.3
+  ) {
+    if (config.quoteEngine?.minSpreadBps !== undefined) {
+      config.quoteEngine.minSpreadBps = bump(config.quoteEngine.minSpreadBps, 1.2);
+      actions.push("increase_min_spread_for_negative_markout");
+    } else {
+      params.gamma = bump(params.gamma ?? 0.1, 1.2);
+      actions.push("increase_gamma_for_negative_markout");
+    }
   } else if (!pnlPositive) {
-    params.kappa = bump(params.kappa ?? 1, 0.9);
-    actions.push("reduce_kappa_for_unprofitable_flow");
-  } else if (evaluation.orderQuality.fillRate < 0.05 && evaluation.markouts.avg5sBps > 0) {
-    params.kappa = bump(params.kappa ?? 1, 1.1);
-    actions.push("increase_kappa_for_low_fill_good_markout");
+    if (config.quoteEngine?.minSpreadBps !== undefined) {
+      config.quoteEngine.minSpreadBps = bump(config.quoteEngine.minSpreadBps, 1.2);
+      actions.push("increase_min_spread_for_unprofitable_flow");
+    } else {
+      params.kappa = bump(params.kappa ?? 1, 0.9);
+      actions.push("reduce_kappa_for_unprofitable_flow");
+    }
+  } else if (
+    evaluation.orderQuality.fillRate < 0.05 &&
+    (evaluation.markouts.avg30sBps ?? evaluation.markouts.avg5sBps) >= 0
+  ) {
+    if (config.quoteEngine?.minSpreadBps !== undefined && config.quoteEngine.minSpreadBps > 0) {
+      config.quoteEngine.minSpreadBps = bump(config.quoteEngine.minSpreadBps, 0.9);
+      actions.push("decrease_min_spread_for_low_fill_good_markout");
+    } else {
+      params.kappa = bump(params.kappa ?? 1, 1.1);
+      actions.push("increase_kappa_for_low_fill_good_markout");
+    }
   }
 
   if (Math.abs(evaluation.inventory.positionSkew) > 0.5) {

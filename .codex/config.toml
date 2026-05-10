@@ -1,0 +1,3 @@
+[agents.financial_analyzer]
+description = "Project financial analyzer for simple-mm-bot PnL, position, markout, execution quality, and risk investigations."
+config_file = "agents/finance-analyzer.toml"

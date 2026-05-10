@@ -6,7 +6,7 @@ SQLite / PostgreSQL の metrics DB は、後から評価できる fact だけを
 参照元:
 
 - SQLite schema: `src/infrastructure/db/sqlite/schema.ts`
-- SQLite runtime DDL: `src/infrastructure/db/sqlite/client.ts`
+- SQLite runtime DDL: `src/infrastructure/db/sqlite/bootstrap.ts`
 - PostgreSQL schema: `src/infrastructure/db/postgres/schema.ts`
 - PostgreSQL migrations: `src/infrastructure/db/postgres/migrations/`
 

@@ -5,6 +5,7 @@ import type { Position } from "../../domain/entities/Position.ts";
 import type {
   FillListener,
   IOrderGateway,
+  OpenOrder,
   OrderEventListener,
   OrderRequest,
   PlacedOrder,
@@ -37,6 +38,17 @@ type BulkFill = {
   fee?: number;
   timestamp?: number;
 };
+type BulkOpenOrder = {
+  symbol?: string;
+  orderId?: string;
+  price?: number;
+  originalSize?: number;
+  size?: number;
+  reduceOnly?: boolean;
+  tif?: string;
+  status?: string;
+  timestamp?: number;
+};
 type BulkLeverageEntry = {
   symbol?: string;
   leverage?: number;
@@ -57,6 +69,11 @@ type BulkHttpErrorLike = {
   data?: unknown;
   message?: unknown;
 };
+type ErrorLike = {
+  name?: unknown;
+  status?: unknown;
+  message?: unknown;
+};
 
 interface BulkTradeClient {
   placeLimitOrder?(params: unknown): Promise<BulkOrderResponse>;
@@ -67,6 +84,7 @@ interface BulkTradeClient {
 
 interface BulkAccountClient {
   fullAccount?(user: string): Promise<BulkFullAccount>;
+  openOrders?(user: string): Promise<BulkOpenOrder[]>;
   fills(user: string): Promise<BulkFill[]>;
 }
 
@@ -81,6 +99,7 @@ interface BulkOrderGatewayParams {
   accountId: string;
   maxLeverage?: number;
   pollIntervalMs?: number;
+  ignoreFillsBeforeMs?: number;
 }
 
 type BulkMarketRules = {
@@ -161,17 +180,36 @@ function isCrossPosition(entry: BulkPositionEntry, market: string): boolean {
   return entry.symbol === market && (entry.iso ?? false) === false;
 }
 
-function isBulkHttpOrderRejection(error: unknown): error is BulkHttpErrorLike {
-  return typeof error === "object" && error !== null && (error as BulkHttpErrorLike).status === 422;
+function orderErrorStatus(error: unknown): number | null {
+  if (typeof error === "object" && error !== null) {
+    const status = (error as BulkHttpErrorLike).status;
+    if (typeof status === "number") {
+      return status;
+    }
+  }
+  const message = String(error);
+  if (message.includes("HTTP error 422")) {
+    return 422;
+  }
+  if (message.includes("HTTP error 408") || message.includes("HTTP request timed out")) {
+    return 408;
+  }
+  return null;
+}
+
+function isBulkHttpOrderFailure(error: unknown): error is BulkHttpErrorLike {
+  const status = orderErrorStatus(error);
+  return status === 422 || status === 408;
 }
 
 function orderRejectionReason(error: BulkHttpErrorLike): string {
   if (error.data !== undefined) {
     return JSON.stringify(error.data);
   }
+  const status = orderErrorStatus(error);
   return typeof error.message === "string" && error.message.length > 0
     ? error.message
-    : "HTTP error 422";
+    : `HTTP error ${status ?? "unknown"}`;
 }
 
 function summarizeOrderError(error: BulkHttpErrorLike): unknown {
@@ -180,6 +218,21 @@ function summarizeOrderError(error: BulkHttpErrorLike): unknown {
     data: error.data,
     message: error.message,
   };
+}
+
+function isTransientBulkPollingError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null) {
+    const errorLike = error as ErrorLike;
+    if (errorLike.name === "BulkTimeoutError") {
+      return true;
+    }
+    if (errorLike.status === 408 || errorLike.status === "408") {
+      return true;
+    }
+  }
+
+  const message = String(error);
+  return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
 }
 
 function isRejectedOrderResult(
@@ -228,13 +281,15 @@ export class BulkOrderGateway implements IOrderGateway {
       timeInForce: normalizedOrder.timeInForce,
     });
     const response = await this.submitOrder(normalizedOrder, type).catch(async (error) => {
-      if (!isBulkHttpOrderRejection(error)) {
+      if (!isBulkHttpOrderFailure(error)) {
         throw error;
       }
       const orderId = normalizedOrder.clientOrderId ?? randomUUID();
+      const status = orderErrorStatus(error);
+      const statusKey = status === null ? "http_error" : `http_${status}`;
       const reason = orderRejectionReason(error);
       logger.warn(
-        `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=http_422 reason=${reason}`,
+        `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=${statusKey} reason=${reason}`,
       );
       await this.publishOrderEvent({
         action: "reject",
@@ -249,7 +304,7 @@ export class BulkOrderGateway implements IOrderGateway {
         timeInForce: normalizedOrder.timeInForce,
         latencyMs: Date.now() - submittedAt,
         status: "rejected",
-        statusKey: "http_422",
+        statusKey,
         reason,
         rawSummary: summarizeOrderError(error),
       });
@@ -312,14 +367,21 @@ export class BulkOrderGateway implements IOrderGateway {
       );
     }
 
-    const qty = normalizeSize(order.qty, rules);
+    const qty = order.reduceOnly
+      ? normalizeReduceOnlySize(order.qty, rules)
+      : normalizeSize(order.qty, rules);
     if (qty <= 0) {
       throw new Error(`Bulk ${order.market} order size rounds to zero: qty=${order.qty}`);
     }
 
     const price =
       order.price === undefined ? undefined : normalizePrice(order.side, order.price, rules);
-    if (price !== undefined && rules.minNotional !== undefined && price * qty < rules.minNotional) {
+    if (
+      !order.reduceOnly &&
+      price !== undefined &&
+      rules.minNotional !== undefined &&
+      price * qty < rules.minNotional
+    ) {
       throw new Error(
         `Bulk ${order.market} order notional is below minimum: notional=${price * qty} minNotional=${rules.minNotional}`,
       );
@@ -448,6 +510,16 @@ export class BulkOrderGateway implements IOrderGateway {
     await this.pollFillsSerialized();
   }
 
+  async getOpenOrders(): Promise<OpenOrder[]> {
+    if (!this.client.account.openOrders) {
+      return [];
+    }
+    const openOrders = await this.client.account.openOrders(this.params.accountId);
+    return openOrders
+      .map((order) => normalizeOpenOrder(order))
+      .filter((order): order is OpenOrder => order !== null && order.market === this.params.market);
+  }
+
   async getPosition(): Promise<Position> {
     if (!this.client.account.fullAccount) {
       throw new Error(`Bulk fullAccount is required to read ${this.params.market} position.`);
@@ -463,10 +535,18 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async dispose(): Promise<void> {
+    await this.stopBackgroundSync();
+    await this.waitForInFlightPoll();
+  }
+
+  async stopBackgroundSync(): Promise<void> {
     if (this.fillTimer !== null) {
       clearInterval(this.fillTimer);
       this.fillTimer = null;
     }
+  }
+
+  private async waitForInFlightPoll(): Promise<void> {
     await this.pollInFlight?.catch((error) => {
       logger.warn(
         `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${String(error)}`,
@@ -479,7 +559,15 @@ export class BulkOrderGateway implements IOrderGateway {
       return;
     }
     await this.pollFillsSerialized().catch((error) => {
-      logger.error(`BulkOrderGateway.pollFillsOnce failed: ${String(error)}`);
+      if (isTransientBulkPollingError(error)) {
+        logger.warn(
+          `bulk_order_gateway.fills_poll_transient_failed market=${this.params.market} error=${String(error)}`,
+        );
+        return;
+      }
+      logger.error(
+        `bulk_order_gateway.fills_poll_failed market=${this.params.market} error=${String(error)}`,
+      );
     });
   }
 
@@ -510,6 +598,12 @@ export class BulkOrderGateway implements IOrderGateway {
         continue;
       }
       this.seenFillIds.add(normalized.id);
+      if (
+        this.params.ignoreFillsBeforeMs !== undefined &&
+        normalized.filledAt < this.params.ignoreFillsBeforeMs
+      ) {
+        continue;
+      }
       logger.info(
         `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
       );
@@ -533,6 +627,8 @@ export class BulkOrderGateway implements IOrderGateway {
   private normalizeFill(fill: BulkFill): Fill | null {
     const side = this.sideOf(fill);
     const orderId = fill.maker === this.params.accountId ? fill.orderIdMaker : fill.orderIdTaker;
+    const counterpartyOrderId =
+      fill.maker === this.params.accountId ? fill.orderIdTaker : fill.orderIdMaker;
     if (
       side === null ||
       orderId === undefined ||
@@ -544,7 +640,7 @@ export class BulkOrderGateway implements IOrderGateway {
     }
     const timestamp = fill.timestamp ?? Date.now();
     return {
-      id: `${orderId}:${timestamp}`,
+      id: `${orderId}:${counterpartyOrderId ?? "unknown"}:${timestamp}`,
       venue: "bulk",
       market: fill.symbol,
       side,
@@ -555,6 +651,7 @@ export class BulkOrderGateway implements IOrderGateway {
       filledAt: nsToMs(timestamp),
       quoteId: orderId,
       markPriceAtFill: fill.price,
+      makerTaker: fill.maker === this.params.accountId ? "maker" : "taker",
     };
   }
 
@@ -576,6 +673,50 @@ export class BulkOrderGateway implements IOrderGateway {
       await listener(event);
     }
   }
+}
+
+function normalizeOpenOrder(order: BulkOpenOrder): OpenOrder | null {
+  const id = order.orderId;
+  const market = order.symbol;
+  const remainingSize = order.size ?? order.originalSize;
+  if (id === undefined || market === undefined || remainingSize === undefined) {
+    return null;
+  }
+  const status = normalizeOpenOrderStatus(order.status);
+  if (status === null) {
+    return null;
+  }
+  return {
+    id,
+    market,
+    side: remainingSize < 0 ? "sell" : "buy",
+    price: order.price,
+    qty: Math.abs(remainingSize),
+    reduceOnly: order.reduceOnly ?? false,
+    timeInForce: normalizeTimeInForce(order.tif),
+    status,
+    placedAtMs: nsToMs(order.timestamp),
+  };
+}
+
+function normalizeOpenOrderStatus(status: string | undefined): OpenOrder["status"] | null {
+  if (status === "partiallyFilled") {
+    return "partially_filled";
+  }
+  if (status === "resting" || status === "working" || status === "placed" || status === "pending") {
+    return "open";
+  }
+  return null;
+}
+
+function normalizeTimeInForce(timeInForce: string | undefined): OpenOrder["timeInForce"] {
+  if (timeInForce === "ioc") {
+    return "IOC";
+  }
+  if (timeInForce === "postOnly") {
+    return "ALO";
+  }
+  return "GTC";
 }
 
 function summarizeResponse(response: BulkOrderResponse | undefined): unknown {
@@ -622,6 +763,16 @@ function normalizeSize(size: number, rules: BulkMarketRules): number {
   return size;
 }
 
+function normalizeReduceOnlySize(size: number, rules: BulkMarketRules): number {
+  if (rules.lotSize !== undefined && rules.lotSize > 0) {
+    return ceilToStep(size, rules.lotSize, rules.sizePrecision);
+  }
+  if (rules.sizePrecision !== undefined) {
+    return ceilToPrecision(size, rules.sizePrecision);
+  }
+  return size;
+}
+
 function floorToStep(value: number, step: number, precision?: number): number {
   const decimals = precision ?? decimalPlaces(step);
   return roundToPrecision(Math.floor(value / step + 1e-9) * step, decimals);
@@ -635,6 +786,11 @@ function ceilToStep(value: number, step: number, precision?: number): number {
 function floorToPrecision(value: number, precision: number): number {
   const factor = 10 ** precision;
   return Math.floor(value * factor + 1e-9) / factor;
+}
+
+function ceilToPrecision(value: number, precision: number): number {
+  const factor = 10 ** precision;
+  return Math.ceil(value * factor - 1e-9) / factor;
 }
 
 function roundToPrecision(value: number, precision: number): number {

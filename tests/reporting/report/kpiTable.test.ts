@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderKpiTable } from "../../../src/reporting/report/kpiTable.ts";
+import { renderKpiTable } from "../../../src/lib/reporting/report/kpiTable.ts";
 
 describe("renderKpiTable", () => {
   test("emits a markdown table with one column per period", () => {

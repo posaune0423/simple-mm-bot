@@ -81,4 +81,38 @@ describe("PaperOrderGateway", () => {
       }),
     ]);
   });
+
+  test("publishes cancelAll order event for lifecycle metrics", async () => {
+    const feed = new MemoryMarketFeed({
+      market: "BTC-USD",
+      bestBid: 99,
+      bestAsk: 101,
+      microPrice: 100,
+      markPrice: 100,
+      timestamp: 1000,
+      marginRatio: null,
+    });
+    const gateway = new PaperOrderGateway(feed, 0);
+    const events: unknown[] = [];
+    gateway.subscribeOrderEvents((event) => {
+      events.push(event);
+    });
+
+    await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 99,
+      qty: 1,
+      reduceOnly: false,
+      timeInForce: "GTC",
+      clientOrderId: "client-1",
+      intent: "quote",
+    });
+    await gateway.cancelAll();
+
+    expect(events.at(-1)).toMatchObject({
+      action: "cancel",
+      rawSummary: { request: "cancelAll" },
+    });
+  });
 });

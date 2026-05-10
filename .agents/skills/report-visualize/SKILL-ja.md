@@ -7,7 +7,7 @@ description: SQLiteのfillsから主要MM指標を集計し、依存ライブラ
 
 ## 目的
 
-`data/mmbot.db` の fills を元にbotの主要KPIを可視化し、`docs/reports/latest.md` と `docs/reports/history/YYYY-MM-DD.md` に書き出す。SVGはテキストベースで生成されるため git の diff が読みやすく、過去スナップショットの比較にも向く。
+`data/mm.db` の fills を元にbotの主要KPIを可視化し、`docs/reports/latest.md` と `docs/reports/history/YYYY-MM-DD.md` に書き出す。SVGはテキストベースで生成されるため git の diff が読みやすく、過去スナップショットの比較にも向く。
 
 ## 主なコマンド
 
@@ -23,7 +23,7 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 - `--venue` venue名 (例: `hyperliquid`, `bulk`)。未指定で全venue
 - `--period` `24h` | `7d` | `both` (default: `both`)
 - `--output` 出力ディレクトリ (default: `docs/reports`)
-- `--db` SQLiteパス (default: `Bun.env.DB_PATH ?? "data/mmbot.db"`)
+- `--db` SQLiteパス (default: `Bun.env.DB_PATH ?? "data/mm.db"`)
 - `--now` epoch ms — テスト/再現用。本番は省略
 
 ## 出力

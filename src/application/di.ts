@@ -2,6 +2,7 @@ import { env } from "../env.ts";
 import { BulkClient } from "bulk-ts-sdk";
 import type { AppConfig } from "../config.ts";
 import { BulkMarketFeed } from "../adapters/bulk/BulkMarketFeed.ts";
+import { BulkOhlcvFetcher } from "../adapters/bulk/BulkOhlcvFetcher.ts";
 import { BulkOrderGateway } from "../adapters/bulk/BulkOrderGateway.ts";
 import { HyperliquidMarketFeed } from "../adapters/hyperliquid/HyperliquidMarketFeed.ts";
 import { HyperliquidOhlcvFetcher } from "../adapters/hyperliquid/HyperliquidOhlcvFetcher.ts";
@@ -13,35 +14,35 @@ import { QuoteEngine } from "../domain/QuoteEngine.ts";
 import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
+import type { IQuoteQualityRepository } from "../domain/ports/IQuoteQualityRepository.ts";
 import type { IMetricsRepository } from "../infrastructure/MetricsRepository.ts";
-import type { ITradeRepository } from "../domain/ports/ITradeRepository.ts";
+import type { CapitalMode } from "../infrastructure/Metrics.ts";
 import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
-import { AvellanedaStoikovStrategy } from "../domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
 import { PostgresMetricsRepository } from "../infrastructure/db/postgres/repository/PostgresMetricsRepository.ts";
-import { PostgresTradeRepository } from "../infrastructure/db/postgres/repository/PostgresTradeRepository.ts";
 import { createSqliteClient } from "../infrastructure/db/sqlite/client.ts";
 import { SqliteMetricsRepository } from "../infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
 import { SqliteOhlcvRepository } from "../infrastructure/db/sqlite/repository/SqliteOhlcvRepository.ts";
-import { SqliteTradeRepository } from "../infrastructure/db/sqlite/repository/SqliteTradeRepository.ts";
 import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeApi.ts";
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
 import { MetricsRecorder } from "./MetricsRecorder.ts";
+import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
-import { RecordFillUseCase } from "./usecases/RecordFillUseCase.ts";
+import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
+import { UpdatePositionOnFillUseCase } from "./usecases/UpdatePositionOnFillUseCase.ts";
 
 interface Repositories {
-  tradeRepository: ITradeRepository;
   ohlcvRepository: IOhlcvRepository;
   metricsRepository: IMetricsRepository;
+  quoteQualityRepository?: IQuoteQualityRepository;
 }
 
 interface ResolvedAdapters {
@@ -67,9 +68,16 @@ export class DIContainer {
           positionRepository,
           quoteEngine,
           metrics,
+          repositories.quoteQualityRepository,
+          this.config.quoteEngine.qualityGate,
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
-        recordFill: new RecordFillUseCase(repositories.tradeRepository, positionRepository),
+        initializePosition: new InitializePositionUseCase(
+          gateway,
+          positionRepository,
+          bulkLiveStartupRetryOptions(this.config),
+        ),
+        updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
         recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
         reduceInventory: new ReduceInventoryUseCase(
           gateway,
@@ -77,6 +85,12 @@ export class DIContainer {
           feed,
           this.config.risk.maxPositionQty,
           this.marketName(),
+          {
+            reduceTriggerQty: this.config.risk.reduceTriggerQty,
+            reduceTargetQty: this.config.risk.reduceTargetQty,
+            maxUnrealizedLossUsd: this.config.risk.maxUnrealizedLossUsd,
+            maxAdverseMoveBps: this.config.risk.maxAdverseMoveBps,
+          },
         ),
         closePosition: new ClosePositionUseCase(
           gateway,
@@ -89,21 +103,31 @@ export class DIContainer {
       gateway,
       this.config.bot.intervalMs,
       metrics,
+      { closePositionPolicy: this.config.shutdown.closePositionPolicy },
     );
   }
 
   private buildQuoteEngine(): QuoteEngine {
+    const strategy = buildQuotingStrategy(this.config.quoteEngine.strategy);
     return new QuoteEngine(
-      new AvellanedaStoikovStrategy(this.config.quoteEngine.strategy.params),
+      strategy,
       new FairPriceCalculator(this.config.quoteEngine.markWeight),
       new VolatilityEstimator(),
       {
         inventoryScale: this.config.quoteEngine.inventoryScale,
         timeHorizonSec: this.config.quoteEngine.timeHorizonSec,
+        minSpreadBps: this.config.quoteEngine.minSpreadBps,
         slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
         defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
         budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
+        bidSizeMultiplier: this.config.quoteEngine.sizing.bidSizeMultiplier,
+        askSizeMultiplier: this.config.quoteEngine.sizing.askSizeMultiplier,
+        bidDistanceMultiplier: this.config.quoteEngine.sizing.bidDistanceMultiplier,
+        askDistanceMultiplier: this.config.quoteEngine.sizing.askDistanceMultiplier,
+        maxLeverage:
+          this.config.venue === "bulk" ? this.config.connections.bulk.maxLeverage : undefined,
+        levels: this.config.quoteEngine.levels,
       },
     );
   }
@@ -113,17 +137,17 @@ export class DIContainer {
     if (databaseUrl) {
       const client = createPostgresClient(databaseUrl);
       return {
-        tradeRepository: new PostgresTradeRepository(client.db),
         ohlcvRepository: new PostgresOhlcvRepository(client.db),
         metricsRepository: new PostgresMetricsRepository(client.db),
       };
     }
 
     const client = createSqliteClient(Bun.env.DB_PATH ?? env.DB_PATH);
+    const metricsRepository = new SqliteMetricsRepository(client.db);
     return {
-      tradeRepository: new SqliteTradeRepository(client.db),
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
-      metricsRepository: new SqliteMetricsRepository(client.db),
+      metricsRepository,
+      quoteQualityRepository: metricsRepository,
     };
   }
 
@@ -131,9 +155,9 @@ export class DIContainer {
     return new MetricsRecorder(repository, {
       mode: this.config.mode,
       venue: this.config.venue,
-      capitalMode: this.capitalMode(),
+      capitalMode: resolveCapitalMode(this.config),
       market: this.marketName(),
-      strategyName: "avellaneda-stoikov",
+      strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
       configJson: redactConfig(this.config),
       ...gitMetadata(),
     });
@@ -141,7 +165,7 @@ export class DIContainer {
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
     if (this.config.venue === "bulk") {
-      return this.resolveBulkAdapters();
+      return this.resolveBulkAdapters(ohlcvRepository);
     }
 
     const { connections, mode } = this.config;
@@ -185,7 +209,7 @@ export class DIContainer {
     };
   }
 
-  private resolveBulkAdapters(): ResolvedAdapters {
+  private resolveBulkAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
     const config = this.config;
     if (config.venue !== "bulk") {
       throw new Error("Bulk adapters can only be resolved for Bulk config");
@@ -197,17 +221,28 @@ export class DIContainer {
       httpUrl: bulk.httpUrl,
       wsUrl: bulk.wsUrl,
       privateKey: bulk.privateKey,
+      timeoutMs: bulk.timeoutMs,
     });
     const accountId = client.accountPublicKey;
 
     if (mode === "backtest") {
-      throw new Error("Bulk venue does not support backtest mode");
+      const feed = new HistoricalMarketFeed(ohlcvRepository, new BulkOhlcvFetcher(client), {
+        market: config.backtest.market,
+        timeframe: config.backtest.timeframe,
+        from: Date.parse(config.backtest.from),
+        to: Date.parse(config.backtest.to),
+      });
+      return {
+        feed,
+        gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
+      };
     }
 
     const feed = new BulkMarketFeed(client, {
       market: bulk.market,
       nlevels: bulk.nlevels,
       accountId,
+      ...bulkLiveStartupRetryOptions(config),
     });
 
     if (mode === "paper") {
@@ -228,6 +263,7 @@ export class DIContainer {
         accountId,
         maxLeverage: bulk.maxLeverage,
         pollIntervalMs: 1000,
+        ignoreFillsBeforeMs: Date.now(),
       }),
     };
   }
@@ -244,19 +280,36 @@ export class DIContainer {
       ? this.config.connections.bulk.market
       : this.config.connections.hyperliquid.market;
   }
+}
 
-  private capitalMode(): "beta_mock" | "paper" | "backtest" | "real" {
-    if (this.config.mode === "paper") {
-      return "paper";
-    }
-    if (this.config.mode === "backtest") {
-      return "backtest";
-    }
-    if (this.config.venue === "bulk") {
-      return "beta_mock";
-    }
-    return "real";
+export function resolveCapitalMode(config: AppConfig): CapitalMode {
+  if (config.mode === "paper") {
+    return "paper";
   }
+  if (config.mode === "backtest") {
+    return "backtest";
+  }
+  if (config.venue === "bulk" && config.connections.bulk.environment === "beta") {
+    return "beta_mock";
+  }
+  return "real";
+}
+
+function bulkLiveStartupRetryOptions(config: AppConfig): {
+  retryAttempts?: number;
+  retryDelayMs?: number;
+  accountRetryAttempts?: number;
+  accountRetryDelayMs?: number;
+} {
+  if (config.venue !== "bulk" || config.mode !== "live") {
+    return {};
+  }
+  return {
+    retryAttempts: 6,
+    retryDelayMs: 1_000,
+    accountRetryAttempts: 6,
+    accountRetryDelayMs: 1_000,
+  };
 }
 
 function redactConfig(config: AppConfig): unknown {

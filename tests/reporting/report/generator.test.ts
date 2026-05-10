@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { generateReport } from "../../../src/reporting/report/generator.ts";
+import { generateReport } from "../../../src/lib/reporting/report/generator.ts";
 import { sampleFills } from "../fixtures.ts";
 
 describe("generateReport", () => {

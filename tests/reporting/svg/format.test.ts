@@ -7,7 +7,7 @@ import {
   decimalsFor,
   niceTimeTicks,
   pickTimeStep,
-} from "../../../src/reporting/svg/format.ts";
+} from "../../../src/lib/reporting/svg/format.ts";
 
 describe("niceTimeTicks", () => {
   test("aligns ticks to hour boundaries inside the domain", () => {

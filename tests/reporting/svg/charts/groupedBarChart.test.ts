@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderGroupedBarChart } from "../../../../src/reporting/svg/charts/groupedBarChart.ts";
+import { renderGroupedBarChart } from "../../../../src/lib/reporting/svg/charts/groupedBarChart.ts";
 
 describe("renderGroupedBarChart", () => {
   test("renders bars per series and a legend entry", () => {

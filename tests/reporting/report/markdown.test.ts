@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderMarkdownReport } from "../../../src/reporting/report/markdown.ts";
+import { renderMarkdownReport } from "../../../src/lib/reporting/report/markdown.ts";
 
 describe("renderMarkdownReport", () => {
   test("includes header, kpi table, and chart references", () => {

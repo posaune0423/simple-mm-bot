@@ -41,7 +41,7 @@ bot の 1 tick は以下の責務順で動作する。
 1. `GuardRiskUseCase` を実行する
 2. `OK` の場合のみ `RefreshQuotesUseCase` を実行する
 3. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
-4. fill event は `RecordFillUseCase` で保存する
+4. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
 5. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
 
 この流れにより、mode や venue を知らない共通の bot ループを維持する。
@@ -73,13 +73,13 @@ bot の 1 tick は以下の責務順で動作する。
   - `cancel(id)`
   - `cancelAll()`
 - `IPositionRepository`
-- `ITradeRepository`
 - `IOhlcvRepository`
 
 ### Strategy / Quote Engine
 
-初期実装は `AvellanedaStoikovStrategy` とする。
-`QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce` を統合して最終 quote を生成する。
+Strategy は `quoteEngine.strategy.type: avellaneda-stoikov` を primary path にする。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
+`QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce`、任意の `qualityGate` controls を統合して最終 quote を生成する。
+`QuoteEngine` は `IQuotingStrategy` のみへ依存し、具体 strategy を import しない。
 
 主要パラメータ:
 
@@ -88,11 +88,13 @@ bot の 1 tick は以下の責務順で動作する。
 | `gamma`        | リスク回避係数        | `0.001-0.5`、ただし `0` を許容 | `0.02` |
 | `kappa`        | fill intensity 推定値 | `> 0`                          | `1.5`  |
 | `kInv`         | inventory skew 係数   | `0-2`                          | `0.3`  |
+| `minSpreadBps` | 最小 quote 幅         | `>= 0`                         | `5.6`  |
 | `positionSize` | 基本発注サイズ        | `> 0`                          | `0.01` |
 | `budgetUsd`    | 発注あたり予算上限    | `> 0`                          | `100`  |
 
 Bulk の初期 `defaultTimeInForce` は `GTC` とする。
 Hyperliquid path では既存の `ALO` default を維持する。
+Bulk beta leaderboard strategy は在庫が soft limit に近づくほど同方向 quote size を薄くし、反対方向 quote size を厚くする。hard limit 超過時は在庫を増やす側の quote size を 0 にする。
 
 ## Application 設計
 
@@ -104,18 +106,24 @@ Hyperliquid path では既存の `ALO` default を維持する。
 
 - `bulk + live` -> `BulkMarketFeed` + `BulkOrderGateway`
 - `bulk + paper` -> `BulkMarketFeed` + `PaperOrderGateway`
-- `bulk + backtest` -> unsupported error
+- `bulk + backtest` -> `HistoricalMarketFeed` + `PaperOrderGateway`
 - `hyperliquid + live` -> `HyperliquidMarketFeed` + `HyperliquidOrderGateway`
 - `hyperliquid + paper` -> `HyperliquidMarketFeed` + `PaperOrderGateway`
 - `hyperliquid + backtest` -> `HistoricalMarketFeed` + `PaperOrderGateway`
 
-Hyperliquid backtest は暫定の historical validation path として残す。
+Bulk backtest は `bulk-ts-sdk` の `klines` から OHLCV を取得し、historical replay feed と paper execution を組み合わせる。現行の Bulk SDK/API では historical L2 を取得できないため、backtest の fill quality は OHLCV 粒度と paper fill model に依存する。
 Bullet の DI path は持たない。
 
 #### DB 解決
 
 - `DATABASE_URL` あり -> PostgreSQL repository 群
 - `DATABASE_URL` なし -> SQLite repository 群
+
+#### Quote Order Reconcile
+
+`RefreshQuotesUseCase` は通常 tick で blanket `cancelAll()` を行わない。
+`OrderManager` が前回の quote order と今回の target order を比較し、価格/サイズ差分が閾値以上の order だけ cancel/replace する。
+`Bot` cleanup は open order cleanup のため `cancelAll()` を実行し、`shutdown.closePositionPolicy` が `emergency_only` の場合は通常停止で market close を行わず、emergency stop 時だけ close use case を実行する。
 
 ## Adapter 設計
 
@@ -209,20 +217,24 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 
 ## 設定管理
 
-- default config: `config/config.bulk.yml`
+- default config: `config/config.bulk.beta.yml`
+- Bulk beta live preset: `config/config.bulk.beta.yml`
+- Bulk mainnet live preset: `config/config.bulk.mainnet.yml`
 - Bulk paper preset: `config/config.paper.yml`
 - Bulk template: `config/config.example.yml`
-- Temporary Hyperliquid backtest preset: `config/config.backtest.yml`
+- Bulk backtest preset: `config/config.backtest.yml`
+
+Runtime env default は `src/env.ts` に閉じる。Drizzle schema / migration path は `drizzle.config.ts` に置き、script / report / agent loop 用の default path は `scripts/lib/paths.ts` に集約する。
 
 環境変数による override:
 
 - `MODE`
 - `CONFIG_PATH`
 - `DATABASE_URL`
-- `DB_PATH`
+- `DB_PATH` (default: `data/mm.db`)
 - `LOG_LEVEL`
 - `BULK_PRIVATE_KEY`
-- Hyperliquid env vars are kept only for the temporary backtest / legacy path
+- Hyperliquid env vars are kept only for legacy compatibility paths
 
 Log output should go through `src/utils/logger.ts` by default so `LOG_LEVEL` filtering applies consistently.
 
@@ -251,8 +263,7 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 重点検証項目:
 
 - Bulk config が parse できること
-- Bulk paper/live DI が正しい adapter を解決すること
-- Bulk backtest が明示的に unsupported error になること
+- Bulk paper/live/backtest DI が正しい adapter を解決すること
 - Bulk market feed が ticker/L2/WS payload を `MarketSnapshot` に正規化すること
 - Bulk order gateway が order/cancel/fill を domain model に正規化すること
 - `defaultTimeInForce` が quote policy に反映されること

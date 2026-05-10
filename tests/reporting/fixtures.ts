@@ -1,8 +1,8 @@
-import type { Fill } from "../../src/domain/entities/Fill.ts";
+import type { ReportFill } from "../../src/lib/reporting/types.ts";
 
 const HOUR = 60 * 60 * 1000;
 
-const defaultFill: Fill = {
+const defaultFill: ReportFill = {
   id: "f1",
   venue: "hyperliquid",
   market: "ETH-USD",
@@ -17,13 +17,13 @@ const defaultFill: Fill = {
   markPrice30s: 100,
 };
 
-export function buildFill(overrides: Partial<Fill> = {}): Fill {
+export function buildFill(overrides: Partial<ReportFill> = {}): ReportFill {
   return { ...defaultFill, ...overrides };
 }
 
-export function sampleFills(): Fill[] {
+export function sampleFills(): ReportFill[] {
   const start = Date.UTC(2026, 4, 1, 0, 0, 0);
-  const fills: Fill[] = [];
+  const fills: ReportFill[] = [];
   for (let i = 0; i < 12; i += 1) {
     const side = i % 2 === 0 ? "buy" : "sell";
     fills.push(

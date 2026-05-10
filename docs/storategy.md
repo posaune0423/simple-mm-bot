@@ -1,6 +1,6 @@
 # Strategy
 
-この文書は現在の market making strategy の実装仕様をまとめる。コード上の primary path は Bulk Trade `BTC-USD` の live / paper 実行で、戦略は `AvellanedaStoikovStrategy` を使う。
+この文書は現在の market making strategy の実装仕様をまとめる。コード上の primary path は Bulk Trade `BTC-USD` の live / paper 実行で、YAML の `quoteEngine.strategy.type` は `avellaneda-stoikov` を使う。ladder は別 strategy ではなく `quoteEngine.levels` で A-S quote を展開する。
 
 > ファイル名は現状の依頼に合わせて `storategy.md` とする。
 
@@ -11,9 +11,9 @@ bot は継続的に bid / ask を同時提示し、passive maker として sprea
 1. margin / position risk を守る
 2. 不利な在庫を増やし続けない
 3. fair price と短期 volatility に基づいて quote を更新する
-4. PnL が改善する範囲で fill rate と uptime を改善する
+4. PnL と 30s markout が改善する範囲で eligible volume と uptime を改善する
 
-取引量やランキングは strategy の直接目的にしない。Bulk beta の reward や leaderboard は別レイヤーであり、quote formula には混ぜない。
+Bulk beta は daily mock balance と leaderboard を前提に、通常の資金保全型 MM より high-turnover quoting を優先する。ただし inventory、drawdown、taker fee、negative markout は risk guard と tuning で抑える。Bulk beta `BTC-USD` の current exchange info は `GTC` / `IOC` のみ対応しているため、通常 quote は passive price の `GTC` limit として出す。
 
 ## Tick Flow
 
@@ -42,9 +42,11 @@ sequenceDiagram
             Refresh->>Pos: get()
             Refresh->>QE: compute(snapshot, position)
             QE-->>Refresh: Quote
-            Refresh->>GW: cancelAll()
-            Refresh->>GW: place(buy, reduceOnly=false)
-            Refresh->>GW: place(sell, reduceOnly=false)
+            Refresh->>GW: cancel/replace changed quote orders
+            loop each ladder level
+                Refresh->>GW: place(buy, reduceOnly=false)
+                Refresh->>GW: place(sell, reduceOnly=false)
+            end
         else PAUSE_QUOTING
             Note over Bot: no new bid/ask quote
         else EMERGENCY_STOP
@@ -79,8 +81,8 @@ flowchart LR
 
     Fair --> QE
     Vol --> QE
-    QE --> Strategy["AvellanedaStoikovStrategy"]
-    Strategy --> Quote["Quote<br/>bid, ask, sizes<br/>policy, fairPrice, sigma"]
+    QE --> Strategy["Configured IQuotingStrategy"]
+    Strategy --> Quote["Quote<br/>top bid/ask, ladder levels<br/>policy, fairPrice, sigma"]
 ```
 
 ### Fair Price
@@ -91,13 +93,13 @@ Fair price は mark price と micro price の線形結合。
 fairPrice = markWeight * markPrice + (1 - markWeight) * microPrice
 ```
 
-Bulk live config の現値:
+Bulk beta live config の現値:
 
 ```text
-markWeight = 0.5
+markWeight = 0.25
 ```
 
-つまり現在は mark price と micro price を半分ずつ見る。
+つまり現在は Bulk orderbook micro price を主に使い、mark price を 25% 混ぜる。
 
 ### Volatility
 
@@ -119,14 +121,25 @@ quote size は `positionSize` を上限にし、`budgetUsd` があれば fair pr
 quoteSize = min(positionSize, budgetUsd / fairPrice)
 ```
 
-`budgetUsd` が未設定、または `fairPrice <= 0` のときは `positionSize` をそのまま使う。
-
-Bulk live config の現値:
+単一 quote path では `budgetUsd` が未設定、または `fairPrice <= 0` のときは `positionSize` をそのまま使う。Bulk beta live config は multi-level ladder を使うため、通常 quote size は各 level の `sizeUsd / fairPrice` で決まる。
 
 ```text
-positionSize = 0.05 BTC
-budgetUsd = 250
+positionSize = 1.25 BTC
+budgetUsd = 50000
+levels = 9400 / 18800 / 31300 / 50000 USD
 ```
+
+### Ladder Quote
+
+Bulk beta では `QuoteEngine` が strategy の reservation price を中心に、config の half-spread ladder を作る。
+
+```text
+bid_i = reservationPrice - fairPrice * halfSpreadBps_i / 10_000
+ask_i = reservationPrice + fairPrice * halfSpreadBps_i / 10_000
+size_i = sizeUsd_i / fairPrice
+```
+
+long inventory では bid size を下げ、ask size を上げる。short inventory では逆に bid size を上げ、ask size を下げる。
 
 ## Avellaneda-Stoikov Variant
 
@@ -158,10 +171,12 @@ spread = 2 / kappa
 spread = gamma * varianceTerm + (2 / gamma) * ln(1 + gamma / kappa)
 ```
 
-Bulk live config の現値は `gamma = 0`, `kappa = 8` なので、現在の spread は volatility に依存しない。
+Bulk live config は fee 負けする極細 quote を避けるため、strategy spread に bps 下限をかける。
 
 ```text
-spread = 2 / 8 = 0.25 USD
+strategySpread = 2 / 625 = 0.0032 USD
+minSpread = fairPrice * minSpreadBps / 10_000
+spread = max(strategySpread, minSpread)
 ```
 
 ### Inventory Skew
@@ -178,17 +193,18 @@ long inventory のとき `positionQty > 0` なので `skew > 0` になり、rese
 
 short inventory のときは逆に reservation price が上がり、buy fill を相対的に促す。
 
-Bulk live config の現値:
+Bulk beta live config の現値:
 
 ```text
-inventoryScale = 0.5
+inventoryScale = 0.2
 timeHorizonSec = 10
-kInv = 0.05
+minSpreadBps = 16
+kInv = 2
 ```
 
 ## Order Policy
 
-通常 quote の time in force は config の `defaultTimeInForce` を使う。Bulk live config は `GTC`。
+通常 quote の time in force は config の `defaultTimeInForce` を使う。Bulk beta live config は `GTC`。Bulk beta `BTC-USD` は `ALO` を advertise していないため、`ALO` を設定すると live order 前の capability check で fail closed する。
 
 ただし strategy 内で snapshot の `marginRatio` が `slideMarginThreshold` 未満なら、quote policy を `IOC` に切り替える。
 
@@ -198,33 +214,39 @@ policy = marginRatio != null && marginRatio < slideMarginThreshold
   : defaultTimeInForce
 ```
 
-Bulk live config の現値:
+Bulk beta live config の現値:
 
 ```text
-slideMarginThreshold = 0.08
+slideMarginThreshold = 0.06
 defaultTimeInForce = GTC
 ```
 
-注意: tick の先頭で `GuardRiskUseCase` が `marginRatio < imrBuffer` を `PAUSE_QUOTING` にする。Bulk live config は `imrBuffer = 0.08` なので、現在の live path では `marginRatio < 0.08` の tick は `RefreshQuotesUseCase` まで進まない。そのため strategy 内の `IOC` slide は、threshold を risk guard とずらした場合、または直接 `QuoteEngine` を使うテストや別 orchestration で効く。
+注意: tick の先頭で `GuardRiskUseCase` が `marginRatio < imrBuffer` を `PAUSE_QUOTING` にする。Bulk beta live config は `imrBuffer = 0.06` なので、現在の live path では `marginRatio < 0.06` の tick は `RefreshQuotesUseCase` まで進まない。そのため strategy 内の `IOC` slide は、threshold を risk guard とずらした場合、または直接 `QuoteEngine` を使うテストや別 orchestration で効く。
 
 ## Bulk Live Parameters
 
-`config/config.bulk.yml` の current strategy parameters。
+`config/config.bulk.beta.yml` の current strategy parameters。
 
-| Group    | Parameter            |     Value | Meaning                       |
-| -------- | -------------------- | --------: | ----------------------------- |
-| market   | `market`             | `BTC-USD` | Bulk target market            |
-| loop     | `intervalMs`         |     `250` | tick interval                 |
-| fair     | `markWeight`         |     `0.5` | mark / micro blend            |
-| sizing   | `positionSize`       |    `0.05` | max quote size in BTC         |
-| sizing   | `budgetUsd`          |     `250` | per-order budget cap          |
-| strategy | `gamma`              |       `0` | fixed-spread mode             |
-| strategy | `kappa`              |       `8` | fixed spread denominator      |
-| strategy | `kInv`               |    `0.05` | inventory skew coefficient    |
-| risk     | `maxPositionQty`     |     `0.5` | inventory reduction threshold |
-| risk     | `imrBuffer`          |    `0.08` | pause quoting threshold       |
-| risk     | `mmrBuffer`          |    `0.04` | emergency stop threshold      |
-| policy   | `defaultTimeInForce` |     `GTC` | normal quote policy           |
+| Group    | Parameter            |                Value | Meaning                       |
+| -------- | -------------------- | -------------------: | ----------------------------- |
+| market   | `market`             |            `BTC-USD` | Bulk target market            |
+| env      | `environment`        |               `beta` | mock-capital Bulk environment |
+| loop     | `intervalMs`         |               `1000` | tick interval                 |
+| venue    | `maxLeverage`        |                 `10` | Bulk account leverage guard   |
+| fair     | `markWeight`         |               `0.25` | mark-price fair weight        |
+| sizing   | `positionSize`       |               `1.25` | fallback max quote size BTC   |
+| sizing   | `budgetUsd`          |               `9600` | fallback per-order budget cap |
+| ladder   | `halfSpreadBps`      |                `1.5` | level half-spread             |
+| ladder   | `sizeUsd`            |              `14400` | level notional                |
+| engine   | `minSpreadBps`       |                  `3` | minimum full quote width      |
+| strategy | `type`               | `avellaneda-stoikov` | base quote model              |
+| strategy | `gamma`              |                  `0` | A-S risk aversion             |
+| strategy | `kappa`              |                `625` | A-S fill intensity            |
+| strategy | `kInv`               |                  `2` | inventory skew                |
+| risk     | `maxPositionQty`     |                `0.3` | inventory reduction threshold |
+| risk     | `imrBuffer`          |               `0.06` | pause quoting threshold       |
+| risk     | `mmrBuffer`          |               `0.03` | emergency stop threshold      |
+| policy   | `defaultTimeInForce` |                `GTC` | normal quote policy           |
 
 ## Inventory Reduction
 
@@ -264,11 +286,12 @@ PnL-first で扱うため、parameter tuning では以下の順に見る。
 
 - `src/application/Bot.ts`: tick loop、risk state 分岐、quote count、cleanup
 - `src/application/usecases/GuardRiskUseCase.ts`: margin risk state 判定
-- `src/application/usecases/RefreshQuotesUseCase.ts`: snapshot / position 取得、quote 計算、cancel / place
+- `src/application/usecases/RefreshQuotesUseCase.ts`: snapshot / position 取得、quote 計算、order reconcile
 - `src/application/usecases/ReduceInventoryUseCase.ts`: max inventory 超過時の reduce-only IOC
 - `src/domain/QuoteEngine.ts`: fair price、volatility、quote sizing、strategy context 合成
 - `src/domain/FairPriceCalculator.ts`: mark / micro blended fair price
 - `src/domain/VolatilityEstimator.ts`: EWMA volatility
-- `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts`: spread、skew、reservation price、policy
-- `src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts`: strategy parameter schema
-- `config/config.bulk.yml`: current Bulk live parameters
+- `src/domain/strategy/*/*Strategy.ts`: spread、skew、side multiplier、policy
+- `src/domain/strategy/*/*Params.ts`: strategy parameter schema
+- `config/config.bulk.beta.yml`: aggressive Bulk beta live parameters
+- `config/config.bulk.mainnet.yml`: conservative Bulk mainnet live parameters

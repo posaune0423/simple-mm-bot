@@ -168,30 +168,136 @@ CREATE OR REPLACE VIEW v_run_drawdown AS
   FROM peaks
   GROUP BY run_id;
 --> statement-breakpoint
-CREATE OR REPLACE VIEW v_order_quality AS
-  WITH filled_orders AS (
-    SELECT DISTINCT run_id, submitted_order_id AS order_id
+CREATE OR REPLACE VIEW v_order_lifecycle AS
+  WITH fill_links AS (
+    SELECT run_id, submitted_order_id AS order_id, MIN(filled_at) AS filled_at
     FROM trade_fills
     WHERE submitted_order_id IS NOT NULL
-    UNION
-    SELECT DISTINCT f.run_id, o.id AS order_id
+    GROUP BY run_id, submitted_order_id
+    UNION ALL
+    SELECT f.run_id, o.id AS order_id, MIN(f.filled_at) AS filled_at
     FROM trade_fills f
     JOIN submitted_orders o
       ON o.run_id = f.run_id
      AND o.venue_order_id = f.venue_order_id
     WHERE f.venue_order_id IS NOT NULL
+    GROUP BY f.run_id, o.id
+  ),
+  first_fills AS (
+    SELECT run_id, order_id, MIN(filled_at) AS filled_at
+    FROM fill_links
+    GROUP BY run_id, order_id
+  ),
+  enriched AS (
+    SELECT
+      o.*,
+      CASE
+        WHEN o.client_order_id LIKE '%:bid:%' THEN split_part(o.client_order_id, ':bid:', 1)
+        WHEN o.client_order_id LIKE '%:ask:%' THEN split_part(o.client_order_id, ':ask:', 1)
+        WHEN o.client_order_id LIKE '%:bid' THEN left(o.client_order_id, length(o.client_order_id) - 4)
+        WHEN o.client_order_id LIKE '%:ask' THEN left(o.client_order_id, length(o.client_order_id) - 4)
+        ELSE o.client_order_id
+      END AS quote_cycle_id,
+      CASE
+        WHEN o.client_order_id LIKE '%:bid:%' THEN NULLIF(split_part(o.client_order_id, ':bid:', 2), '')::INTEGER
+        WHEN o.client_order_id LIKE '%:ask:%' THEN NULLIF(split_part(o.client_order_id, ':ask:', 2), '')::INTEGER
+        WHEN o.client_order_id LIKE '%:bid' OR o.client_order_id LIKE '%:ask' THEN 0
+        ELSE NULL
+      END AS quote_level,
+      ff.filled_at,
+      CASE
+        WHEN ff.filled_at IS NOT NULL THEN ff.filled_at
+        WHEN o.canceled_at IS NOT NULL THEN o.canceled_at
+        WHEN o.rejected_at IS NOT NULL THEN o.rejected_at
+        ELSE NULL
+      END AS terminal_at
+    FROM submitted_orders o
+    LEFT JOIN first_fills ff
+      ON ff.run_id = o.run_id
+     AND ff.order_id = o.id
   )
+  SELECT
+    *,
+    CASE
+      WHEN terminal_at IS NOT NULL THEN terminal_at - submitted_at
+      ELSE NULL
+    END AS live_ms,
+    CASE
+      WHEN final_status = 'canceled' AND filled_at IS NULL THEN 1
+      ELSE 0
+    END AS canceled_before_fill
+  FROM enriched;
+--> statement-breakpoint
+CREATE OR REPLACE VIEW v_quote_competitiveness AS
+  SELECT
+    q.id,
+    q.run_id,
+    q.venue,
+    q.market,
+    q.client_order_id,
+    q.side,
+    q.quote_cycle_id,
+    q.quote_level,
+    q.limit_price,
+    q.quantity,
+    q.submitted_at,
+    s.observed_at AS snapshot_observed_at,
+    s.best_bid,
+    s.best_ask,
+    s.mid_price,
+    s.spread_bps AS market_spread_bps,
+    CASE
+      WHEN q.limit_price IS NULL OR s.mid_price IS NULL THEN NULL
+      WHEN q.side = 'buy' THEN ((s.mid_price - q.limit_price) / s.mid_price) * 10000
+      ELSE ((q.limit_price - s.mid_price) / s.mid_price) * 10000
+    END AS distance_to_mid_bps,
+    CASE
+      WHEN q.limit_price IS NULL THEN NULL
+      WHEN q.side = 'buy' AND s.best_bid > 0 THEN ((s.best_bid - q.limit_price) / s.best_bid) * 10000
+      WHEN q.side = 'sell' AND s.best_ask > 0 THEN ((q.limit_price - s.best_ask) / s.best_ask) * 10000
+      ELSE NULL
+    END AS distance_to_best_bps
+  FROM v_order_lifecycle q
+  LEFT JOIN LATERAL (
+    SELECT *
+    FROM orderbook_snapshots prior
+    WHERE prior.run_id = q.run_id
+      AND prior.market = q.market
+      AND prior.observed_at <= q.submitted_at
+    ORDER BY prior.observed_at DESC
+    LIMIT 1
+  ) s ON true
+  WHERE q.intent = 'quote';
+--> statement-breakpoint
+CREATE OR REPLACE VIEW v_quote_level_quality AS
+  SELECT
+    q.run_id,
+    q.quote_level,
+    COUNT(*) AS submitted_count,
+    SUM(CASE WHEN q.final_status = 'rejected' THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS reject_rate,
+    SUM(CASE WHEN q.final_status = 'canceled' THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS cancel_rate,
+    SUM(CASE WHEN q.final_status = 'filled' OR q.filled_at IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS fill_rate,
+    AVG(q.live_ms) AS avg_live_ms,
+    AVG(c.distance_to_mid_bps) AS avg_distance_to_mid_bps,
+    AVG(c.distance_to_best_bps) AS avg_distance_to_best_bps
+  FROM v_order_lifecycle q
+  LEFT JOIN v_quote_competitiveness c
+    ON c.id = q.id
+  WHERE q.intent = 'quote'
+    AND q.quote_level IS NOT NULL
+  GROUP BY q.run_id, q.quote_level;
+--> statement-breakpoint
+CREATE OR REPLACE VIEW v_order_quality AS
   SELECT
     o.run_id,
     COUNT(*) AS submitted_count,
     SUM(CASE WHEN o.final_status = 'rejected' THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS reject_rate,
     SUM(CASE WHEN o.final_status = 'canceled' THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS cancel_rate,
-    SUM(CASE WHEN o.final_status = 'filled' OR fo.order_id IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS fill_rate,
+    SUM(CASE WHEN o.final_status = 'filled' OR o.filled_at IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS fill_rate,
+    SUM(o.canceled_before_fill)::DOUBLE PRECISION / COUNT(*) AS cancel_before_fill_rate,
+    AVG(o.live_ms) AS avg_live_ms,
     AVG(o.latency_ms) AS avg_latency_ms
-  FROM submitted_orders o
-  LEFT JOIN filled_orders fo
-    ON fo.run_id = o.run_id
-   AND fo.order_id = o.id
+  FROM v_order_lifecycle o
   GROUP BY o.run_id;
 --> statement-breakpoint
 CREATE OR REPLACE VIEW v_fill_markouts AS
@@ -227,27 +333,60 @@ CREATE OR REPLACE VIEW v_fill_markouts AS
       ELSE ((f.price - s300.mid_price) / f.price) * 10000
     END AS markout_300s_bps
   FROM trade_fills f
-  LEFT JOIN orderbook_snapshots s5
-    ON s5.run_id = f.run_id
-   AND s5.market = f.market
-   AND s5.observed_at = f.filled_at + 5000
-  LEFT JOIN orderbook_snapshots s30
-    ON s30.run_id = f.run_id
-   AND s30.market = f.market
-   AND s30.observed_at = f.filled_at + 30000
-  LEFT JOIN orderbook_snapshots s300
-    ON s300.run_id = f.run_id
-   AND s300.market = f.market
-   AND s300.observed_at = f.filled_at + 300000;
+  LEFT JOIN LATERAL (
+    SELECT mid_price
+    FROM orderbook_snapshots next_s5
+    WHERE next_s5.run_id = f.run_id
+      AND next_s5.market = f.market
+      AND next_s5.observed_at >= f.filled_at + 5000
+      AND next_s5.observed_at <= f.filled_at + 10000
+    ORDER BY next_s5.observed_at ASC
+    LIMIT 1
+  ) s5 ON true
+  LEFT JOIN LATERAL (
+    SELECT mid_price
+    FROM orderbook_snapshots next_s30
+    WHERE next_s30.run_id = f.run_id
+      AND next_s30.market = f.market
+      AND next_s30.observed_at >= f.filled_at + 30000
+      AND next_s30.observed_at <= f.filled_at + 45000
+    ORDER BY next_s30.observed_at ASC
+    LIMIT 1
+  ) s30 ON true
+  LEFT JOIN LATERAL (
+    SELECT mid_price
+    FROM orderbook_snapshots next_s300
+    WHERE next_s300.run_id = f.run_id
+      AND next_s300.market = f.market
+      AND next_s300.observed_at >= f.filled_at + 300000
+      AND next_s300.observed_at <= f.filled_at + 330000
+    ORDER BY next_s300.observed_at ASC
+    LIMIT 1
+  ) s300 ON true;
 --> statement-breakpoint
 CREATE OR REPLACE VIEW v_markout_quality AS
+  WITH latest_snapshot AS (
+    SELECT
+      run_id,
+      market,
+      MAX(observed_at) AS latest_observed_at
+    FROM orderbook_snapshots
+    GROUP BY run_id, market
+  )
   SELECT
-    run_id,
-    AVG(markout_5s_bps) AS avg_markout_5s_bps,
-    AVG(adverse_5s) AS adverse_selection_rate_5s,
-    SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION / COUNT(*) AS markout_5s_coverage
-  FROM v_fill_markouts
-  GROUP BY run_id;
+    f.run_id,
+    AVG(f.markout_5s_bps) AS avg_markout_5s_bps,
+    AVG(f.adverse_5s) AS adverse_selection_rate_5s,
+    SUM(CASE WHEN f.markout_5s_bps IS NOT NULL THEN 1 ELSE 0 END)::DOUBLE PRECISION /
+      NULLIF(
+        SUM(CASE WHEN ls.latest_observed_at >= f.filled_at + 5000 THEN 1 ELSE 0 END),
+        0
+      ) AS markout_5s_coverage
+  FROM v_fill_markouts f
+  LEFT JOIN latest_snapshot ls
+    ON ls.run_id = f.run_id
+   AND ls.market = f.market
+  GROUP BY f.run_id;
 --> statement-breakpoint
 CREATE OR REPLACE VIEW v_market_quality AS
   SELECT
@@ -309,6 +448,8 @@ CREATE OR REPLACE VIEW v_run_performance AS
     oq.reject_rate,
     oq.cancel_rate,
     oq.fill_rate,
+    oq.cancel_before_fill_rate,
+    oq.avg_live_ms,
     oq.avg_latency_ms,
     mq.avg_markout_5s_bps,
     mq.adverse_selection_rate_5s,

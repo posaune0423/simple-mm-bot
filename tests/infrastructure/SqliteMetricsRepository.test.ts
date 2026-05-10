@@ -242,6 +242,230 @@ describe("SqliteMetricsRepository", () => {
     expect(marketQuality?.observation_count).toBe(20);
   });
 
+  test("recreates analysis views when an existing sqlite database has stale view SQL", () => {
+    const client = createSqliteClient(dbPath);
+    client.sqlite.exec("DROP VIEW v_fill_markouts");
+    client.sqlite.exec("CREATE VIEW v_fill_markouts AS SELECT 1 AS stale_view");
+    client.sqlite.close();
+
+    const migrated = createSqliteClient(dbPath);
+    const viewSql = migrated.sqlite
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'v_fill_markouts'",
+      )
+      .get();
+
+    expect(viewSql?.sql).toContain("next_s5.observed_at >= f.filled_at + 5000");
+    expect(viewSql?.sql).not.toContain("stale_view");
+    migrated.sqlite.close();
+  });
+
+  test("excludes fills without enough future snapshots from markout coverage denominator", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-markout-coverage",
+      mode: "paper",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "paper",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "coverage-snapshot-fill",
+      runId: "run-markout-coverage",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1000,
+      bestBid: 99,
+      bestAsk: 101,
+      midPrice: 100,
+      microPrice: 100,
+      markPrice: 100,
+      spreadBps: 200,
+      stalenessMs: 0,
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "coverage-snapshot-5s",
+      runId: "run-markout-coverage",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 6100,
+      bestBid: 100,
+      bestAsk: 102,
+      midPrice: 101,
+      microPrice: 101,
+      markPrice: 101,
+      spreadBps: 198,
+      stalenessMs: 50,
+    });
+    for (const [id, filledAt] of [
+      ["eligible-fill", 1000],
+      ["terminal-fill", 6000],
+    ] as const) {
+      await repository.recordTradeFill({
+        id,
+        runId: "run-markout-coverage",
+        venue: "bulk",
+        market: "BTC-USD",
+        venueFillId: id,
+        side: "buy",
+        price: 99,
+        quantity: 1,
+        fee: 0.1,
+        tradePnl: 1,
+        makerTaker: "maker",
+        filledAt,
+      });
+    }
+
+    const quality = client.sqlite
+      .query<{ avg_markout_5s_bps: number; markout_5s_coverage: number }, []>(
+        "SELECT avg_markout_5s_bps, markout_5s_coverage FROM v_markout_quality WHERE run_id = 'run-markout-coverage'",
+      )
+      .get();
+
+    expect(quality?.avg_markout_5s_bps).toBeCloseTo(202.0202, 4);
+    expect(quality?.markout_5s_coverage).toBe(1);
+  });
+
+  test("does not use delayed long-horizon snapshots for short-horizon markouts", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-delayed-markout",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordTradeFill({
+      id: "fill-delayed",
+      runId: "run-delayed-markout",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "fill-delayed",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1000,
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "snapshot-300s",
+      runId: "run-delayed-markout",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 301000,
+      bestBid: 110,
+      bestAsk: 112,
+      midPrice: 111,
+      microPrice: 111,
+      markPrice: 111,
+      spreadBps: 180,
+      stalenessMs: 0,
+    });
+
+    const markout = client.sqlite
+      .query<
+        {
+          markout_5s_bps: number | null;
+          markout_30s_bps: number | null;
+          markout_300s_bps: number | null;
+        },
+        []
+      >(
+        "SELECT markout_5s_bps, markout_30s_bps, markout_300s_bps FROM v_fill_markouts WHERE fill_id = 'fill-delayed'",
+      )
+      .get();
+
+    expect(markout?.markout_5s_bps).toBeNull();
+    expect(markout?.markout_30s_bps).toBeNull();
+    expect(markout?.markout_300s_bps).toBe(1100);
+  });
+
+  test("reads recent side quality from multi-horizon fill markouts", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-side-quality",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    for (const snapshot of [
+      { id: "quality-5s", observedAt: 6_000, midPrice: 99 },
+      { id: "quality-30s", observedAt: 31_000, midPrice: 98 },
+      { id: "quality-300s", observedAt: 301_000, midPrice: 102 },
+    ]) {
+      await repository.recordOrderbookSnapshot({
+        id: snapshot.id,
+        runId: "run-side-quality",
+        venue: "bulk",
+        market: "BTC-USD",
+        observedAt: snapshot.observedAt,
+        bestBid: snapshot.midPrice - 1,
+        bestAsk: snapshot.midPrice + 1,
+        midPrice: snapshot.midPrice,
+        microPrice: snapshot.midPrice,
+        markPrice: snapshot.midPrice,
+        spreadBps: 200,
+        stalenessMs: 0,
+      });
+    }
+    await repository.recordTradeFill({
+      id: "quality-buy",
+      runId: "run-side-quality",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "quality-buy",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1_000,
+    });
+
+    const quality = await repository.getRecentSideQuality({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      horizonsSec: [5, 30, 300],
+    });
+
+    expect(quality).toEqual([
+      {
+        side: "buy",
+        horizons: [
+          { horizonSec: 5, sampleCount: 1, averageMarkoutBps: -100 },
+          { horizonSec: 30, sampleCount: 1, averageMarkoutBps: -200 },
+          { horizonSec: 300, sampleCount: 1, averageMarkoutBps: 200 },
+        ],
+      },
+    ]);
+  });
+
   test("computes analysis views from fact tables instead of OHLCV", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
@@ -277,13 +501,27 @@ describe("SqliteMetricsRepository", () => {
       runId: "run-views",
       venue: "bulk",
       market: "BTC-USD",
-      observedAt: 6000,
+      observedAt: 6100,
       bestBid: 100,
       bestAsk: 102,
       midPrice: 101,
       microPrice: 101,
       markPrice: 101,
       spreadBps: 198,
+      stalenessMs: 50,
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "snapshot-5s-later",
+      runId: "run-views",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 6200,
+      bestBid: 119,
+      bestAsk: 121,
+      midPrice: 120,
+      microPrice: 120,
+      markPrice: 120,
+      spreadBps: 168,
       stalenessMs: 50,
     });
     await repository.recordSubmittedOrder({
@@ -357,7 +595,14 @@ describe("SqliteMetricsRepository", () => {
       )
       .get();
     const inventoryRisk = client.sqlite
-      .query<{ max_abs_position: number; min_margin_ratio: number; equity_drawdown: number }, []>(
+      .query<
+        {
+          max_abs_position: number;
+          min_margin_ratio: number;
+          equity_drawdown: number;
+        },
+        []
+      >(
         "SELECT max_abs_position, min_margin_ratio, equity_drawdown FROM v_inventory_risk WHERE run_id = 'run-views'",
       )
       .get();
@@ -387,5 +632,136 @@ describe("SqliteMetricsRepository", () => {
     expect(performance?.avg_markout_5s_bps).toBeCloseTo(202.0202, 4);
     expect(viewSql?.sql.toLowerCase()).toContain("orderbook_snapshots");
     expect(viewSql?.sql.toLowerCase()).not.toContain("ohlcv");
+  });
+
+  test("computes order lifecycle and quote competitiveness diagnostics", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-lifecycle",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "snapshot-lifecycle",
+      runId: "run-lifecycle",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1000,
+      bestBid: 99.95,
+      bestAsk: 100.05,
+      midPrice: 100,
+      microPrice: 100,
+      markPrice: 100,
+      spreadBps: 10,
+      stalenessMs: 0,
+    });
+    await repository.recordSubmittedOrder({
+      id: "order-level-0",
+      runId: "run-lifecycle",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle-1:bid:0",
+      venueOrderId: "venue-level-0",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 99.9,
+      quantity: 1,
+      timeInForce: "GTC",
+      submittedAt: 1100,
+      acceptedAt: 1150,
+      canceledAt: 2100,
+      finalStatus: "canceled",
+      latencyMs: 50,
+    });
+    await repository.recordSubmittedOrder({
+      id: "order-level-1",
+      runId: "run-lifecycle",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle-1:ask:1",
+      venueOrderId: "venue-level-1",
+      intent: "quote",
+      side: "sell",
+      orderType: "limit",
+      limitPrice: 101.5,
+      quantity: 1,
+      timeInForce: "GTC",
+      submittedAt: 1100,
+      acceptedAt: 1160,
+      finalStatus: "accepted",
+      latencyMs: 60,
+    });
+    await repository.recordTradeFill({
+      id: "fill-level-1",
+      runId: "run-lifecycle",
+      submittedOrderId: "order-level-1",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "fill-level-1",
+      venueOrderId: "venue-level-1",
+      side: "sell",
+      price: 101.5,
+      quantity: 1,
+      fee: 0.1,
+      tradePnl: 1,
+      makerTaker: "maker",
+      filledAt: 1600,
+    });
+
+    const orderQuality = client.sqlite
+      .query<
+        {
+          cancel_rate: number;
+          fill_rate: number;
+          avg_live_ms: number;
+          cancel_before_fill_rate: number;
+        },
+        []
+      >(
+        "SELECT cancel_rate, fill_rate, avg_live_ms, cancel_before_fill_rate FROM v_order_quality WHERE run_id = 'run-lifecycle'",
+      )
+      .get();
+    const competitiveness = client.sqlite
+      .query<
+        {
+          quote_level: number;
+          distance_to_mid_bps: number;
+          distance_to_best_bps: number;
+          market_spread_bps: number;
+        },
+        []
+      >(
+        "SELECT quote_level, distance_to_mid_bps, distance_to_best_bps, market_spread_bps FROM v_quote_competitiveness WHERE id = 'order-level-0'",
+      )
+      .get();
+    const levelQuality = client.sqlite
+      .query<{ quote_level: number; submitted_count: number; fill_rate: number }, []>(
+        "SELECT quote_level, submitted_count, fill_rate FROM v_quote_level_quality WHERE run_id = 'run-lifecycle' AND quote_level = 1",
+      )
+      .get();
+
+    expect(orderQuality?.cancel_rate).toBe(0.5);
+    expect(orderQuality?.fill_rate).toBe(0.5);
+    expect(orderQuality?.avg_live_ms).toBe(750);
+    expect(orderQuality?.cancel_before_fill_rate).toBe(0.5);
+    expect(competitiveness?.quote_level).toBe(0);
+    expect(competitiveness?.distance_to_mid_bps).toBeCloseTo(10);
+    expect(competitiveness?.distance_to_best_bps).toBeCloseTo(5.0025, 4);
+    expect(competitiveness?.market_spread_bps).toBe(10);
+    expect(levelQuality).toEqual({
+      quote_level: 1,
+      submitted_count: 1,
+      fill_rate: 1,
+    });
   });
 });

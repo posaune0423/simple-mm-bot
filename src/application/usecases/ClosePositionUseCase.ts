@@ -4,6 +4,7 @@ import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { Position } from "../../domain/entities/Position.ts";
+import { isFlatPositionQty } from "../../domain/entities/Position.ts";
 import { logger } from "../../utils/logger.ts";
 
 const closeMaxAttempts = 30;
@@ -37,6 +38,8 @@ export class ClosePositionUseCase {
     private readonly positionRepository: IPositionRepository,
     private readonly marketFeed: IMarketFeed,
     private readonly market: string,
+    private readonly postCloseSyncDelaysMs: readonly number[] = [0, 250, 750],
+    private readonly closeRetryDelayMs = 1_000,
   ) {}
 
   private async currentPosition(): Promise<Position> {
@@ -62,6 +65,19 @@ export class ClosePositionUseCase {
     return position;
   }
 
+  private async syncFillsAfterClose(): Promise<void> {
+    for (const delayMs of this.postCloseSyncDelaysMs) {
+      if (delayMs > 0) {
+        await Bun.sleep(delayMs);
+      }
+      await this.orderGateway.syncFills?.().catch((error) => {
+        logger.warn(
+          `close_position.post_close_sync_fills_failed market=${this.market} error=${String(error)}`,
+        );
+      });
+    }
+  }
+
   private closeAttempt(position: Position, attempt: number): CloseAttempt {
     return {
       attempt,
@@ -78,7 +94,7 @@ export class ClosePositionUseCase {
 
     for (let attempt = 1; attempt <= closeMaxAttempts; attempt += 1) {
       const position = await this.refreshPosition();
-      if (position.qty === 0) {
+      if (isFlatPositionQty(position.qty)) {
         return;
       }
 
@@ -91,9 +107,11 @@ export class ClosePositionUseCase {
           lastStatus = status;
         });
         if (result === "filled") {
+          await this.syncFillsAfterClose();
           return;
         }
         if (result === "not_filled") {
+          await this.waitBeforeRetry();
           continue;
         }
       }
@@ -103,8 +121,10 @@ export class ClosePositionUseCase {
       });
       fallbackAttempt += 1;
       if (result === "filled") {
+        await this.syncFillsAfterClose();
         return;
       }
+      await this.waitBeforeRetry();
     }
 
     throw new Error(
@@ -201,5 +221,11 @@ export class ClosePositionUseCase {
       );
     }
     return "not_filled";
+  }
+
+  private async waitBeforeRetry(): Promise<void> {
+    if (this.closeRetryDelayMs > 0) {
+      await Bun.sleep(this.closeRetryDelayMs);
+    }
   }
 }

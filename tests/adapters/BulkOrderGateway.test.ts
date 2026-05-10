@@ -22,6 +22,27 @@ function captureLogs() {
   };
 }
 
+function captureWarnAndErrorLogs() {
+  const warn = logger.warn;
+  const error = logger.error;
+  const warnMessages: string[] = [];
+  const errorMessages: string[] = [];
+  logger.warn = (...args: unknown[]) => {
+    warnMessages.push(args.join(" "));
+  };
+  logger.error = (...args: unknown[]) => {
+    errorMessages.push(args.join(" "));
+  };
+  return {
+    warnMessages,
+    errorMessages,
+    restore() {
+      logger.warn = warn;
+      logger.error = error;
+    },
+  };
+}
+
 describe("BulkOrderGateway", () => {
   test("maps limit, market, cancel, and cancelAll calls to the SDK", async () => {
     const calls: unknown[] = [];
@@ -195,6 +216,120 @@ describe("BulkOrderGateway", () => {
         size: 0.003066,
         tif: "GTC",
         reduceOnly: false,
+      },
+    ]);
+  });
+
+  test("rounds reduce-only dust size up to the minimum Bulk lot for close orders", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [
+              {
+                symbol: "BTC-USD",
+                sizePrecision: 6,
+                lotSize: 0.000001,
+                timeInForces: ["IOC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeMarketOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ filled: { oid: "dust-close" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      qty: 6.299999998349293e-7,
+      reduceOnly: true,
+      timeInForce: "IOC",
+      intent: "close",
+    });
+
+    expect(placed).toMatchObject({
+      id: "dust-close",
+      request: { qty: 0.000001, reduceOnly: true },
+      status: "filled",
+    });
+    expect(calls).toEqual([{ symbol: "BTC-USD", side: "sell", size: 0.000001, reduceOnly: true }]);
+  });
+
+  test("allows reduce-only limit orders below min notional so tiny inventory can be reduced", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [
+              {
+                symbol: "BTC-USD",
+                pricePrecision: 1,
+                sizePrecision: 6,
+                lotSize: 0.000001,
+                minNotional: 1,
+                timeInForces: ["GTC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeLimitOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ resting: { oid: "reduce-dust" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      price: 79_940.435,
+      qty: 0.000001,
+      reduceOnly: true,
+      timeInForce: "GTC",
+      intent: "reduce",
+    });
+
+    expect(placed).toMatchObject({
+      id: "reduce-dust",
+      request: { price: 79_940.4, qty: 0.000001, reduceOnly: true },
+      status: "open",
+    });
+    expect(calls).toEqual([
+      {
+        symbol: "BTC-USD",
+        side: "sell",
+        price: 79_940.4,
+        size: 0.000001,
+        tif: "GTC",
+        reduceOnly: true,
       },
     ]);
   });
@@ -406,6 +541,85 @@ describe("BulkOrderGateway", () => {
     });
   });
 
+  test("normalizes Bulk open orders for exchange-truth reconciliation", async () => {
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async openOrders() {
+            return [
+              {
+                symbol: "BTC-USD",
+                orderId: "buy-1",
+                price: 100_000,
+                size: 0.04,
+                reduceOnly: false,
+                tif: "gtc",
+                status: "resting",
+                timestamp: 1_700_000_000_000_000_000,
+              },
+              {
+                symbol: "BTC-USD",
+                orderId: "sell-1",
+                price: 100_100,
+                size: -0.02,
+                reduceOnly: true,
+                tif: "ioc",
+                status: "partiallyFilled",
+                timestamp: 1_700_000_000_100,
+              },
+              {
+                symbol: "ETH-USD",
+                orderId: "other-market",
+                price: 4_000,
+                size: 1,
+                status: "resting",
+              },
+              {
+                symbol: "BTC-USD",
+                orderId: "filled",
+                price: 100_100,
+                size: -0.02,
+                status: "filled",
+              },
+            ];
+          },
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const orders = await gateway.getOpenOrders();
+
+    expect(orders).toEqual([
+      {
+        id: "buy-1",
+        market: "BTC-USD",
+        side: "buy",
+        price: 100_000,
+        qty: 0.04,
+        reduceOnly: false,
+        timeInForce: "GTC",
+        status: "open",
+        placedAtMs: 1_700_000_000_000,
+      },
+      {
+        id: "sell-1",
+        market: "BTC-USD",
+        side: "sell",
+        price: 100_100,
+        qty: 0.02,
+        reduceOnly: true,
+        timeInForce: "IOC",
+        status: "partially_filled",
+        placedAtMs: 1_700_000_000_100,
+      },
+    ]);
+  });
+
   test("places orders when Bulk account leverage is within the configured max", async () => {
     const calls: unknown[] = [];
     const gateway = new BulkOrderGateway(
@@ -570,6 +784,53 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("returns rejected placed order when Bulk responds with HTTP 408", async () => {
+    const events: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {
+          async placeLimitOrder() {
+            const error = new Error("HTTP request timed out");
+            Object.assign(error, { name: "BulkTimeoutError", status: 408 });
+            throw error;
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+    gateway.subscribeOrderEvents((event) => {
+      events.push(event);
+    });
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "sell",
+      price: 81_349,
+      qty: 0.003073,
+      reduceOnly: true,
+      timeInForce: "IOC",
+      clientOrderId: "reduce-1",
+      intent: "reduce",
+    });
+
+    expect(placed.status).toBe("rejected");
+    expect(events).toMatchObject([
+      { action: "submit", intent: "reduce", side: "sell" },
+      {
+        action: "reject",
+        orderId: "reduce-1",
+        status: "rejected",
+        statusKey: "http_408",
+        reason: "HTTP request timed out",
+      },
+    ]);
+  });
+
   test("serializes scheduled fill polling and waits for the in-flight poll on dispose", async () => {
     let calls = 0;
     let started: (() => void) | undefined;
@@ -613,6 +874,69 @@ describe("BulkOrderGateway", () => {
 
     expect(disposed).toBe(true);
     expect(calls).toBe(callsAfterDispose);
+  });
+
+  test("stops scheduled fill polling without waiting for the in-flight poll", async () => {
+    let release: (() => void) | undefined;
+    const startedPromise = Promise.withResolvers<void>();
+    const releasePromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            startedPromise.resolve();
+            await releasePromise;
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account", pollIntervalMs: 1 },
+    );
+
+    await startedPromise.promise;
+
+    const stopped = Promise.resolve(gateway.stopBackgroundSync()).then(() => "stopped" as const);
+    const result = await Promise.race([stopped, Bun.sleep(10).then(() => "blocked" as const)]);
+    release?.();
+    await stopped;
+    await gateway.dispose();
+
+    expect(result).toBe("stopped");
+  });
+
+  test("logs scheduled Bulk account timeouts as recoverable polling warnings", async () => {
+    const logs = captureWarnAndErrorLogs();
+    let calls = 0;
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            calls += 1;
+            const error = new Error("HTTP request timed out: POST /account");
+            error.name = "BulkTimeoutError";
+            throw error;
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account", pollIntervalMs: 1 },
+    );
+
+    try {
+      await Bun.sleep(10);
+      await gateway.dispose();
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toBeGreaterThan(0);
+    expect(
+      logs.warnMessages.some((message) => message.includes("fills_poll_transient_failed")),
+    ).toBe(true);
+    expect(logs.errorMessages).toEqual([]);
   });
 
   test("does not report Bulk partial fills as fully filled orders", async () => {
@@ -694,7 +1018,7 @@ describe("BulkOrderGateway", () => {
 
     expect(fills).toEqual([
       {
-        id: "maker-sell:1700000000000000000",
+        id: "maker-sell:unknown:1700000000000000000",
         venue: "bulk",
         market: "ETH-USD",
         side: "sell",
@@ -705,9 +1029,10 @@ describe("BulkOrderGateway", () => {
         filledAt: 1_700_000_000_000,
         quoteId: "maker-sell",
         markPriceAtFill: 100,
+        makerTaker: "maker",
       },
       {
-        id: "taker-sell:1700000001000000000",
+        id: "taker-sell:unknown:1700000001000000000",
         venue: "bulk",
         market: "ETH-USD",
         side: "sell",
@@ -718,6 +1043,115 @@ describe("BulkOrderGateway", () => {
         filledAt: 1_700_000_001_000,
         quoteId: "taker-sell",
         markPriceAtFill: 99,
+        makerTaker: "taker",
+      },
+    ]);
+  });
+
+  test("ignores fills older than the startup watermark", async () => {
+    const client = {
+      trade: {},
+      account: {
+        async fills() {
+          return [
+            {
+              maker: "account",
+              taker: "other",
+              orderIdMaker: "old-maker",
+              isBuy: true,
+              symbol: "ETH-USD",
+              amount: 0.1,
+              price: 100,
+              timestamp: 1_700_000_000_000 * 1_000_000,
+            },
+            {
+              maker: "account",
+              taker: "other",
+              orderIdMaker: "new-maker",
+              isBuy: true,
+              symbol: "ETH-USD",
+              amount: 0.2,
+              price: 101,
+              timestamp: 1_700_000_001_000 * 1_000_000,
+            },
+          ];
+        },
+      },
+    };
+    const gateway = new BulkOrderGateway(client, {
+      market: "ETH-USD",
+      accountId: "account",
+      ignoreFillsBeforeMs: 1_700_000_000_500,
+    });
+    const fills: unknown[] = [];
+    gateway.subscribeFills((fill) => {
+      fills.push(fill);
+    });
+
+    await gateway.pollFillsOnce();
+
+    expect(fills).toMatchObject([
+      {
+        quoteId: "new-maker",
+        qty: 0.2,
+        filledAt: 1_700_000_001_000,
+      },
+    ]);
+  });
+
+  test("keeps split fills with the same account order and timestamp distinct", async () => {
+    const client = {
+      trade: {},
+      account: {
+        async fills() {
+          return [
+            {
+              maker: "maker-a",
+              taker: "account",
+              orderIdMaker: "maker-a-order",
+              orderIdTaker: "taker-order",
+              isBuy: true,
+              symbol: "BTC-USD",
+              amount: 0.25,
+              price: 100,
+              timestamp: 1_700_000_000_000 * 1_000_000,
+            },
+            {
+              maker: "maker-b",
+              taker: "account",
+              orderIdMaker: "maker-b-order",
+              orderIdTaker: "taker-order",
+              isBuy: true,
+              symbol: "BTC-USD",
+              amount: 2.5,
+              price: 100,
+              timestamp: 1_700_000_000_000 * 1_000_000,
+            },
+          ];
+        },
+      },
+    };
+    const gateway = new BulkOrderGateway(client, {
+      market: "BTC-USD",
+      accountId: "account",
+    });
+    const fills: unknown[] = [];
+    gateway.subscribeFills((fill) => {
+      fills.push(fill);
+    });
+
+    await gateway.pollFillsOnce();
+
+    expect(fills).toMatchObject([
+      {
+        id: "taker-order:maker-a-order:1700000000000000000",
+        quoteId: "taker-order",
+        qty: 0.25,
+      },
+      {
+        id: "taker-order:maker-b-order:1700000000000000000",
+        quoteId: "taker-order",
+        qty: 2.5,
       },
     ]);
   });
