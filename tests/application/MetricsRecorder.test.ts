@@ -1,6 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
-import { MetricsRecorder } from "../../src/application/MetricsRecorder.ts";
+import {
+  MetricsBuffer,
+  MetricsFlushLoop,
+  MetricsRecorder,
+} from "../../src/application/MetricsRecorder.ts";
 import type { Fill } from "../../src/domain/entities/Fill.ts";
 import type {
   AccountStateObservationFact,
@@ -73,7 +77,268 @@ class MemoryMetricsRepository implements IMetricsRepository {
   }
 }
 
+class BlockingMetricsRepository extends MemoryMetricsRepository {
+  override async recordAccountStateObservation(
+    observation: AccountStateObservationFact,
+  ): Promise<void> {
+    this.accounts.push(observation);
+    return new Promise(() => {});
+  }
+
+  override async recordTradeFill(fill: TradeFillFact): Promise<void> {
+    this.fills.push(fill);
+    return new Promise(() => {});
+  }
+}
+
+async function resolvesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+  return await Promise.race([promise.then(() => true), Bun.sleep(timeoutMs).then(() => false)]);
+}
+
+function fill(input: {
+  id: string;
+  side: Fill["side"];
+  price: number;
+  qty: number;
+  fee: number;
+}): Fill {
+  return {
+    id: input.id,
+    venue: "bulk",
+    market: "BTC-USD",
+    side: input.side,
+    price: input.price,
+    qty: input.qty,
+    fee: input.fee,
+    tradePnl: 0,
+    filledAt: 1000,
+  };
+}
+
 describe("MetricsRecorder", () => {
+  test("recordQuote returns without waiting for repository writes", async () => {
+    const repository = new BlockingMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-nonblocking-quote",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    const settled = await resolvesWithin(
+      recorder.recordQuote(
+        {
+          market: "BTC-USD",
+          bestBid: 99,
+          bestAsk: 101,
+          microPrice: 100,
+          markPrice: 100,
+          timestamp: 1234,
+          marginRatio: 0.8,
+        },
+        0,
+        {
+          bid: 99.5,
+          ask: 100.5,
+          bidSize: 0.1,
+          askSize: 0.2,
+          policy: "GTC",
+          fairPrice: 100,
+          sigma: 0.01,
+        },
+      ),
+      20,
+    );
+
+    expect(settled).toBe(true);
+    expect(repository.accounts).toHaveLength(0);
+  });
+
+  test("recordFill updates runtime risk before blocking repository writes finish", async () => {
+    const repository = new BlockingMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-nonblocking-fill",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    expect(
+      await resolvesWithin(
+        recorder.recordFill(fill({ id: "fill-open", side: "buy", price: 100, qty: 1, fee: 0.1 })),
+        20,
+      ),
+    ).toBe(true);
+
+    expect(recorder.getRuntimeRisk()).toMatchObject({
+      netPnlUsd: -0.1,
+      peakNetPnlUsd: -0.1,
+      maxDrawdownUsd: 0,
+    });
+    expect(repository.fills).toHaveLength(0);
+  });
+
+  test("metrics buffer drops normal operations before critical operations", async () => {
+    const buffer = new MetricsBuffer({ normalCapacity: 1, criticalCapacity: 2 });
+    const calls: string[] = [];
+
+    buffer.enqueue({
+      type: "orderbook_snapshot",
+      priority: "normal",
+      run: async () => {
+        calls.push("snapshot");
+      },
+    });
+    buffer.enqueue({
+      type: "quote_decision",
+      priority: "normal",
+      run: async () => {
+        calls.push("quote");
+      },
+    });
+    buffer.enqueue({
+      type: "trade_fill",
+      priority: "critical",
+      run: async () => {
+        calls.push("fill");
+      },
+    });
+
+    const batch = buffer.drainBatch(10);
+    for (const operation of batch) {
+      await operation.run();
+    }
+
+    expect(calls).toEqual(["fill", "quote"]);
+    expect(buffer.takeDropSummary().dropped).toEqual({ orderbook_snapshot: 1 });
+  });
+
+  test("metrics buffer preserves critical operations by dropping one normal operation", async () => {
+    const buffer = new MetricsBuffer({ normalCapacity: 2, criticalCapacity: 2 });
+    const calls: string[] = [];
+    const enqueue = (type: Parameters<MetricsBuffer["enqueue"]>[0]["type"], label: string) => {
+      buffer.enqueue({
+        type,
+        priority:
+          type === "trade_fill" || type === "submitted_order" || type === "order_lifecycle"
+            ? "critical"
+            : "normal",
+        run: async () => {
+          calls.push(label);
+        },
+      });
+    };
+
+    enqueue("orderbook_snapshot", "normal-1");
+    enqueue("quote_decision", "normal-2");
+    enqueue("trade_fill", "critical-1");
+    enqueue("submitted_order", "critical-2");
+    enqueue("order_lifecycle", "critical-3");
+
+    const batch = buffer.drainBatch(10);
+    for (const operation of batch) {
+      await operation.run();
+    }
+
+    expect(calls).toEqual(["critical-1", "critical-2", "critical-3", "normal-2"]);
+    expect(buffer.takeDropSummary()).toEqual({
+      dropped: { orderbook_snapshot: 1 },
+      criticalBacklogExceeded: 1,
+    });
+  });
+
+  test("metrics flush loop prevents reentry and limits a flush to the batch size", async () => {
+    const buffer = new MetricsBuffer({ normalCapacity: 10, criticalCapacity: 10 });
+    let releaseFirst: (() => void) | undefined;
+    const firstStarted = Promise.withResolvers<void>();
+    const calls: number[] = [];
+    buffer.enqueue({
+      type: "orderbook_snapshot",
+      priority: "normal",
+      run: async () => {
+        calls.push(1);
+        firstStarted.resolve();
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      },
+    });
+    buffer.enqueue({
+      type: "quote_decision",
+      priority: "normal",
+      run: async () => {
+        calls.push(2);
+      },
+    });
+    buffer.enqueue({
+      type: "runtime_health",
+      priority: "normal",
+      run: async () => {
+        calls.push(3);
+      },
+    });
+    const loop = new MetricsFlushLoop(buffer, { batchSize: 2, intervalMs: 10 });
+
+    const firstFlush = loop.flushOnce();
+    await firstStarted.promise;
+    await loop.flushOnce();
+    releaseFirst?.();
+    await firstFlush;
+
+    expect(calls).toEqual([1, 2]);
+    expect(buffer.pendingCount()).toBe(1);
+  });
+
+  test("metrics flush loop drain returns on timeout while a write is still in flight", async () => {
+    const buffer = new MetricsBuffer({ normalCapacity: 10, criticalCapacity: 10 });
+    buffer.enqueue({
+      type: "orderbook_snapshot",
+      priority: "normal",
+      run: async () => new Promise(() => {}),
+    });
+    const loop = new MetricsFlushLoop(buffer, { batchSize: 1, intervalMs: 10 });
+
+    const settled = await resolvesWithin(loop.drainAndStop(5), 30);
+
+    expect(settled).toBe(true);
+  });
+
+  test("tracks live run net PnL and drawdown for runtime risk guards", async () => {
+    const repository = new MemoryMetricsRepository();
+    const recorder = new MetricsRecorder(repository, {
+      runId: "run-risk",
+      mode: "live",
+      venue: "bulk",
+      capitalMode: "beta_mock",
+      market: "BTC-USD",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "bulk" },
+      gitDirty: false,
+    });
+
+    await recorder.recordFill(fill({ id: "fill-buy", side: "buy", price: 100, qty: 1, fee: 0.1 }));
+    await recorder.recordFill(
+      fill({ id: "fill-profit", side: "sell", price: 110, qty: 0.5, fee: 0.1 }),
+    );
+    await recorder.recordFill(
+      fill({ id: "fill-loss", side: "sell", price: 90, qty: 0.5, fee: 0.1 }),
+    );
+
+    expect(recorder.getRuntimeRisk()).toEqual({
+      netPnlUsd: expect.closeTo(-0.3),
+      peakNetPnlUsd: expect.closeTo(4.8),
+      maxDrawdownUsd: expect.closeTo(5.1),
+    });
+  });
+
   test("records run, orderbook, account, and fill facts", async () => {
     const repository = new MemoryMetricsRepository();
     const recorder = new MetricsRecorder(repository, {
@@ -170,6 +435,7 @@ describe("MetricsRecorder", () => {
       filledAt: 1000,
       makerTaker: "maker",
     });
+    await recorder.drainAndStop();
 
     expect(repository.fills[0]).toMatchObject({
       id: "fill-maker",
@@ -215,6 +481,7 @@ describe("MetricsRecorder", () => {
       status: "open",
       rawSummary: { status: "resting" },
     });
+    await recorder.drainAndStop();
 
     expect(repository.orders).toEqual([
       expect.objectContaining({
@@ -292,6 +559,7 @@ describe("MetricsRecorder", () => {
       latencyMs: 30,
       rawSummary: { request: "cancelAll" },
     });
+    await recorder.drainAndStop();
 
     expect(repository.orders.at(-1)).toMatchObject({
       id: "run-cancel-all:cycle-1:bid:0",
@@ -343,6 +611,7 @@ describe("MetricsRecorder", () => {
       status: "cancelled",
       rawSummary: { status: "cancelled" },
     });
+    await recorder.drainAndStop();
 
     expect(repository.orders.at(-1)).toMatchObject({
       id: "run-terminal-ack:client-cancelled",
@@ -399,6 +668,7 @@ describe("MetricsRecorder", () => {
       filledAt: 1000,
       quoteId: "venue-fill-later",
     });
+    await recorder.drainAndStop();
 
     expect(repository.fills.at(-1)).toMatchObject({
       id: "fill-late",
@@ -442,6 +712,7 @@ describe("MetricsRecorder", () => {
       },
       "cycle-quote",
     );
+    await recorder.drainAndStop();
 
     expect(repository.accounts).toEqual([
       expect.objectContaining({
@@ -500,6 +771,7 @@ describe("MetricsRecorder", () => {
     await recorder.recordRuntimeHealth("warn", "quote_side_skipped", "Skipped quote side", {
       reason: "stale_touch",
     });
+    await recorder.drainAndStop();
 
     expect(repository.runtimeHealth).toEqual([
       expect.objectContaining({
@@ -560,6 +832,7 @@ describe("MetricsRecorder", () => {
       tradePnl: 0,
       filledAt: 3000,
     });
+    await recorder.drainAndStop();
 
     expect(repository.fills).toEqual([
       expect.objectContaining({ id: "buy-open", tradePnl: 0 }),

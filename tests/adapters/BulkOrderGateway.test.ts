@@ -1198,6 +1198,170 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("does not retain ignored historical fill ids in the long-running dedupe cache", async () => {
+    const oldTimestamp = 1_700_000_000_000;
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            return [
+              {
+                maker: "account",
+                taker: "other",
+                orderIdMaker: "old-maker",
+                orderIdTaker: "old-taker",
+                isBuy: true,
+                symbol: "BTC-USD",
+                amount: 0.1,
+                price: 100,
+                timestamp: oldTimestamp,
+              },
+            ];
+          },
+        },
+      },
+      {
+        market: "BTC-USD",
+        accountId: "account",
+        ignoreFillsBeforeMs: oldTimestamp + 1,
+      },
+    );
+
+    await gateway.pollFillsOnce();
+
+    expect((gateway as unknown as { seenFillIds: { size: number } }).seenFillIds.size).toBe(0);
+  });
+
+  test("bounds the seen fill id cache during long-running polling", async () => {
+    let poll = 0;
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            poll += 1;
+            return [
+              {
+                maker: "account",
+                taker: "other",
+                orderIdMaker: `maker-${poll}`,
+                orderIdTaker: `taker-${poll}`,
+                isBuy: true,
+                symbol: "BTC-USD",
+                amount: 0.1,
+                price: 100,
+                timestamp: 1_700_000_000_000 + poll,
+              },
+            ];
+          },
+        },
+      },
+      {
+        market: "BTC-USD",
+        accountId: "account",
+        maxSeenFillIds: 2,
+      },
+    );
+
+    await gateway.pollFillsOnce();
+    await gateway.pollFillsOnce();
+    await gateway.pollFillsOnce();
+
+    expect((gateway as unknown as { seenFillIds: { size: number } }).seenFillIds.size).toBe(2);
+  });
+
+  test("evicts oldest fill timestamps when the seen fill id cache is full", async () => {
+    const fills = [
+      { orderIdMaker: "newest-maker", timestamp: 1_700_000_003_000 },
+      { orderIdMaker: "oldest-maker", timestamp: 1_700_000_001_000 },
+      { orderIdMaker: "middle-maker", timestamp: 1_700_000_002_000 },
+    ];
+    let poll = 0;
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            const fill = fills[poll];
+            if (fill === undefined) {
+              throw new Error("unexpected fill poll");
+            }
+            poll += 1;
+            return [
+              {
+                maker: "account",
+                taker: "other",
+                orderIdMaker: fill.orderIdMaker,
+                orderIdTaker: `${fill.orderIdMaker}-taker`,
+                isBuy: true,
+                symbol: "BTC-USD",
+                amount: 0.1,
+                price: 100,
+                timestamp: fill.timestamp,
+              },
+            ];
+          },
+        },
+      },
+      {
+        market: "BTC-USD",
+        accountId: "account",
+        maxSeenFillIds: 2,
+      },
+    );
+
+    await gateway.pollFillsOnce();
+    await gateway.pollFillsOnce();
+    await gateway.pollFillsOnce();
+
+    const seenFillIds = (gateway as unknown as { seenFillIds: Map<string, number> }).seenFillIds;
+    expect([...seenFillIds.keys()]).toEqual([
+      expect.stringContaining("newest-maker"),
+      expect.stringContaining("middle-maker"),
+    ]);
+  });
+
+  test("prunes out-of-order fill ids against the newest observed fill timestamp", async () => {
+    const newestTimestamp = 1_700_000_010_000;
+    const staleTimestamp = newestTimestamp - 2_000;
+    let poll = 0;
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async fills() {
+            poll += 1;
+            return [
+              {
+                maker: "account",
+                taker: "other",
+                orderIdMaker: poll === 1 ? "new-maker" : "stale-maker",
+                orderIdTaker: poll === 1 ? "new-taker" : "stale-taker",
+                isBuy: true,
+                symbol: "BTC-USD",
+                amount: 0.1,
+                price: 100,
+                timestamp: poll === 1 ? newestTimestamp : staleTimestamp,
+              },
+            ];
+          },
+        },
+      },
+      {
+        market: "BTC-USD",
+        accountId: "account",
+        seenFillTtlMs: 1_000,
+      },
+    );
+
+    await gateway.pollFillsOnce();
+    await gateway.pollFillsOnce();
+
+    const seenFillIds = (gateway as unknown as { seenFillIds: Map<string, number> }).seenFillIds;
+    expect([...seenFillIds.keys()]).toEqual([expect.stringContaining("new-maker")]);
+  });
+
   test("keeps split fills with the same account order and timestamp distinct", async () => {
     const client = {
       trade: {},

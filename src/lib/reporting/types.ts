@@ -1,4 +1,4 @@
-export type ReportSide = "buy" | "sell";
+type ReportSide = "buy" | "sell";
 
 export interface ReportFill {
   id: string;

@@ -21,6 +21,11 @@ connections:
     # Bulk beta mock account currently reports 50x leverage. Position/risk caps
     # remain bot-side; this avoids fail-closed startup during volume canaries.
     maxLeverage: 50
+    # Recover quote-critical market data before GuardRisk's 750ms book stale gate,
+    # then reconnect WS if REST refresh keeps masking a silent subscription.
+    marketRestRefreshAfterMs: 600
+    marketStaleRefreshIntervalMs: 250
+    marketWsReconnectAfterMs: 5000
 
 quoteEngine:
   markWeight: 0.25
@@ -55,6 +60,7 @@ quoteEngine:
     minAverageMarkoutBps: 0
     minSamples: 20
     lookbackFills: 100
+    maxFillAgeMs: 900000
     horizonsSec: [5, 30, 300]
   strategy:
     type: avellaneda-stoikov

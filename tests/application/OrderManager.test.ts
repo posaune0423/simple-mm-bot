@@ -167,6 +167,57 @@ describe("OrderManager", () => {
     expect(calls).toEqual(["place:quote-1", "place:quote-3"]);
   });
 
+  test("exposes tracked order and quote cooldown state for runtime diagnostics", async () => {
+    let nowMs = 1_000;
+    const gateway: IOrderGateway = {
+      async place(order) {
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel() {},
+      async cancelAll() {},
+      async getOpenOrders() {
+        return [];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway, {
+      exchangeDropQuoteCooldownMs: 1_500,
+      nowMs: () => nowMs,
+    });
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-1" })]);
+    expect(manager.state()).toEqual(
+      expect.objectContaining({
+        trackedOrderCount: 1,
+        quoteCooldownUntilMs: 0,
+        quoteCooldownRemainingMs: 0,
+      }),
+    );
+
+    await manager.reconcile([quoteOrder({ clientOrderId: "quote-2" })]);
+    expect(manager.state()).toEqual(
+      expect.objectContaining({
+        trackedOrderCount: 0,
+        quoteCooldownUntilMs: 2_500,
+        quoteCooldownRemainingMs: 1_500,
+      }),
+    );
+
+    nowMs = 2_501;
+    expect(manager.state()).toEqual(
+      expect.objectContaining({
+        quoteCooldownUntilMs: 2_500,
+        quoteCooldownRemainingMs: 0,
+      }),
+    );
+  });
+
   test("does not delay reduce placements after tracked exchange orders disappear", async () => {
     const calls: string[] = [];
     const gateway: IOrderGateway = {
@@ -287,11 +338,13 @@ describe("OrderManager", () => {
     await manager.reconcile([quoteOrder({ clientOrderId: "quote-1" })]);
 
     await expectUnknownStateError(manager.reconcile([]));
-    expect(manager.state()).toEqual({
-      unknownOrderState: true,
-      cancelFailures: 1,
-      unknownOrderKeys: ["bid"],
-    });
+    expect(manager.state()).toEqual(
+      expect.objectContaining({
+        unknownOrderState: true,
+        cancelFailures: 1,
+        unknownOrderKeys: ["bid"],
+      }),
+    );
     expect(calls).toEqual(["place:quote-1", "cancel:quote-1", "cancelAll"]);
   });
 
@@ -335,11 +388,13 @@ describe("OrderManager", () => {
     const manager = new OrderManager(gateway);
 
     await expectUnknownStateError(manager.reconcile([]));
-    expect(manager.state()).toEqual({
-      unknownOrderState: true,
-      cancelFailures: 1,
-      unknownOrderKeys: ["untracked_exchange_order:orphan"],
-    });
+    expect(manager.state()).toEqual(
+      expect.objectContaining({
+        unknownOrderState: true,
+        cancelFailures: 1,
+        unknownOrderKeys: ["untracked_exchange_order:orphan"],
+      }),
+    );
     expect(calls).toEqual(["cancel:orphan", "cancelAll"]);
   });
 

@@ -2,6 +2,7 @@ type ErrorLike = {
   name?: unknown;
   status?: unknown;
   message?: unknown;
+  response?: unknown;
 };
 
 interface RetryOptions {
@@ -17,13 +18,43 @@ export function isTransientBulkError(error: unknown): boolean {
     if (errorLike.name === "BulkTimeoutError") {
       return true;
     }
-    if (errorLike.status === 408 || errorLike.status === "408") {
+    const status = toHttpStatus(errorLike);
+    if (status === 408) {
       return true;
     }
   }
 
   const message = String(error);
   return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
+}
+
+function toHttpStatus(errorLike: ErrorLike): number | undefined {
+  const maybeStatus = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isInteger(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isInteger(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+
+  const directStatus = maybeStatus(errorLike.status);
+  if (directStatus !== undefined) {
+    return directStatus;
+  }
+
+  if (
+    errorLike.response === undefined ||
+    errorLike.response === null ||
+    typeof errorLike.response !== "object"
+  ) {
+    return undefined;
+  }
+
+  const responseStatus = maybeStatus((errorLike.response as { status?: unknown }).status);
+  return responseStatus;
 }
 
 export async function retryTransientBulk<T>(

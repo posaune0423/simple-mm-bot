@@ -1,6 +1,5 @@
 import type { QuoteSideQuality, QuoteQualityHorizon } from "./QuoteQuality.ts";
 import type { OrderSide } from "./entities/Quote.ts";
-import { isFlatPositionQty } from "./entities/Position.ts";
 import type { QuoteControls, QuoteSideControls } from "./QuoteControls.ts";
 
 export interface QuoteQualityGateConfig {
@@ -8,6 +7,7 @@ export interface QuoteQualityGateConfig {
   minAverageMarkoutBps: number;
   minSamples: number;
   lookbackFills?: number;
+  maxFillAgeMs?: number;
   horizonsSec: number[];
 }
 
@@ -20,7 +20,7 @@ export class QuoteControlPolicy {
 
   controlsFor(
     quality: ReadonlyArray<QuoteSideQuality>,
-    context: QuoteControlContext = {},
+    _context: QuoteControlContext = {},
   ): QuoteControls {
     if (!this.config.enabled) {
       return {};
@@ -35,9 +35,8 @@ export class QuoteControlPolicy {
       decisions.push(decision);
     }
 
-    const activeDecisions = avoidFullQuoteBlackout(decisions, hasInventory(context.positionQty));
     const controls: QuoteControls = {};
-    for (const decision of activeDecisions) {
+    for (const decision of decisions) {
       if (decision.side === "buy") {
         controls.bid = decision.control;
       } else {
@@ -74,7 +73,6 @@ export class QuoteControlPolicy {
       ? undefined
       : {
           side,
-          worstAverageMarkoutBps: Math.min(...failures.map((failure) => failure.averageMarkoutBps)),
           control: {
             disableOpen: true,
             reasonTags: failures.map((failure) => `quality_gate:${side}:${failure.reason}`),
@@ -86,32 +84,8 @@ export class QuoteControlPolicy {
 interface SideControlDecision {
   side: OrderSide;
   control: QuoteSideControls;
-  worstAverageMarkoutBps: number;
-}
-
-function avoidFullQuoteBlackout(
-  decisions: ReadonlyArray<SideControlDecision>,
-  hasReduceInventorySide: boolean,
-): SideControlDecision[] {
-  const bidDecision = decisions.find((decision) => decision.side === "buy");
-  const askDecision = decisions.find((decision) => decision.side === "sell");
-  if (bidDecision === undefined || askDecision === undefined) {
-    return [...decisions];
-  }
-  if (hasReduceInventorySide) {
-    return [...decisions];
-  }
-
-  if (bidDecision.worstAverageMarkoutBps >= askDecision.worstAverageMarkoutBps) {
-    return decisions.filter((decision) => decision.side !== "buy");
-  }
-  return decisions.filter((decision) => decision.side !== "sell");
 }
 
 function formatThreshold(value: number): string {
   return Number.isInteger(value) ? value.toFixed(0) : String(value);
-}
-
-function hasInventory(positionQty: number | undefined): boolean {
-  return positionQty !== undefined && !isFlatPositionQty(positionQty);
 }

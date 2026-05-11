@@ -9,7 +9,7 @@ import type { AppError } from "./errors.ts";
 import { formatAppError } from "./errors.ts";
 import { logger } from "./logger.ts";
 
-export interface FatalErrorSlackContext {
+interface FatalErrorSlackContext {
   mode?: string;
   venue?: string;
   market?: string;

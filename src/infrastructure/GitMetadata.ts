@@ -1,4 +1,4 @@
-export interface GitMetadata {
+interface GitMetadata {
   gitSha?: string;
   gitDirty: boolean;
 }

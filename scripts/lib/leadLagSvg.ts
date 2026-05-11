@@ -1,6 +1,6 @@
 import type { OhlcvBar } from "./leadLagMath.ts";
 
-export interface LineChartOptions {
+interface LineChartOptions {
   title: string;
   width?: number;
   height?: number;

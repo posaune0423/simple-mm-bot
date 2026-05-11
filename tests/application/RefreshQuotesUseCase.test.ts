@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { QuoteEngine } from "../../src/domain/QuoteEngine.ts";
 import { FairPriceCalculator } from "../../src/domain/FairPriceCalculator.ts";
@@ -84,6 +84,131 @@ function createMetricsRecorderProbe() {
 }
 
 describe("RefreshQuotesUseCase", () => {
+  test("records quote build summary with level intents and control reasons", async () => {
+    const now = Date.now();
+    const snapshots = Array.from({ length: 5 }, () => freshSnapshot(now));
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0.25, avgEntry: 100_000, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0.25, avgEntry: 100_000, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_970,
+          ask: 100_030,
+          bidSize: 0,
+          askSize: 0.01,
+          bidIntent: "disabled" as const,
+          askIntent: "reduce_inventory" as const,
+          bidControlReasons: ["quality_gate:buy:5s_markout_below_0bps"],
+          askControlReasons: [],
+          levels: [
+            {
+              level: 0,
+              halfSpreadBps: 3,
+              bid: 99_970,
+              ask: 100_030,
+              bidSize: 0,
+              askSize: 0.01,
+              bidIntent: "disabled" as const,
+              askIntent: "reduce_inventory" as const,
+              bidControlReasons: ["quality_gate:buy:5s_markout_below_0bps"],
+              askControlReasons: [],
+            },
+            {
+              level: 1,
+              halfSpreadBps: 6,
+              bid: 99_940,
+              ask: 100_060,
+              bidSize: 0,
+              askSize: 0,
+              bidIntent: "disabled" as const,
+              askIntent: "disabled" as const,
+              bidControlReasons: ["open_notional_cap"],
+              askControlReasons: ["reduce_inventory_cap"],
+            },
+          ],
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+    const metrics = createMetricsRecorderProbe();
+
+    await new RefreshQuotesUseCase(
+      marketFeed,
+      orderGateway,
+      positions,
+      quoteEngine,
+      metrics.recorder,
+    ).execute();
+
+    const event = metrics.runtimeHealth.find((entry) => entry.code === "quote_build_summary");
+    expect(event).toMatchObject({
+      level: "info",
+      code: "quote_build_summary",
+      message: "Quote build summary captured",
+    });
+    expect(event?.rawSummary).toEqual(
+      expect.objectContaining({
+        market: "BTC-USD",
+        positionQty: 0.25,
+        policy: "GTC",
+        quoteCycleId: expect.any(String),
+        levels: expect.arrayContaining([
+          expect.objectContaining({
+            level: 0,
+            bidSize: 0,
+            askSize: 0.01,
+            bidIntent: "disabled",
+            askIntent: "reduce_inventory",
+            bidControlReasons: ["quality_gate:buy:5s_markout_below_0bps"],
+            askControlReasons: [],
+          }),
+          expect.objectContaining({
+            level: 1,
+            bidSize: 0,
+            askSize: 0,
+            bidIntent: "disabled",
+            askIntent: "disabled",
+            bidControlReasons: ["open_notional_cap"],
+            askControlReasons: ["reduce_inventory_cap"],
+          }),
+        ]),
+      }),
+    );
+  });
+
   test("records one quote freshness runtime health event per refresh cycle", async () => {
     const now = Date.now();
     const snapshots = [
@@ -150,13 +275,13 @@ describe("RefreshQuotesUseCase", () => {
       metrics.recorder,
     ).execute();
 
-    expect(metrics.runtimeHealth).toHaveLength(1);
-    expect(metrics.runtimeHealth[0]).toMatchObject({
+    const event = metrics.runtimeHealth.find((entry) => entry.code === "quote_cycle_freshness");
+    expect(event).toMatchObject({
       level: "info",
       code: "quote_cycle_freshness",
       message: "Quote cycle freshness measured",
     });
-    expect(metrics.runtimeHealth[0]?.rawSummary).toEqual(
+    expect(event?.rawSummary).toEqual(
       expect.objectContaining({
         qualityGateMs: expect.any(Number),
         quoteComputeMs: expect.any(Number),
@@ -173,6 +298,10 @@ describe("RefreshQuotesUseCase", () => {
         targetOrderCount: 2,
         activeOrderCount: 2,
         skippedCount: 0,
+        orderManagerState: expect.objectContaining({
+          trackedOrderCount: 2,
+          quoteCooldownRemainingMs: 0,
+        }),
         quoteCycleId: expect.any(String),
       }),
     );
@@ -344,7 +473,12 @@ describe("RefreshQuotesUseCase", () => {
       },
     ).execute();
 
-    expect(runtimeHealth[0]?.rawSummary).toEqual(
+    const event = runtimeHealth.find((entry) => {
+      return (
+        (entry.rawSummary as { qualityGateMs?: unknown } | undefined)?.qualityGateMs !== undefined
+      );
+    });
+    expect(event?.rawSummary).toEqual(
       expect.objectContaining({
         qualityGateMs: expect.any(Number),
         recordQuoteMs: expect.any(Number),
@@ -352,7 +486,7 @@ describe("RefreshQuotesUseCase", () => {
         totalRefreshMs: expect.any(Number),
       }),
     );
-    const payload = runtimeHealth[0]!.rawSummary as {
+    const payload = event!.rawSummary as {
       qualityGateMs: number;
       recordQuoteMs: number;
       reconcileMs: number;
@@ -453,6 +587,98 @@ describe("RefreshQuotesUseCase", () => {
         disableOpen: true,
         reasonTags: ["quality_gate:buy:30s_markout_below_0bps"],
       },
+    });
+  });
+
+  test("bounds quote quality history by fill age when configured", async () => {
+    const now = spyOn(Date, "now");
+    now.mockReturnValue(10_000);
+    let qualityQuery: unknown;
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        return {
+          market: "BTC-USD",
+          bestBid: 99_990,
+          bestAsk: 100_010,
+          microPrice: 100_000,
+          markPrice: 100_000,
+          timestamp: 10_000,
+          marginRatio: 1,
+        };
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_900,
+          ask: 100_100,
+          bidSize: 0,
+          askSize: 0,
+          bidIntent: "disabled" as const,
+          askIntent: "disabled" as const,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    };
+    const qualityRepository = {
+      async getRecentSideQuality(query: unknown) {
+        qualityQuery = query;
+        return [];
+      },
+    };
+
+    try {
+      await new RefreshQuotesUseCase(
+        marketFeed,
+        orderGateway,
+        positions,
+        quoteEngine as never,
+        undefined,
+        qualityRepository,
+        {
+          enabled: true,
+          minAverageMarkoutBps: 0,
+          minSamples: 2,
+          lookbackFills: 100,
+          maxFillAgeMs: 3_000,
+          horizonsSec: [5],
+        },
+      ).execute();
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(qualityQuery).toEqual({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      minFilledAt: 7_000,
+      horizonsSec: [5],
     });
   });
 

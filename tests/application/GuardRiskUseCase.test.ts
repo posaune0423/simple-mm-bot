@@ -29,7 +29,17 @@ describe("GuardRiskUseCase", () => {
       },
     );
 
-    expect(await useCase.execute()).toBe("PAUSE_QUOTING");
+    expect(await useCase.execute()).toEqual(
+      expect.objectContaining({
+        state: "PAUSE_QUOTING",
+        reason: "book_stale",
+        market: "BTC-USD",
+        bookAgeMs: expect.any(Number),
+        tickerAgeMs: expect.any(Number),
+        accountAgeMs: 0,
+        positionAgeMs: 0,
+      }),
+    );
   });
 
   test("pauses quoting when the ticker component is stale", async () => {
@@ -47,7 +57,12 @@ describe("GuardRiskUseCase", () => {
       },
     );
 
-    expect(await useCase.execute()).toBe("PAUSE_QUOTING");
+    expect(await useCase.execute()).toEqual(
+      expect.objectContaining({
+        state: "PAUSE_QUOTING",
+        reason: "ticker_stale",
+      }),
+    );
   });
 
   test("pauses quoting when account state is stale", async () => {
@@ -67,7 +82,12 @@ describe("GuardRiskUseCase", () => {
       },
     );
 
-    expect(await useCase.execute()).toBe("PAUSE_QUOTING");
+    expect(await useCase.execute()).toEqual(
+      expect.objectContaining({
+        state: "PAUSE_QUOTING",
+        reason: "account_stale",
+      }),
+    );
   });
 
   test("pauses quoting when position state is stale", async () => {
@@ -87,7 +107,12 @@ describe("GuardRiskUseCase", () => {
       },
     );
 
-    expect(await useCase.execute()).toBe("PAUSE_QUOTING");
+    expect(await useCase.execute()).toEqual(
+      expect.objectContaining({
+        state: "PAUSE_QUOTING",
+        reason: "position_stale",
+      }),
+    );
   });
 
   test("keeps legacy snapshots without component timestamps on the margin path", async () => {
@@ -96,7 +121,11 @@ describe("GuardRiskUseCase", () => {
       mmrBuffer: 0.05,
     });
 
-    expect(await useCase.execute()).toBe("OK");
+    expect(await useCase.execute()).toEqual(
+      expect.objectContaining({
+        state: "OK",
+      }),
+    );
   });
 });
 

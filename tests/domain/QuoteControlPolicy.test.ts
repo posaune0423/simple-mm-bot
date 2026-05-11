@@ -57,7 +57,7 @@ describe("QuoteControlPolicy", () => {
     expect(underSampled.controlsFor(quality)).toEqual({});
   });
 
-  test("keeps the less toxic side quoteable when both sides fail the gate", () => {
+  test("gates both open sides when both sides fail the gate", () => {
     const policy = new QuoteControlPolicy({
       enabled: true,
       minAverageMarkoutBps: 0,
@@ -79,14 +79,20 @@ describe("QuoteControlPolicy", () => {
       },
     ]);
 
-    expect(controls.bid).toBeUndefined();
+    expect(controls.bid).toEqual({
+      disableOpen: true,
+      reasonTags: [
+        "quality_gate:buy:5s_markout_below_0bps",
+        "quality_gate:buy:30s_markout_below_0bps",
+      ],
+    });
     expect(controls.ask).toEqual({
       disableOpen: true,
       reasonTags: ["quality_gate:sell:5s_markout_below_0bps"],
     });
   });
 
-  test("keeps one deterministic side quoteable when both failed sides tie", () => {
+  test("gates both open sides when both failed sides tie", () => {
     const policy = new QuoteControlPolicy({
       enabled: true,
       minAverageMarkoutBps: 0,
@@ -105,7 +111,10 @@ describe("QuoteControlPolicy", () => {
       },
     ]);
 
-    expect(controls.bid).toBeUndefined();
+    expect(controls.bid).toEqual({
+      disableOpen: true,
+      reasonTags: ["quality_gate:buy:5s_markout_below_0bps"],
+    });
     expect(controls.ask).toEqual({
       disableOpen: true,
       reasonTags: ["quality_gate:sell:5s_markout_below_0bps"],

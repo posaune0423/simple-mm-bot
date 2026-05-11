@@ -18,20 +18,24 @@ export interface ManagedOrderRequest extends OrderRequest {
   timeInForce: OrderTimeInForce;
 }
 
-export interface ActiveManagedOrder {
+interface ActiveManagedOrder {
   key: string;
   side: OrderSide;
   order: PlacedOrder;
   replaced: boolean;
 }
 
-export interface OrderManagerState {
+interface OrderManagerState {
   unknownOrderState: boolean;
   cancelFailures: number;
   unknownOrderKeys: string[];
+  trackedOrderCount: number;
+  trackedOrderKeys: string[];
+  quoteCooldownUntilMs: number;
+  quoteCooldownRemainingMs: number;
 }
 
-export class OrderManagerUnknownStateError extends Error {
+class OrderManagerUnknownStateError extends Error {
   constructor(
     message: string,
     override readonly cause: unknown,
@@ -64,10 +68,15 @@ export class OrderManager {
   }
 
   state(): OrderManagerState {
+    const nowMs = this.options.nowMs();
     return {
       unknownOrderState: this.unknownOrders.size > 0,
       cancelFailures: this.cancelFailures,
       unknownOrderKeys: [...this.unknownOrders.keys()],
+      trackedOrderCount: this.activeOrders.size,
+      trackedOrderKeys: [...this.activeOrders.keys()],
+      quoteCooldownUntilMs: this.quoteCooldownUntilMs,
+      quoteCooldownRemainingMs: Math.max(0, this.quoteCooldownUntilMs - nowMs),
     };
   }
 

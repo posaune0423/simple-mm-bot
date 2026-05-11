@@ -144,7 +144,20 @@ describe("Bot", () => {
     const healthEvents: Array<{ level: string; code: string; rawSummary?: unknown }> = [];
     const bot = new Bot(
       {
-        guardRisk: { execute: async () => "PAUSE_QUOTING" as const },
+        guardRisk: {
+          execute: async () => ({
+            state: "PAUSE_QUOTING" as const,
+            reason: "position_stale",
+            market: "ETH",
+            marginRatio: null,
+            imrBuffer: 0.1,
+            mmrBuffer: 0.05,
+            bookAgeMs: 100,
+            tickerAgeMs: 200,
+            accountAgeMs: 300,
+            positionAgeMs: 5_001,
+          }),
+        },
         refreshQuotes: {
           execute: async () => {
             throw new Error("should not refresh while paused");
@@ -202,13 +215,166 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(healthEvents).toEqual([
-      {
-        level: "warn",
-        code: "risk_gate_pause_quoting",
-        rawSummary: { tick: 1, riskState: "PAUSE_QUOTING" },
+    expect(healthEvents).toHaveLength(2);
+    expect(healthEvents[0]).toEqual({
+      level: "warn",
+      code: "risk_gate_pause_quoting",
+      rawSummary: {
+        tick: 1,
+        riskState: "PAUSE_QUOTING",
+        reason: "position_stale",
+        market: "ETH",
+        marginRatio: null,
+        imrBuffer: 0.1,
+        mmrBuffer: 0.05,
+        bookAgeMs: 100,
+        tickerAgeMs: 200,
+        accountAgeMs: 300,
+        positionAgeMs: 5_001,
       },
+    });
+    expect(healthEvents[1]).toMatchObject({
+      level: "warn",
+      code: "pause_quote_cancel_all",
+      rawSummary: {
+        tick: 1,
+        riskState: "PAUSE_QUOTING",
+        reason: "position_stale",
+        market: "ETH",
+        success: true,
+      },
+    });
+  });
+
+  test("cancels open orders once when quote refreshing is paused", async () => {
+    const calls: string[] = [];
+    const healthEvents: Array<{ level: string; code: string; rawSummary?: unknown }> = [];
+    const decisions = [
+      {
+        state: "PAUSE_QUOTING" as const,
+        reason: "book_stale",
+        market: "BTC-USD",
+        marginRatio: null,
+        imrBuffer: 0.1,
+        mmrBuffer: 0.05,
+        bookAgeMs: 1_200,
+        tickerAgeMs: 100,
+        accountAgeMs: 100,
+        positionAgeMs: 100,
+      },
+      {
+        state: "PAUSE_QUOTING" as const,
+        reason: "book_stale",
+        market: "BTC-USD",
+        marginRatio: null,
+        imrBuffer: 0.1,
+        mmrBuffer: 0.05,
+        bookAgeMs: 1_300,
+        tickerAgeMs: 120,
+        accountAgeMs: 120,
+        positionAgeMs: 120,
+      },
+      "OK" as const,
+    ];
+    const bot = new Bot(
+      {
+        guardRisk: {
+          execute: async () => {
+            calls.push("guard");
+            return decisions.shift() ?? "OK";
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            calls.push("reduce");
+            return false;
+          },
+        },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("should not place");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      {
+        runId: "run-pause-cancel",
+        start: async () => {},
+        finish: async () => {},
+        recordMarketSnapshot: async () => {},
+        recordRuntimeHealth: async (
+          level: "info" | "warn" | "error",
+          code: string,
+          _message: string,
+          rawSummary?: unknown,
+        ) => {
+          healthEvents.push({ level, code, rawSummary });
+        },
+      } as never,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(3);
+
+    expect(calls).toEqual([
+      "guard",
+      "cancelAll",
+      "reduce",
+      "guard",
+      "reduce",
+      "guard",
+      "reduce",
+      "refresh",
+      "cancelAll",
     ]);
+    expect(healthEvents.map((event) => event.code)).toEqual([
+      "risk_gate_pause_quoting",
+      "pause_quote_cancel_all",
+      "risk_gate_pause_quoting",
+    ]);
+    expect(healthEvents[1]).toMatchObject({
+      level: "warn",
+      code: "pause_quote_cancel_all",
+      rawSummary: {
+        tick: 1,
+        reason: "book_stale",
+        market: "BTC-USD",
+        success: true,
+      },
+    });
   });
 
   test("initializes the live position before placing the first quote", async () => {

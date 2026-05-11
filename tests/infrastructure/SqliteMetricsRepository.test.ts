@@ -655,6 +655,79 @@ describe("SqliteMetricsRepository", () => {
     ]);
   });
 
+  test("excludes quality fills before the requested fill-age boundary", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-quality-age",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 1_000,
+      status: "completed",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "quality-age-5s",
+      runId: "run-quality-age",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 7_000,
+      bestBid: 98,
+      bestAsk: 100,
+      midPrice: 99,
+      microPrice: 99,
+      markPrice: 99,
+      spreadBps: 200,
+      stalenessMs: 0,
+    });
+    await repository.recordSubmittedOrder({
+      id: "quality-age-order",
+      runId: "run-quality-age",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "quality-age-order",
+      venueOrderId: "quality-age-venue",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 100,
+      quantity: 1,
+      timeInForce: "ALO",
+      submittedAt: 500,
+      finalStatus: "filled",
+    });
+    await repository.recordTradeFill({
+      id: "quality-age-fill",
+      runId: "run-quality-age",
+      submittedOrderId: "quality-age-order",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "quality-age-fill",
+      venueOrderId: "quality-age-venue",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1_000,
+    });
+
+    const quality = await repository.getRecentSideQuality({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      minFilledAt: 2_000,
+      horizonsSec: [5],
+    });
+
+    expect(quality).toEqual([]);
+  });
+
   test("computes analysis views from fact tables instead of OHLCV", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);

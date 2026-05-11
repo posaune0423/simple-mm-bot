@@ -1,4 +1,4 @@
-export const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
 export const SQLITE_TABLE_NAMES = [
   "ohlcv",

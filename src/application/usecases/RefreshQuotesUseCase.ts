@@ -10,6 +10,8 @@ import type { IMarketFeed, MarketSnapshot } from "../../domain/ports/IMarketFeed
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { IQuoteQualityRepository } from "../../domain/ports/IQuoteQualityRepository.ts";
+import type { QuoteSideQuality } from "../../domain/QuoteQuality.ts";
+import type { QuoteControls } from "../../domain/QuoteControls.ts";
 import type { MetricsRecorder } from "../MetricsRecorder.ts";
 import {
   OrderManager,
@@ -102,6 +104,9 @@ export class RefreshQuotesUseCase {
         : await this.quoteQualityRepository.getRecentSideQuality({
             market: snapshot.market,
             lookbackFills: this.qualityGate.lookbackFills ?? 100,
+            ...(this.qualityGate.maxFillAgeMs === undefined
+              ? {}
+              : { minFilledAt: Date.now() - this.qualityGate.maxFillAgeMs }),
             horizonsSec: this.qualityGate.horizonsSec,
           });
     const qualityGateMs = Date.now() - qualityGateStartedAt;
@@ -111,9 +116,25 @@ export class RefreshQuotesUseCase {
       positionQty: position.qty,
     });
     const quote = this.quoteEngine.compute(snapshot, position, quoteControls);
+    const levels = quoteLevels(quote);
     const quoteComputeMs = Date.now() - quoteComputeStartedAt;
     logger.info(
-      `refresh_quotes.quote_created market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} policy=${quote.policy} positionQty=${position.qty}`,
+      `refresh_quotes.quote_created market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} bidIntent=${levels[0]?.bidIntent ?? "unknown"} askIntent=${levels[0]?.askIntent ?? "unknown"} bidReasons=${formatReasonTags(levels[0]?.bidControlReasons)} askReasons=${formatReasonTags(levels[0]?.askControlReasons)} levelCount=${levels.length} policy=${quote.policy} positionQty=${position.qty}`,
+    );
+    await this.recordRuntimeHealth(
+      "info",
+      "quote_build_summary",
+      "Quote build summary captured",
+      quoteBuildSummary({
+        market: snapshot.market,
+        quoteCycleId,
+        positionQty: position.qty,
+        quote,
+        levels,
+        quoteControls,
+        quoteQuality,
+        qualityGate: this.qualityGate,
+      }),
     );
     const recordQuoteStartedAt = Date.now();
     await this.metrics?.recordQuote(snapshot, position.qty, quote, quoteCycleId);
@@ -128,7 +149,7 @@ export class RefreshQuotesUseCase {
     const targetOrders: ManagedOrderRequest[] = [];
     const buildOrdersStartedAt = Date.now();
     let skippedCount = 0;
-    for (const level of quoteLevels(quote)) {
+    for (const level of levels) {
       const suffix = quote.levels === undefined ? "" : `:${level.level}`;
       if (shouldSubmitSide(level.bidSize, level.bidIntent)) {
         const bidRequest = await this.guardedOrderRequest({
@@ -179,6 +200,7 @@ export class RefreshQuotesUseCase {
     const submitMid = midPrice(submitSnapshot);
     const reconcileStartedAt = Date.now();
     const activeOrders = await this.orderManager.reconcile(targetOrders);
+    const orderManagerState = this.orderManager.state();
     const reconcileMs = Date.now() - reconcileStartedAt;
     const bookAgeMsAtSubmit = Math.max(
       0,
@@ -208,6 +230,7 @@ export class RefreshQuotesUseCase {
         targetOrderCount: targetOrders.length,
         activeOrderCount: activeOrders.length,
         skippedCount,
+        orderManagerState,
         quoteCycleId,
       },
     );
@@ -277,6 +300,118 @@ export class RefreshQuotesUseCase {
       ),
     };
   }
+}
+
+function quoteBuildSummary(input: {
+  market: string;
+  quoteCycleId: string;
+  positionQty: number;
+  quote: {
+    policy: "ALO" | "GTC" | "IOC";
+    bid: number;
+    ask: number;
+    bidSize: number;
+    askSize: number;
+  };
+  levels: QuoteLevel[];
+  quoteControls: QuoteControls;
+  quoteQuality: QuoteSideQuality[];
+  qualityGate: QuoteQualityGateConfig;
+}) {
+  const levels = input.levels.map((level) => ({
+    level: level.level,
+    bid: level.bid,
+    ask: level.ask,
+    bidSize: level.bidSize,
+    askSize: level.askSize,
+    bidIntent: level.bidIntent,
+    askIntent: level.askIntent,
+    bidControlReasons: level.bidControlReasons ?? [],
+    askControlReasons: level.askControlReasons ?? [],
+  }));
+  return {
+    market: input.market,
+    quoteCycleId: input.quoteCycleId,
+    positionQty: input.positionQty,
+    policy: input.quote.policy,
+    topLevel: {
+      bid: input.quote.bid,
+      ask: input.quote.ask,
+      bidSize: input.quote.bidSize,
+      askSize: input.quote.askSize,
+    },
+    qualityGate: {
+      enabled: input.qualityGate.enabled,
+      minAverageMarkoutBps: input.qualityGate.minAverageMarkoutBps,
+      minSamples: input.qualityGate.minSamples,
+      lookbackFills: input.qualityGate.lookbackFills,
+      maxFillAgeMs: input.qualityGate.maxFillAgeMs,
+      horizonsSec: input.qualityGate.horizonsSec,
+    },
+    quoteControls: input.quoteControls,
+    quoteQuality: input.quoteQuality.map((entry) => ({
+      side: entry.side,
+      horizons: entry.horizons.map((horizon) => ({
+        horizonSec: horizon.horizonSec,
+        sampleCount: horizon.sampleCount,
+        averageMarkoutBps: horizon.averageMarkoutBps,
+      })),
+    })),
+    sideSummary: {
+      bid: quoteSideSummary(levels, "bid"),
+      ask: quoteSideSummary(levels, "ask"),
+    },
+    levels,
+  };
+}
+
+function quoteSideSummary(
+  levels: ReadonlyArray<{
+    bidSize: number;
+    askSize: number;
+    bidIntent?: QuoteSideIntent;
+    askIntent?: QuoteSideIntent;
+    bidControlReasons: string[];
+    askControlReasons: string[];
+  }>,
+  side: "bid" | "ask",
+) {
+  const sizeKey = side === "bid" ? "bidSize" : "askSize";
+  const intentKey = side === "bid" ? "bidIntent" : "askIntent";
+  const reasonsKey = side === "bid" ? "bidControlReasons" : "askControlReasons";
+  const intents = {
+    open_quote: 0,
+    reduce_inventory: 0,
+    disabled: 0,
+    unspecified: 0,
+  };
+  let zeroSizeCount = 0;
+  const controlReasons = new Set<string>();
+  for (const level of levels) {
+    const intent = level[intentKey] ?? "unspecified";
+    intents[intent] += 1;
+    if (level[sizeKey] <= 0) {
+      zeroSizeCount += 1;
+    }
+    for (const reason of level[reasonsKey]) {
+      controlReasons.add(reason);
+    }
+  }
+  return {
+    intents,
+    zeroSizeCount,
+    submitEligibleCount: levels.filter((level) =>
+      shouldSubmitSide(level[sizeKey], level[intentKey]),
+    ).length,
+    controlReasons: [...controlReasons],
+  };
+}
+
+function formatReasonTags(reasons: ReadonlyArray<string> | undefined): string {
+  if (reasons === undefined || reasons.length === 0) {
+    return "none";
+  }
+  return reasons.join("|");
 }
 
 function quoteLevels(quote: {

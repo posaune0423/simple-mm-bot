@@ -1,4 +1,4 @@
-export interface SlackAttachment {
+interface SlackAttachment {
   color?: string;
   fallback?: string;
   text?: string;

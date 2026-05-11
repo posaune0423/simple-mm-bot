@@ -45,6 +45,9 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.nlevels).toBe(20);
     expect(config.connections.bulk.timeoutMs).toBe(30_000);
     expect(config.connections.bulk.maxLeverage).toBe(50);
+    expect(config.connections.bulk.marketRestRefreshAfterMs).toBe(600);
+    expect(config.connections.bulk.marketStaleRefreshIntervalMs).toBe(250);
+    expect(config.connections.bulk.marketWsReconnectAfterMs).toBe(5_000);
     expect(config.quoteEngine.defaultTimeInForce).toBe("ALO");
     expect(config.quoteEngine.markWeight).toBe(0.25);
     expect(config.quoteEngine.bookPriceSource).toBe("micro");
@@ -68,6 +71,7 @@ describe("ConfigLoader", () => {
       minAverageMarkoutBps: 0,
       minSamples: 20,
       lookbackFills: 100,
+      maxFillAgeMs: 900_000,
       horizonsSec: [5, 30, 300],
     });
     expect(config.quoteEngine.inventoryScale).toBe(0.22);

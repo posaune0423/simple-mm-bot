@@ -16,6 +16,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 function captureLogs() {
   const info = logger.info;
   const debug = logger.debug;
+  const warn = logger.warn;
   const messages: string[] = [];
   logger.info = (...args: unknown[]) => {
     messages.push(args.join(" "));
@@ -23,11 +24,15 @@ function captureLogs() {
   logger.debug = (...args: unknown[]) => {
     messages.push(args.join(" "));
   };
+  logger.warn = (...args: unknown[]) => {
+    messages.push(args.join(" "));
+  };
   return {
     messages,
     restore() {
       logger.info = info;
       logger.debug = debug;
+      logger.warn = warn;
     },
   };
 }
@@ -668,5 +673,169 @@ describe("BulkMarketFeed", () => {
     expect(attempts).toBe(2);
     expect(sleeps).toEqual([7]);
     expect((await feed.getSnapshot()).marginRatio).toBe(0.75);
+  });
+
+  test("refreshes market snapshot from REST when websocket market data goes stale", async () => {
+    const logs = captureLogs();
+    let tickerCalls = 0;
+    let bookCalls = 0;
+    const staleTs = Date.now() - 10_000;
+    const client = {
+      market: {
+        async ticker() {
+          tickerCalls += 1;
+          return tickerCalls === 1
+            ? { markPrice: 100, timestamp: staleTs }
+            : { markPrice: 105, timestamp: Date.now() };
+        },
+        async l2Book() {
+          bookCalls += 1;
+          return bookCalls === 1
+            ? {
+                levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+                timestamp: staleTs,
+              }
+            : {
+                levels: [[{ price: 104, size: 1 }], [{ price: 106, size: 1 }]],
+                timestamp: Date.now(),
+              };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+
+    try {
+      const feed = new BulkMarketFeed(client, {
+        market: "BTC-USD",
+        marketStaleAfterMs: 1,
+        marketStaleRefreshIntervalMs: 1,
+      });
+
+      await feed.connect();
+      await waitFor(() => tickerCalls >= 2 && bookCalls >= 2);
+      const snapshot = await feed.getSnapshot();
+      await feed.disconnect();
+
+      expect(snapshot.bestBid).toBe(104);
+      expect(snapshot.bestAsk).toBe(106);
+      expect(snapshot.markPrice).toBe(105);
+      expect(logs.messages.some((message) => message.includes("market_stale_detected"))).toBe(true);
+      expect(logs.messages.some((message) => message.includes("market_rest_refreshed"))).toBe(true);
+    } finally {
+      logs.restore();
+    }
+  });
+
+  test("reconnects websocket subscriptions when market data stays stale beyond reconnect threshold", async () => {
+    let subscribeCalls = 0;
+    let unsubscribeCalls = 0;
+    let closeCalls = 0;
+    const staleTs = Date.now() - 10_000;
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: staleTs };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            timestamp: staleTs,
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw new Error("should not fetch without account id");
+        },
+      },
+      ws: {
+        async subscribe() {
+          subscribeCalls += 1;
+          return {
+            unsubscribe: async () => {
+              unsubscribeCalls += 1;
+            },
+          };
+        },
+        async close() {
+          closeCalls += 1;
+        },
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "BTC-USD",
+      marketStaleAfterMs: 1,
+      marketStaleRefreshIntervalMs: 1,
+      marketWsReconnectAfterMs: 1,
+    });
+
+    await feed.connect();
+    await waitFor(() => subscribeCalls >= 6);
+    await feed.disconnect();
+
+    expect(unsubscribeCalls).toBeGreaterThanOrEqual(3);
+    expect(closeCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  test("does not spend background account polls on multi-attempt transient retries", async () => {
+    let attempts = 0;
+    const sleeps: number[] = [];
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: Date.now() };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            timestamp: Date.now(),
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          attempts += 1;
+          if (attempts === 1) {
+            return { margin: { totalBalance: 1000, marginUsed: 250 } };
+          }
+          throw Object.assign(new Error("HTTP error 408"), {
+            name: "BulkHttpError",
+            status: 408,
+          });
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "ETH-USD",
+      accountId: "account",
+      accountPollIntervalMs: 1,
+      accountRetryAttempts: 6,
+      accountRetryDelayMs: 7,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await feed.connect();
+    await waitFor(() => attempts >= 2);
+    await feed.disconnect();
+
+    expect(sleeps).toEqual([]);
   });
 });

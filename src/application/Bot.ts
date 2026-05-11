@@ -2,11 +2,12 @@ import type { Fill } from "../domain/entities/Fill.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { logger } from "../utils/logger.ts";
+import { isTransientBulkError } from "../utils/transientBulk.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";
-import type { RiskState } from "./usecases/GuardRiskUseCase.ts";
+import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
 
 interface UseCases {
-  guardRisk: { execute(): Promise<RiskState> };
+  guardRisk: { execute(): Promise<RiskState | RiskDecision> };
   initializePosition?: { execute(): Promise<void> };
   refreshQuotes: { execute(): Promise<void> };
   updatePositionOnFill: { execute(fill: Fill): Promise<void> };
@@ -23,19 +24,13 @@ interface BotOptions {
   eventTaskDrainTimeoutMs?: number;
 }
 
-type ErrorLike = {
-  name?: unknown;
-  status?: unknown;
-  message?: unknown;
-  response?: unknown;
-};
-
 export class Bot {
   private running = false;
   private quotedCount = 0;
   private stopRequested = false;
   private emergencyStopRequested = false;
   private eventTasks: Promise<void> = Promise.resolve();
+  private pauseQuoteCancelCompleted = false;
   private readonly unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -67,6 +62,12 @@ export class Bot {
       }
     } finally {
       closePositionError = await this.cleanup();
+      const metricsWithDrain = this.metrics as
+        | (MetricsRecorder & { drainAndStop?: () => Promise<void> })
+        | undefined;
+      if (metricsWithDrain?.drainAndStop !== undefined) {
+        await metricsWithDrain.drainAndStop();
+      }
       await this.metrics?.finish(
         Date.now(),
         runError === undefined && closePositionError === undefined ? "completed" : "failed",
@@ -177,7 +178,8 @@ export class Bot {
   }
 
   private async runTick(tick: number): Promise<TickResult> {
-    const riskState = await this.useCases.guardRisk.execute();
+    const riskDecision = await this.useCases.guardRisk.execute();
+    const riskState = riskStateOf(riskDecision);
     logger.debug(`bot.tick tick=${tick} riskState=${riskState}`);
 
     if (riskState === "EMERGENCY_STOP") {
@@ -185,7 +187,7 @@ export class Bot {
         "error",
         "risk_gate_emergency_stop",
         "Risk gate requested emergency stop",
-        { tick, riskState },
+        riskRuntimeSummary(tick, riskDecision),
       );
       logger.warn(`bot.stopping reason=emergency_stop tick=${tick}`);
       this.emergencyStopRequested = true;
@@ -196,8 +198,11 @@ export class Bot {
         "warn",
         "risk_gate_pause_quoting",
         "Risk gate paused quote refresh",
-        { tick, riskState },
+        riskRuntimeSummary(tick, riskDecision),
       );
+      await this.cancelOpenOrdersForPause(tick, riskDecision);
+    } else {
+      this.pauseQuoteCancelCompleted = false;
     }
 
     await this.drainEventTasks();
@@ -265,6 +270,39 @@ export class Bot {
     return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
   }
 
+  private async cancelOpenOrdersForPause(
+    tick: number,
+    riskDecision: RiskState | RiskDecision,
+  ): Promise<void> {
+    if (this.pauseQuoteCancelCompleted) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    const summary = riskRuntimeSummary(tick, riskDecision);
+    try {
+      await this.orderGateway.cancelAll();
+      this.pauseQuoteCancelCompleted = true;
+      const latencyMs = Date.now() - startedAt;
+      logger.warn(`bot.pause_quote_cancel_all tick=${tick} latencyMs=${latencyMs}`);
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "pause_quote_cancel_all",
+        "Cancelled open orders while quote refresh is paused",
+        { ...summary, latencyMs, success: true },
+      );
+    } catch (error) {
+      const latencyMs = Date.now() - startedAt;
+      logger.error(`bot.pause_quote_cancel_all_failed tick=${tick} error=${String(error)}`);
+      await this.metrics?.recordRuntimeHealth(
+        "error",
+        "pause_quote_cancel_all",
+        "Failed to cancel open orders while quote refresh is paused",
+        { ...summary, latencyMs, success: false, error: String(error) },
+      );
+    }
+  }
+
   private async syncCleanupFills(phase: string): Promise<void> {
     await this.orderGateway.syncFills?.().catch(async (error) => {
       logger.warn(`bot.cleanup.sync_fills_failed phase=${phase} error=${String(error)}`);
@@ -323,47 +361,17 @@ export class Bot {
   }
 }
 
-function isTransientBulkError(error: unknown): boolean {
-  if (typeof error === "object" && error !== null) {
-    const errorLike = error as ErrorLike;
-    const status = toHttpStatus(errorLike);
-    if (status === 408) {
-      return true;
-    }
-    if (errorLike.name === "BulkTimeoutError") {
-      return true;
-    }
-  }
-
-  const message = String(error);
-  return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
+function riskStateOf(decision: RiskState | RiskDecision): RiskState {
+  return typeof decision === "string" ? decision : decision.state;
 }
 
-function toHttpStatus(errorLike: ErrorLike): number | undefined {
-  const maybeStatus = (value: unknown): number | undefined => {
-    if (typeof value === "number" && Number.isInteger(value)) {
-      return value;
-    }
-    if (typeof value === "string" && value.trim().length > 0) {
-      const parsed = Number.parseInt(value, 10);
-      return Number.isInteger(parsed) ? parsed : undefined;
-    }
-    return undefined;
-  };
-
-  const directStatus = maybeStatus(errorLike.status);
-  if (directStatus !== undefined) {
-    return directStatus;
+function riskRuntimeSummary(
+  tick: number,
+  decision: RiskState | RiskDecision,
+): Record<string, unknown> {
+  if (typeof decision === "string") {
+    return { tick, riskState: decision };
   }
-
-  if (
-    errorLike.response === undefined ||
-    errorLike.response === null ||
-    typeof errorLike.response !== "object"
-  ) {
-    return undefined;
-  }
-
-  const responseStatus = maybeStatus((errorLike.response as { status?: unknown }).status);
-  return responseStatus;
+  const { state, ...details } = decision;
+  return { tick, riskState: state, ...details };
 }

@@ -2,7 +2,7 @@ import type { BulkClient } from "bulk-ts-sdk";
 
 import type { OhlcvBar } from "./leadLagMath.ts";
 
-export interface BulkKlinesRangeParams {
+interface BulkKlinesRangeParams {
   client: BulkClient;
   symbol: string;
   interval: string;
@@ -14,7 +14,7 @@ export interface BulkKlinesRangeParams {
 const DEFAULT_PAGE = 1000;
 
 /** Candle step in ms for supported Bulk intervals (see OpenAPI `CandleInterval`). */
-export function intervalToMs(interval: string): number {
+function intervalToMs(interval: string): number {
   const table: Record<string, number> = {
     "10s": 10_000,
     "1m": 60_000,

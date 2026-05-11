@@ -29,9 +29,10 @@ import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeAp
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
-import { MetricsRecorder } from "./MetricsRecorder.ts";
+import { MetricsBuffer, MetricsRecorder } from "./MetricsRecorder.ts";
 import type { OrderManagerOptions } from "./OrderManager.ts";
 import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
+import { BufferedRecordOhlcvUseCase } from "./usecases/BufferedRecordOhlcvUseCase.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.ts";
@@ -59,7 +60,8 @@ export class DIContainer {
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
-    const metrics = this.buildMetricsRecorder(repositories.metricsRepository);
+    const metricsBuffer = new MetricsBuffer();
+    const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
 
     return new Bot(
       {
@@ -80,7 +82,10 @@ export class DIContainer {
           bulkLiveStartupRetryOptions(this.config),
         ),
         updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
-        recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
+        recordOhlcv: new BufferedRecordOhlcvUseCase(
+          new RecordOhlcvUseCase(repositories.ohlcvRepository),
+          metricsBuffer,
+        ),
         reduceInventory: new ReduceInventoryUseCase(
           gateway,
           positionRepository,
@@ -156,16 +161,23 @@ export class DIContainer {
     };
   }
 
-  private buildMetricsRecorder(repository: IMetricsRepository): MetricsRecorder {
-    return new MetricsRecorder(repository, {
-      mode: this.config.mode,
-      venue: this.config.venue,
-      capitalMode: resolveCapitalMode(this.config),
-      market: this.marketName(),
-      strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
-      configJson: redactConfig(this.config),
-      ...getGitMetadata(),
-    });
+  private buildMetricsRecorder(
+    repository: IMetricsRepository,
+    buffer: MetricsBuffer,
+  ): MetricsRecorder {
+    return new MetricsRecorder(
+      repository,
+      {
+        mode: this.config.mode,
+        venue: this.config.venue,
+        capitalMode: resolveCapitalMode(this.config),
+        market: this.marketName(),
+        strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
+        configJson: redactConfig(this.config),
+        ...getGitMetadata(),
+      },
+      buffer,
+    );
   }
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
@@ -247,6 +259,9 @@ export class DIContainer {
       market: bulk.market,
       nlevels: bulk.nlevels,
       accountId,
+      marketRestRefreshAfterMs: bulk.marketRestRefreshAfterMs,
+      marketStaleRefreshIntervalMs: bulk.marketStaleRefreshIntervalMs,
+      marketWsReconnectAfterMs: bulk.marketWsReconnectAfterMs,
       ...bulkLiveStartupRetryOptions(config),
     });
 

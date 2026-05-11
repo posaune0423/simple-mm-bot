@@ -100,6 +100,8 @@ interface BulkOrderGatewayParams {
   maxLeverage?: number;
   pollIntervalMs?: number;
   ignoreFillsBeforeMs?: number;
+  maxSeenFillIds?: number;
+  seenFillTtlMs?: number;
 }
 
 type BulkMarketRules = {
@@ -111,6 +113,10 @@ type BulkMarketRules = {
 };
 
 const openStatusKeys = new Set(["resting", "working"]);
+const DEFAULT_MAX_SEEN_FILL_IDS = 20_000;
+const DEFAULT_SEEN_FILL_TTL_MS = 24 * 60 * 60 * 1_000;
+const SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS = 100;
+const SEEN_FILL_FULL_PRUNE_INTERVAL_MS = 60_000;
 const filledStatusKeys = new Set(["filled"]);
 const cancelledStatusKeys = new Set([
   "cancelled",
@@ -243,7 +249,10 @@ function isRejectedOrderResult(
 export class BulkOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
   private readonly orderListeners = new Set<OrderEventListener>();
-  private readonly seenFillIds = new Set<string>();
+  private readonly seenFillIds = new Map<string, number>();
+  private maxObservedFillTimestamp = 0;
+  private fillsSinceLastSeenFillPrune = 0;
+  private lastSeenFillPruneAtMs = 0;
   private rulesPromise: Promise<BulkMarketRules | null> | null = null;
   private pollInFlight: Promise<void> | null = null;
   private leverageChecked = false;
@@ -257,6 +266,7 @@ export class BulkOrderGateway implements IOrderGateway {
       this.fillTimer = setInterval(() => {
         void this.pollFillsFromTimer();
       }, params.pollIntervalMs);
+      this.fillTimer.unref();
     }
   }
 
@@ -590,13 +600,13 @@ export class BulkOrderGateway implements IOrderGateway {
       if (normalized === null || this.seenFillIds.has(normalized.id)) {
         continue;
       }
-      this.seenFillIds.add(normalized.id);
       if (
         this.params.ignoreFillsBeforeMs !== undefined &&
         normalized.filledAt < this.params.ignoreFillsBeforeMs
       ) {
         continue;
       }
+      this.rememberFill(normalized);
       logger.info(
         `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
       );
@@ -615,6 +625,56 @@ export class BulkOrderGateway implements IOrderGateway {
         await listener(normalized);
       }
     }
+  }
+
+  private rememberFill(fill: Fill): void {
+    this.seenFillIds.set(fill.id, fill.filledAt);
+    this.maxObservedFillTimestamp = Math.max(this.maxObservedFillTimestamp, fill.filledAt);
+    this.fillsSinceLastSeenFillPrune += 1;
+    const ttlMs = this.params.seenFillTtlMs ?? DEFAULT_SEEN_FILL_TTL_MS;
+    const minObservedAtMs = this.maxObservedFillTimestamp - ttlMs;
+    if (fill.filledAt < minObservedAtMs) {
+      this.seenFillIds.delete(fill.id);
+    }
+    this.pruneSeenFillIds();
+  }
+
+  private pruneSeenFillIds(): void {
+    const ttlMs = this.params.seenFillTtlMs ?? DEFAULT_SEEN_FILL_TTL_MS;
+    if (this.shouldPruneSeenFillTtl()) {
+      const minObservedAtMs = this.maxObservedFillTimestamp - ttlMs;
+      for (const [id, filledAt] of this.seenFillIds) {
+        if (filledAt < minObservedAtMs) {
+          this.seenFillIds.delete(id);
+        }
+      }
+      this.fillsSinceLastSeenFillPrune = 0;
+      this.lastSeenFillPruneAtMs = this.maxObservedFillTimestamp;
+    }
+
+    const maxSize = this.params.maxSeenFillIds ?? DEFAULT_MAX_SEEN_FILL_IDS;
+    while (this.seenFillIds.size > maxSize) {
+      let oldestId: string | undefined;
+      let oldestFilledAt = Infinity;
+      for (const [id, filledAt] of this.seenFillIds) {
+        if (filledAt < oldestFilledAt) {
+          oldestId = id;
+          oldestFilledAt = filledAt;
+        }
+      }
+      if (oldestId === undefined) {
+        return;
+      }
+      this.seenFillIds.delete(oldestId);
+    }
+  }
+
+  private shouldPruneSeenFillTtl(): boolean {
+    return (
+      this.lastSeenFillPruneAtMs === 0 ||
+      this.fillsSinceLastSeenFillPrune >= SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS ||
+      this.maxObservedFillTimestamp - this.lastSeenFillPruneAtMs >= SEEN_FILL_FULL_PRUNE_INTERVAL_MS
+    );
   }
 
   private normalizeFill(fill: BulkFill): Fill | null {

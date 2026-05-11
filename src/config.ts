@@ -40,6 +40,7 @@ const quoteQualityGateSchema = v.optional(
     minAverageMarkoutBps: v.optional(v.number(), 0),
     minSamples: v.optional(positiveIntegerSchema, 20),
     lookbackFills: v.optional(positiveIntegerSchema, 100),
+    maxFillAgeMs: v.optional(positiveIntegerSchema),
     horizonsSec: v.optional(v.pipe(v.array(positiveIntegerSchema), v.minLength(1)), [5, 30, 300]),
   }),
   {
@@ -138,6 +139,9 @@ const appConfigSchema = v.variant("venue", [
         nlevels: v.optional(positiveIntegerSchema),
         timeoutMs: v.optional(positiveIntegerSchema),
         maxLeverage: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(50))),
+        marketRestRefreshAfterMs: v.optional(positiveIntegerSchema),
+        marketStaleRefreshIntervalMs: v.optional(positiveIntegerSchema),
+        marketWsReconnectAfterMs: v.optional(positiveIntegerSchema),
         privateKey: v.optional(v.string()),
       }),
     }),

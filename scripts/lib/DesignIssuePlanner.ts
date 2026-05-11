@@ -1,10 +1,10 @@
-export interface DesignIssueInput {
+interface DesignIssueInput {
   issueSignals: string[];
   runId: string;
   reportPath: string;
 }
 
-export interface PlannedDesignIssue {
+interface PlannedDesignIssue {
   title: string;
   body: string;
   label: string;
