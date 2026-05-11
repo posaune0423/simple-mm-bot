@@ -54,13 +54,15 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 
 bot修正案を出す前提として、source dataが存在する場合は以下をreportに必ず見える形で残す。
 
+- summed markoutを主KPIにしない。残す場合も補助扱いにし、判断はbps正規化average/VW markout、notional加重EV、tail、coverage、bucketで行う。
 - fill count、fill rate、notional/min、**50M/15d** に対するprojected pace。
-- net PnL、trade PnL、fee/rebate、PnL per volume bps、max drawdown。
-- 5s/30s/300s average/VW markout、horizon別coverage、30s tail、horizon別adverse selection。
-- maker ratio、設定TIF、reject rate、cancel-before-fill rate、平均latency、平均order live time。
+- notional、net PnL、trade PnL、fee/rebate bps、net EV bps、max drawdown。
+- 5s/30s/300s average/VW markout、horizon別coverage、30s p10/p5/p1/worst tail、horizon別adverse selection。
+- maker ratio、設定TIF、reject rate、cancel-before-fill rate、平均latency、平均order live time、平均quote age at fill。
 - quote distance to mid/best、market spread、stale rate。
 - buy/sell、quote/reduce別のfill count、notional、PnL、markout、adverse selection。
-- average/max position、close cost、shutdown/risk incident。
+- average/max abs position、reduce/hard-reduce count、min margin ratio、close cost、shutdown/risk incident。
+- side / intent / level / quote-age bucket (`<250ms`, `250-500ms`, `500-1000ms`, `1000-3000ms`, `3000ms+`) 別の fill count、notional、VW 5s/30s markout、30s p5/p1 tail、net EV bps。
 
 取得できないfieldは0扱いせず、missingとして表示する。quote competitiveness、maker quality、side/intent splitが欠けていること自体を分析gapとして扱う。
 

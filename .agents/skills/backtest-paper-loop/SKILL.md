@@ -41,14 +41,15 @@ Defaults:
 
 ## 必須分析 / Required Analysis
 
+- **Metric policy**: do not rank candidates by summed markout. Use bps-normalized average/VW markout, notional-weighted net EV, 30s p10/p5/p1/worst tail, coverage, and side/intent/level/quote-age buckets. Missing funding/reward/external context is `unavailable`, not zero.
 - **Data health**: fill count and markout coverage by horizon. Block parameter conclusions when fills < 20 or coverage < 80%.
 - **PnL-first gate**: net PnL, PnL per volume bps, max drawdown, and fee/rebate impact.
-- **Execution quality**: average/VW markout at 5s/30s/300s, 30s tail, adverse selection by horizon.
+- **Execution quality**: average/VW markout at 5s/30s/300s, 30s p10/p5/p1/worst tail, adverse selection by horizon.
 - **Fill sufficiency**: fill rate, notional/min, projected pace vs **50M/15d**. 50M/15d is a floor, not permission to accept negative PnL.
 - **Order lifecycle**: reject rate, cancel rate, cancel-before-fill rate, order live time, latency.
 - **Maker quality**: maker ratio and TIF. Bulk live maker quotes should use `ALO`; investigate taker leakage before trusting canary PnL.
 - **Quote competitiveness**: distance to mid/best and market spread. Low live fills with healthy backtest fills require this diagnosis.
-- **Side/intent split**: buy/sell and quote/reduce PnL, markout, fill count, and notional. Do not hide toxic open-side fills behind reduce-side gains.
+- **Bucket split**: buy/sell, quote/reduce, level, and quote-age buckets (`<250ms`, `250-500ms`, `500-1000ms`, `1000-3000ms`, `3000ms+`) with fill count, notional, VW 5s/30s markout, 30s p5/p1 tail, and net EV bps. Do not hide toxic open-side fills behind reduce-side gains.
 
 ## 必須出力 / Required outputs
 

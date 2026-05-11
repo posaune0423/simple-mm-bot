@@ -34,6 +34,7 @@ describe("evaluateMetricsRun", () => {
       tradePnl: 0.2,
       fee: 0.02,
       pnlPerNotional: 0.0009,
+      notionalUsd: 200,
       maxDrawdown: 0.2,
       avg5sMarkoutBps: 25,
       avg30sMarkoutBps: 12,
@@ -41,7 +42,7 @@ describe("evaluateMetricsRun", () => {
       vw5sMarkoutBps: 15,
       vw30sMarkoutBps: 9,
       vw300sMarkoutBps: 1,
-      markout30sTailBps: { p10: -12, p5: -20, worst: -30 },
+      markout30sTailBps: { p10: -12, p5: -20, p1: -25, worst: -30 },
       adverseSelectionRate: 0.5,
       adverseSelectionRate30s: 0.25,
       adverseSelectionRate300s: 0.125,
@@ -60,6 +61,11 @@ describe("evaluateMetricsRun", () => {
       avgQuoteDistanceToMidBps: 12,
       avgQuoteDistanceToBestBps: 8,
       positionSkew: 0.1,
+      avgAbsPosition: 0.2,
+      maxAbsPosition: 0.4,
+      reduceCount: 2,
+      hardReduceCount: 1,
+      minMarginRatio: 0.35,
       closeCost: 0.02,
       warningCount: 1,
       errorCount: 0,
@@ -67,6 +73,10 @@ describe("evaluateMetricsRun", () => {
     });
 
     expect(result.pnl.netPnl).toBeCloseTo(0.18);
+    expect(result.pnl.notionalUsd).toBe(200);
+    expect(result.pnl.netEvBps).toBe(9);
+    expect(result.pnl.tradeEvBps).toBe(10);
+    expect(result.pnl.feeBps).toBe(1);
     expect(result.pnl.pnlPerVolumeBps).toBe(9);
     expect(result.markouts.avg5sBps).toBe(25);
     expect(result.markouts.avg30sBps).toBe(12);
@@ -74,7 +84,7 @@ describe("evaluateMetricsRun", () => {
     expect(result.markouts.vw5sBps).toBe(15);
     expect(result.markouts.vw30sBps).toBe(9);
     expect(result.markouts.vw300sBps).toBe(1);
-    expect(result.markouts.tail30sBps).toEqual({ p10: -12, p5: -20, worst: -30 });
+    expect(result.markouts.tail30sBps).toEqual({ p10: -12, p5: -20, p1: -25, worst: -30 });
     expect(result.markouts.adverseSelectionRate).toBe(0.5);
     expect(result.markouts.adverseSelectionRate5s).toBe(0.5);
     expect(result.markouts.adverseSelectionRate30s).toBe(0.25);
@@ -92,6 +102,11 @@ describe("evaluateMetricsRun", () => {
     expect(result.market.avgQuoteDistanceToMidBps).toBe(12);
     expect(result.market.avgQuoteDistanceToBestBps).toBe(8);
     expect(result.market.staleRate).toBe(0.1);
+    expect(result.inventory.avgAbsPosition).toBe(0.2);
+    expect(result.inventory.maxAbsPosition).toBe(0.4);
+    expect(result.inventory.reduceCount).toBe(2);
+    expect(result.inventory.hardReduceCount).toBe(1);
+    expect(result.inventory.minMarginRatio).toBe(0.35);
     expect(result.runtimeHealth.warningCount).toBe(1);
     expect(result.verdict).toBe("pass");
     expect(result.parameterAction).toBe("hold");
@@ -111,7 +126,7 @@ describe("evaluateMetricsRun", () => {
       avg5sMarkoutBps: -4,
       avg30sMarkoutBps: -6,
       avg300sMarkoutBps: -8,
-      markout30sTailBps: { p10: -180, p5: -220, worst: -300 },
+      markout30sTailBps: { p10: -180, p5: -220, p1: -260, worst: -300 },
       adverseSelectionRate: 0.75,
       fillRate: 0.2,
       rejectRate: 0,

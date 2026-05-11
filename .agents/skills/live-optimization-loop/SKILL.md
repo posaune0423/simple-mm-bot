@@ -49,15 +49,16 @@ Use these as the "Pass/Fail" criteria during optimization:
 
 Every live optimization answer must collect and analyze these fields from `metrics:evaluate` / `metrics:report` before proposing bot changes:
 
+- **Metric policy**: never use summed markout as a primary gate. Use bps-normalized average/VW markout, notional-weighted EV, tail loss, horizon coverage, and bucket evidence. Missing funding/reward/external context must be marked `unavailable`, not estimated into zero.
 - **Run identity**: run id, mode, venue, market, `capitalMode`, strategy name, git sha/dirty, config snapshot, start/end time.
 - **Data health**: fill count, 5s/30s/300s markout coverage, snapshot freshness, raw field coverage. Block tuning when fills or coverage are insufficient.
 - **PnL edge**: net PnL, trade PnL, fee/rebate, PnL per volume bps, max drawdown.
-- **Execution quality**: 5s/30s/300s average and VW markout, 30s tail, adverse selection by horizon, spread capture, realized spread.
+- **Execution quality**: 5s/30s/300s average and VW markout, 30s p10/p5/p1/worst tail, adverse selection by horizon, spread capture, realized spread.
 - **Order quality**: submitted count, fill rate, reject rate, cancel rate, cancel-before-fill rate, average latency, average order live time.
 - **Maker quality**: maker ratio and configured TIF. Bulk quotes should use `ALO`; if maker ratio is low, investigate taker leakage before increasing volume.
 - **Quote competitiveness**: average quote distance to mid and best, market spread, stale rate. Repeated 0-fill runs require this diagnosis before changing size.
 - **Side/intent split**: buy vs sell and quote vs reduce fill count, notional, PnL, markout, and adverse selection. Disable or widen only the toxic open side; keep reduce-only side available.
-- **Inventory/risk**: average and max position, position skew, close cost, risk guard hits, shutdown close success.
+- **Inventory/risk**: average and max absolute position, position skew, reduce/hard-reduce count, minimum margin ratio, close cost, risk guard hits, shutdown close success.
 - **Volume pace**: current notional, projected pace vs **50M/15d**, required multiplier, and whether the run is below the floor. Report 150M/14d only as a rebate-tier reference, not as the default optimization target.
 - **Live/backtest gap**: compare live canary fill count, fill rate, and notional/min against the latest backtest candidate. If backtest is fill-rich but live has 0-4 fills, treat the fill model or quote competitiveness as the likely gap.
 
@@ -115,7 +116,7 @@ bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report
 3. **Evaluate**
    - Generate the telemetry report.
    - Review the full Required Evidence Pack: data health, PnL, multi-horizon markout, order quality, maker quality, quote competitiveness, side/intent split, inventory, volume pace, and runtime health.
-   - Convert the report into bucket evidence. At minimum, inspect side, level, quote age, and market freshness buckets when the raw data exists.
+   - Convert the report into bucket evidence. At minimum, inspect side, intent, level, quote-age (`<250ms`, `250-500ms`, `500-1000ms`, `1000-3000ms`, `3000ms+`), and market freshness buckets when the raw data exists. Each bucket needs fill count, notional, VW 5s/30s markout, 30s p5/p1 tail, and net EV bps.
 
 4. **Tweak or Issue**
    - Only tune when the hypothesis verdict is `positive_candidate` or `production_candidate`.

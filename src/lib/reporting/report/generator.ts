@@ -370,12 +370,10 @@ function pad2(n: number): string {
 function collectMarkoutBps(fills: ReadonlyArray<ReportFill>, horizon: "5s" | "30s"): number[] {
   const values: number[] = [];
   for (const fill of fills) {
-    const future = horizon === "5s" ? fill.markPrice5s : fill.markPrice30s;
-    if (fill.markPriceAtFill === undefined || future === undefined || fill.markPriceAtFill === 0)
-      continue;
-    const delta =
-      fill.side === "buy" ? future - fill.markPriceAtFill : fill.markPriceAtFill - future;
-    values.push((delta / fill.markPriceAtFill) * 10_000);
+    const markoutBps = markoutBpsFor(fill, horizon);
+    if (markoutBps !== null) {
+      values.push(markoutBps);
+    }
   }
   return values;
 }
@@ -412,15 +410,30 @@ function buildReportStats(fills: ReadonlyArray<ReportFill>): {
   const sharpe = variance > 0 ? (avgReturn / Math.sqrt(variance)) * Math.sqrt(365) : 0;
   const tradePnl = fills.reduce((sum, fill) => sum + fill.tradePnl, 0);
   const netPnl = fills.reduce((sum, fill) => sum + fill.tradePnl - fill.fee, 0);
+  const fee = fills.reduce((sum, fill) => sum + fill.fee, 0);
+  const notionalUsd = fills.reduce((sum, fill) => sum + fill.price * fill.qty, 0);
   const markout5s = collectMarkoutBps(fills, "5s").reduce((sum, value) => sum + value, 0);
   const markout30s = collectMarkoutBps(fills, "30s").reduce((sum, value) => sum + value, 0);
+  const markout30sValues = collectMarkoutBps(fills, "30s").sort((a, b) => a - b);
 
   return {
     metrics: {
+      notionalUsd,
       netPnl,
       tradePnl,
+      netEvBps: notionalUsd > 0 ? (netPnl / notionalUsd) * 10_000 : null,
+      feeBps: notionalUsd > 0 ? (fee / notionalUsd) * 10_000 : null,
       markout5s,
       markout30s,
+      vwMarkout5sBps: volumeWeightedMarkoutBps(fills, "5s"),
+      vwMarkout30sBps: volumeWeightedMarkoutBps(fills, "30s"),
+      p5Markout30sBps: percentileSorted(markout30sValues, 0.05),
+      p1Markout30sBps: percentileSorted(markout30sValues, 0.01),
+      markoutCoverage: fills.length > 0 ? markout30sValues.length / fills.length : null,
+      makerRatio: makerRatio(fills),
+      avgQuoteAgeMs: null,
+      maxAbsPosition: null,
+      reduceCount: 0,
       maxDrawdown,
       sharpe,
       fillRate: fills.length > 0 ? 1 : 0,
@@ -433,8 +446,50 @@ function buildReportStats(fills: ReadonlyArray<ReportFill>): {
   };
 }
 
+function markoutBpsFor(fill: ReportFill, horizon: "5s" | "30s"): number | null {
+  const future = horizon === "5s" ? fill.markPrice5s : fill.markPrice30s;
+  if (fill.markPriceAtFill === undefined || future === undefined || fill.markPriceAtFill === 0) {
+    return null;
+  }
+  const delta = fill.side === "buy" ? future - fill.markPriceAtFill : fill.markPriceAtFill - future;
+  return (delta / fill.markPriceAtFill) * 10_000;
+}
+
 function fillHasAdverseMarkout(fill: ReportFill): boolean {
   return collectMarkoutBps([fill], "5s").some((value) => value < 0);
+}
+
+function volumeWeightedMarkoutBps(
+  fills: ReadonlyArray<ReportFill>,
+  horizon: "5s" | "30s",
+): number | null {
+  let weightedMarkout = 0;
+  let notional = 0;
+  for (const fill of fills) {
+    const markoutBps = markoutBpsFor(fill, horizon);
+    if (markoutBps === null) {
+      continue;
+    }
+    const fillNotional = fill.price * fill.qty;
+    weightedMarkout += markoutBps * fillNotional;
+    notional += fillNotional;
+  }
+  return notional > 0 ? weightedMarkout / notional : null;
+}
+
+function percentileSorted(values: number[], percentile: number): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const index = Math.max(0, Math.ceil(values.length * percentile) - 1);
+  return values[index] ?? null;
+}
+
+function makerRatio(fills: ReadonlyArray<ReportFill>): number | null {
+  if (fills.length === 0) {
+    return null;
+  }
+  return fills.filter((fill) => fill.makerTaker === "maker").length / fills.length;
 }
 
 export const DEFAULT_PERIODS: PeriodWindow[] = [

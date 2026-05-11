@@ -1191,11 +1191,13 @@ describe("SqliteMetricsRepository", () => {
           quote_age_bucket: string;
           fill_count: number;
           avg_markout_5s_bps: number;
+          vw_markout_5s_bps: number;
+          vw_markout_30s_bps: number;
           net_ev_bps: number;
         },
         []
       >(
-        "SELECT quote_age_bucket, fill_count, avg_markout_5s_bps, net_ev_bps FROM v_edge_quote_bucket_quality WHERE run_id = 'run-fill-context'",
+        "SELECT quote_age_bucket, fill_count, avg_markout_5s_bps, vw_markout_5s_bps, vw_markout_30s_bps, net_ev_bps FROM v_edge_quote_bucket_quality WHERE run_id = 'run-fill-context'",
       )
       .get();
 
@@ -1204,9 +1206,11 @@ describe("SqliteMetricsRepository", () => {
     expect(fillContext?.quote_age_ms).toBe(500);
     expect(fillContext?.markout_5s_bps).toBeCloseTo(200);
     expect(fillContext?.net_ev_bps).toBeCloseTo(40);
-    expect(bucket?.quote_age_bucket).toBe("300-1000");
+    expect(bucket?.quote_age_bucket).toBe("500-1000ms");
     expect(bucket?.fill_count).toBe(1);
     expect(bucket?.avg_markout_5s_bps).toBeCloseTo(200);
+    expect(bucket?.vw_markout_5s_bps).toBeCloseTo(200);
+    expect(bucket?.vw_markout_30s_bps).toBeNull();
     expect(bucket?.net_ev_bps).toBeCloseTo(40);
   });
 });

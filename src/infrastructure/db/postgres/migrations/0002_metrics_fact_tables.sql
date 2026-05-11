@@ -419,6 +419,7 @@ CREATE OR REPLACE VIEW v_inventory_risk AS
   SELECT
     run_id,
     MAX(abs_position) AS max_abs_position,
+    AVG(abs_position) AS avg_abs_position,
     AVG(position_qty) AS avg_position,
     MIN(margin_ratio) AS min_margin_ratio,
     MAX(CASE
@@ -459,6 +460,7 @@ CREATE OR REPLACE VIEW v_run_performance AS
     mk.p95_spread_bps,
     mk.stale_rate,
     ir.max_abs_position,
+    ir.avg_abs_position,
     ir.avg_position,
     ir.min_margin_ratio,
     ir.equity_drawdown

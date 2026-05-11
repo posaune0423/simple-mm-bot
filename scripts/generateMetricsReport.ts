@@ -18,6 +18,7 @@ interface EvaluationResult {
 
 export function formatMetricsReportMarkdown(result: EvaluationResult): string {
   const { run, evaluation } = result;
+  const quoteFreshness = evaluation.runtimeHealth.quoteFreshness;
   return [
     "# Metrics Run Report",
     "",
@@ -43,6 +44,10 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
     `- Net PnL: ${evaluation.pnl.netPnl.toFixed(6)}`,
     `- Trade PnL: ${evaluation.pnl.tradePnl.toFixed(6)}`,
     `- Fee: ${evaluation.pnl.fee.toFixed(6)}`,
+    `- Notional: ${formatNullableUsd(evaluation.pnl.notionalUsd)}`,
+    `- Net EV: ${formatNullableBps(evaluation.pnl.netEvBps)}`,
+    `- Trade EV: ${formatNullableBps(evaluation.pnl.tradeEvBps)}`,
+    `- Fee/Rebate: ${formatNullableBps(evaluation.pnl.feeBps)}`,
     `- PnL per notional: ${evaluation.pnl.pnlPerNotional.toFixed(8)}`,
     `- PnL per volume: ${evaluation.pnl.pnlPerVolumeBps.toFixed(4)} bps`,
     `- Max drawdown: ${evaluation.pnl.maxDrawdown.toFixed(6)}`,
@@ -55,7 +60,7 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
     `- VW 5s markout: ${formatNullableBps(evaluation.markouts.vw5sBps)}`,
     `- VW 30s markout: ${formatNullableBps(evaluation.markouts.vw30sBps)}`,
     `- VW 300s markout: ${formatNullableBps(evaluation.markouts.vw300sBps)}`,
-    `- 30s markout tail: p10=${evaluation.markouts.tail30sBps.p10.toFixed(4)} bps, p5=${evaluation.markouts.tail30sBps.p5.toFixed(4)} bps, worst=${evaluation.markouts.tail30sBps.worst.toFixed(4)} bps`,
+    `- 30s markout tail: p10=${evaluation.markouts.tail30sBps.p10.toFixed(4)} bps, p5=${evaluation.markouts.tail30sBps.p5.toFixed(4)} bps, p1=${formatNullableBps(evaluation.markouts.tail30sBps.p1 ?? null)}, worst=${evaluation.markouts.tail30sBps.worst.toFixed(4)} bps`,
     `- Adverse selection rate: ${(evaluation.markouts.adverseSelectionRate * 100).toFixed(1)}%`,
     `- Adverse selection 5s: ${(evaluation.markouts.adverseSelectionRate5s * 100).toFixed(1)}%`,
     `- Adverse selection 30s: ${formatNullablePercent(evaluation.markouts.adverseSelectionRate30s)}`,
@@ -70,10 +75,20 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
     `- Maker ratio: ${(evaluation.orderQuality.makerRatio * 100).toFixed(1)}%`,
     `- Avg latency: ${evaluation.orderQuality.avgLatencyMs.toFixed(2)} ms`,
     `- Avg order live time: ${evaluation.orderQuality.avgLiveMs.toFixed(2)} ms`,
+    `- Avg quote age at fill: ${formatNullableMsFixed2(evaluation.orderQuality.avgQuoteAgeMs)}`,
     `- Market spread: ${evaluation.market.avgSpreadBps.toFixed(4)} bps`,
     `- Quote distance to mid: ${evaluation.market.avgQuoteDistanceToMidBps.toFixed(4)} bps`,
     `- Quote distance to best: ${evaluation.market.avgQuoteDistanceToBestBps.toFixed(4)} bps`,
     `- Stale rate: ${(evaluation.market.staleRate * 100).toFixed(1)}%`,
+    "",
+    "## Risk",
+    "",
+    `- Max abs position: ${formatNullableFixed6(evaluation.inventory.maxAbsPosition)}`,
+    `- Avg abs position: ${formatNullableFixed6(evaluation.inventory.avgAbsPosition)}`,
+    `- Position skew: ${evaluation.inventory.positionSkew.toFixed(6)}`,
+    `- Reduce count: ${evaluation.inventory.reduceCount}`,
+    `- Hard reduce count: ${evaluation.inventory.hardReduceCount}`,
+    `- Min margin ratio: ${formatNullablePercent(evaluation.inventory.minMarginRatio)}`,
     "",
     "## Volume Pace",
     "",
@@ -105,6 +120,17 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
     "",
     `- Warnings: ${evaluation.runtimeHealth.warningCount}`,
     `- Errors: ${evaluation.runtimeHealth.errorCount}`,
+    "",
+    "## Quote Freshness",
+    `- Samples: ${quoteFreshness.sampleCount}`,
+    `- Total refresh ms: p50=${formatNullableFixed2(quoteFreshness.totalRefreshMsP50)} p95=${formatNullableFixed2(quoteFreshness.totalRefreshMsP95)} max=${formatNullableFixed2(quoteFreshness.totalRefreshMsMax)}`,
+    `- Quality gate p95: ${formatNullableMs(quoteFreshness.qualityGateMsP95)}`,
+    `- Record quote p95: ${formatNullableMs(quoteFreshness.recordQuoteMsP95)}`,
+    `- Reconcile p95: ${formatNullableMs(quoteFreshness.reconcileMsP95)}`,
+    `- Book age at decision p95: ${formatNullableMs(quoteFreshness.bookAgeMsAtDecisionP95)}`,
+    `- Mid-move p95 abs: ${formatNullableBpsWithUnit(quoteFreshness.midMoveDuringRefreshBpsP95Abs)}`,
+    `- Slow cycle rate: ${formatNullablePercentOrRatio(quoteFreshness.slowCycleRate)}`,
+    "",
     `- Tuning allowed: ${evaluation.tuningAllowed}`,
     `- Issue signals: ${evaluation.issueSignals.join(", ") || "none"}`,
   ].join("\n");
@@ -136,11 +162,11 @@ function formatBucketTable(rows: BucketEvidence["sideIntent"]): string {
     return "No fills.";
   }
   return [
-    "| bucket | fills | notional | net pnl | pnl bps | avg 5s | avg 30s | avg 300s | adverse 5s | adverse 30s | live ms |",
-    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| bucket | fills | notional | vw mo 5s | vw mo 30s | p5 mo 30s | p1 mo 30s | net ev bps | avg 5s | avg 30s | adverse 5s | adverse 30s | live ms |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...rows.map(
       (row) =>
-        `| ${row.bucket} | ${row.fillCount} | ${row.notionalUsd.toFixed(2)} | ${row.netPnl.toFixed(4)} | ${formatNullableNumber(row.pnlPerVolumeBps)} | ${formatNullableNumber(row.avg5sMarkoutBps)} | ${formatNullableNumber(row.avg30sMarkoutBps)} | ${formatNullableNumber(row.avg300sMarkoutBps)} | ${formatNullablePercent(row.adverseSelectionRate5s)} | ${formatNullablePercent(row.adverseSelectionRate30s)} | ${formatNullableNumber(row.avgOrderLiveMs)} |`,
+        `| ${row.bucket} | ${row.fillCount} | ${row.notionalUsd.toFixed(2)} | ${formatNullableNumber(row.vw5sMarkoutBps)} | ${formatNullableNumber(row.vw30sMarkoutBps)} | ${formatNullableNumber(row.p5Markout30sBps)} | ${formatNullableNumber(row.p1Markout30sBps)} | ${formatNullableNumber(row.pnlPerVolumeBps)} | ${formatNullableNumber(row.avg5sMarkoutBps)} | ${formatNullableNumber(row.avg30sMarkoutBps)} | ${formatNullablePercent(row.adverseSelectionRate5s)} | ${formatNullablePercent(row.adverseSelectionRate30s)} | ${formatNullableNumber(row.avgOrderLiveMs)} |`,
     ),
   ].join("\n");
 }
@@ -153,11 +179,35 @@ function formatNullableNumber(value: number | null): string {
   return value === null ? "n/a" : value.toFixed(4);
 }
 
-function formatNullableBps(value: number | null): string {
+function formatNullableFixed2(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(2);
+}
+
+function formatNullableFixed6(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(6);
+}
+
+function formatNullableBpsWithUnit(value: number | null): string {
   return value === null ? "n/a" : `${value.toFixed(4)} bps`;
 }
 
 function formatNullablePercent(value: number | null): string {
+  return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatNullableMs(value: number | null): string {
+  return value === null ? "n/a" : `${value.toFixed(0)} ms`;
+}
+
+function formatNullableMsFixed2(value: number | null): string {
+  return value === null ? "n/a" : `${value.toFixed(2)} ms`;
+}
+
+function formatNullableBps(value: number | null): string {
+  return value === null ? "n/a" : `${value.toFixed(4)} bps`;
+}
+
+function formatNullablePercentOrRatio(value: number | null): string {
   return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }
 

@@ -203,6 +203,54 @@ describe("evaluateLiveRun", () => {
       makerTaker: "taker",
       filledAt: 1_000,
     });
+    await repository.recordAccountStateObservation({
+      id: "account-1",
+      runId,
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 1_000,
+      positionQty: -0.5,
+      marginRatio: 0.42,
+    });
+    await repository.recordAccountStateObservation({
+      id: "account-2",
+      runId,
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 2_000,
+      positionQty: 0.25,
+      marginRatio: 0.37,
+    });
+    await repository.recordSubmittedOrder({
+      id: "reduce-order",
+      runId,
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle:reduce",
+      venueOrderId: "reduce-venue-order",
+      intent: "reduce",
+      side: "buy",
+      orderType: "market",
+      quantity: 0.1,
+      timeInForce: "IOC",
+      submittedAt: 1_100,
+      finalStatus: "filled",
+    });
+    await repository.recordSubmittedOrder({
+      id: "close-order",
+      runId,
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "cycle:close",
+      venueOrderId: "close-venue-order",
+      intent: "close",
+      side: "sell",
+      orderType: "market",
+      quantity: 0.1,
+      timeInForce: "IOC",
+      submittedAt: 1_200,
+      finalStatus: "filled",
+    });
 
     const result = loadEvaluationResult(dbPath, runId);
 
@@ -227,7 +275,14 @@ describe("evaluateLiveRun", () => {
     expect(result.evaluation.markouts.vw5sBps).toBeCloseTo(50);
     expect(result.evaluation.markouts.vw30sBps).toBeCloseTo(-50);
     expect(result.evaluation.markouts.vw300sBps).toBeCloseTo(100);
+    expect(result.evaluation.markouts.tail30sBps.p1).toBeCloseTo(-100);
     expect(result.evaluation.orderQuality.makerRatio).toBe(0.5);
+    expect(result.evaluation.orderQuality.avgQuoteAgeMs).toBe(100);
+    expect(result.evaluation.inventory.avgAbsPosition).toBe(0.375);
+    expect(result.evaluation.inventory.maxAbsPosition).toBe(0.5);
+    expect(result.evaluation.inventory.reduceCount).toBe(1);
+    expect(result.evaluation.inventory.hardReduceCount).toBe(1);
+    expect(result.evaluation.inventory.minMarginRatio).toBe(0.37);
     expect(result.bucketEvidence.sideIntent).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -253,8 +308,10 @@ describe("evaluateLiveRun", () => {
     ]);
     expect(result.bucketEvidence.quoteAge).toEqual([
       expect.objectContaining({
-        bucket: "<1s",
+        bucket: "<250ms",
         fillCount: 2,
+        p1Markout30sBps: -100,
+        p5Markout30sBps: -100,
         avgOrderLiveMs: 100,
       }),
     ]);
@@ -359,6 +416,117 @@ describe("evaluateLiveRun", () => {
     expect(result.run.gitDirty).toBe(true);
     expect(result.run.stopReason).toBe("runtime_error");
     expect(result.evaluation.issueSignals).toContain("order_lifecycle_inconsistency");
+    client.sqlite.close();
+  });
+
+  test("aggregates quote freshness telemetry from runtime health events", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+    const runId = "run-quote-freshness";
+
+    await repository.startRun({
+      id: runId,
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "bulk-beta-leaderboard",
+      configJson: { bot: { intervalMs: 100 } },
+      gitDirty: false,
+      startedAt: 1_000,
+      endedAt: 2_000,
+      status: "completed",
+    });
+
+    for (const [index, rawJson] of [
+      {
+        totalRefreshMs: 40,
+        qualityGateMs: 4,
+        recordQuoteMs: 8,
+        reconcileMs: 12,
+        bookAgeMsAtDecision: 30,
+        midMoveDuringRefreshBps: -1,
+      },
+      {
+        totalRefreshMs: 120,
+        qualityGateMs: 10,
+        recordQuoteMs: 20,
+        reconcileMs: 50,
+        bookAgeMsAtDecision: 90,
+        midMoveDuringRefreshBps: 3,
+      },
+      {
+        totalRefreshMs: 80,
+        qualityGateMs: 6,
+        recordQuoteMs: 12,
+        reconcileMs: 20,
+        bookAgeMsAtDecision: 60,
+        midMoveDuringRefreshBps: -5,
+      },
+    ].entries()) {
+      await repository.recordRuntimeHealthEvent({
+        id: `freshness-${index}`,
+        runId,
+        venue: "bulk",
+        market: "BTC-USD",
+        observedAt: 1_000 + index,
+        level: "info",
+        code: "quote_cycle_freshness",
+        message: "Quote cycle freshness measured",
+        rawJson,
+      });
+    }
+
+    const result = loadEvaluationResult(dbPath, runId);
+
+    expect(result.evaluation.runtimeHealth.quoteFreshness).toEqual({
+      sampleCount: 3,
+      totalRefreshMsP50: 80,
+      totalRefreshMsP95: 120,
+      totalRefreshMsMax: 120,
+      qualityGateMsP95: 10,
+      recordQuoteMsP95: 20,
+      reconcileMsP95: 50,
+      bookAgeMsAtDecisionP95: 90,
+      midMoveDuringRefreshBpsP95Abs: 5,
+      slowCycleRate: 1 / 3,
+    });
+    client.sqlite.close();
+  });
+
+  test("keeps quote freshness empty when runtime health telemetry is missing", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+    const runId = "run-no-quote-freshness";
+
+    await repository.startRun({
+      id: runId,
+      mode: "paper",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "paper",
+      strategyName: "bulk-beta-leaderboard",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 1_000,
+      endedAt: 2_000,
+      status: "completed",
+    });
+
+    const result = loadEvaluationResult(dbPath, runId);
+
+    expect(result.evaluation.runtimeHealth.quoteFreshness).toEqual({
+      sampleCount: 0,
+      totalRefreshMsP50: null,
+      totalRefreshMsP95: null,
+      totalRefreshMsMax: null,
+      qualityGateMsP95: null,
+      recordQuoteMsP95: null,
+      reconcileMsP95: null,
+      bookAgeMsAtDecisionP95: null,
+      midMoveDuringRefreshBpsP95Abs: null,
+      slowCycleRate: null,
+    });
     client.sqlite.close();
   });
 });

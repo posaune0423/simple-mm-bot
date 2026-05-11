@@ -58,6 +58,12 @@ describe("Postgres metrics migration", () => {
     expect(migration).toContain("CREATE VIEW v_edge_quote_bucket_quality");
     expect(migration).toContain("CREATE VIEW v_runtime_health_summary");
     expect(migration).toContain("quote_age_bucket");
+    expect(migration).toContain("'<250ms'");
+    expect(migration).toContain("'250-500ms'");
+    expect(migration).toContain("'500-1000ms'");
+    expect(migration).toContain("'3000ms+'");
+    expect(migration).toContain("vw_markout_5s_bps");
+    expect(migration).toContain("vw_markout_30s_bps");
     expect(migration).toContain("net_ev_bps");
   });
 });

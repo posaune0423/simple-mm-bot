@@ -59,7 +59,234 @@ function staleBookSnapshot(now: number) {
   };
 }
 
+function createMetricsRecorderProbe() {
+  const runtimeHealth: Array<{
+    level: "info" | "warn" | "error";
+    code: string;
+    message: string;
+    rawSummary?: unknown;
+  }> = [];
+  return {
+    runtimeHealth,
+    recorder: {
+      async recordQuote() {},
+      async recordMarketSnapshot() {},
+      async recordRuntimeHealth(
+        level: "info" | "warn" | "error",
+        code: string,
+        message: string,
+        rawSummary?: unknown,
+      ) {
+        runtimeHealth.push({ level, code, message, rawSummary });
+      },
+    } as unknown as MetricsRecorder,
+  };
+}
+
 describe("RefreshQuotesUseCase", () => {
+  test("records one quote freshness runtime health event per refresh cycle", async () => {
+    const now = Date.now();
+    const snapshots = [
+      { ...freshSnapshot(now), bestBid: 99_990, bestAsk: 100_010 },
+      { ...freshSnapshot(now), bestBid: 99_990, bestAsk: 100_010 },
+      { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
+      { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
+      { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
+    ];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_970,
+          ask: 100_030,
+          bidSize: 0.01,
+          askSize: 0.01,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+    const metrics = createMetricsRecorderProbe();
+
+    await new RefreshQuotesUseCase(
+      marketFeed,
+      orderGateway,
+      positions,
+      quoteEngine,
+      metrics.recorder,
+    ).execute();
+
+    expect(metrics.runtimeHealth).toHaveLength(1);
+    expect(metrics.runtimeHealth[0]).toMatchObject({
+      level: "info",
+      code: "quote_cycle_freshness",
+      message: "Quote cycle freshness measured",
+    });
+    expect(metrics.runtimeHealth[0]?.rawSummary).toEqual(
+      expect.objectContaining({
+        qualityGateMs: expect.any(Number),
+        quoteComputeMs: expect.any(Number),
+        recordQuoteMs: expect.any(Number),
+        buildOrdersMs: expect.any(Number),
+        reconcileMs: expect.any(Number),
+        totalRefreshMs: expect.any(Number),
+        bookAgeMsAtDecision: expect.any(Number),
+        tickerAgeMsAtDecision: expect.any(Number),
+        bookAgeMsAtSubmit: expect.any(Number),
+        decisionMid: 100_000,
+        submitMid: 100_100,
+        midMoveDuringRefreshBps: 10,
+        targetOrderCount: 2,
+        activeOrderCount: 2,
+        skippedCount: 0,
+        quoteCycleId: expect.any(String),
+      }),
+    );
+  });
+
+  test("captures slow quality gate, quote persistence, and reconcile latency in freshness telemetry", async () => {
+    const now = Date.now();
+    const snapshots = Array.from({ length: 5 }, () => freshSnapshot(now));
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        await Bun.sleep(5);
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_970,
+          ask: 100_030,
+          bidSize: 0.01,
+          askSize: 0.01,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+    const runtimeHealth: Array<{ rawSummary?: unknown }> = [];
+    const metrics = {
+      async recordQuote() {
+        await Bun.sleep(5);
+      },
+      async recordMarketSnapshot() {},
+      async recordRuntimeHealth(
+        _level: "info" | "warn" | "error",
+        _code: string,
+        _message: string,
+        rawSummary?: unknown,
+      ) {
+        runtimeHealth.push({ rawSummary });
+      },
+    } as unknown as MetricsRecorder;
+    const qualityRepository = {
+      async getRecentSideQuality() {
+        await Bun.sleep(5);
+        return [];
+      },
+    };
+
+    await new RefreshQuotesUseCase(
+      marketFeed,
+      orderGateway,
+      positions,
+      quoteEngine,
+      metrics,
+      qualityRepository,
+      {
+        enabled: true,
+        minAverageMarkoutBps: 0,
+        minSamples: 2,
+        lookbackFills: 100,
+        horizonsSec: [5],
+      },
+    ).execute();
+
+    expect(runtimeHealth[0]?.rawSummary).toEqual(
+      expect.objectContaining({
+        qualityGateMs: expect.any(Number),
+        recordQuoteMs: expect.any(Number),
+        reconcileMs: expect.any(Number),
+        totalRefreshMs: expect.any(Number),
+      }),
+    );
+    const payload = runtimeHealth[0]!.rawSummary as {
+      qualityGateMs: number;
+      recordQuoteMs: number;
+      reconcileMs: number;
+      totalRefreshMs: number;
+    };
+    expect(payload.qualityGateMs).toBeGreaterThanOrEqual(1);
+    expect(payload.recordQuoteMs).toBeGreaterThanOrEqual(1);
+    expect(payload.reconcileMs).toBeGreaterThanOrEqual(1);
+    expect(payload.totalRefreshMs).toBeGreaterThanOrEqual(
+      payload.qualityGateMs + payload.recordQuoteMs + payload.reconcileMs,
+    );
+  });
+
   test("passes quality-gate controls into quote computation before placing orders", async () => {
     let receivedControls: unknown;
     const marketFeed = {
@@ -146,6 +373,104 @@ describe("RefreshQuotesUseCase", () => {
       bid: {
         disableOpen: true,
         reasonTags: ["quality_gate:buy:30s_markout_below_0bps"],
+      },
+    });
+  });
+
+  test("passes inventory into quality-gate controls so reduce sides avoid opening failed quotes", async () => {
+    let receivedControls: unknown;
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        return {
+          market: "BTC-USD",
+          bestBid: 99_990,
+          bestAsk: 100_010,
+          microPrice: 100_000,
+          markPrice: 100_000,
+          timestamp: Date.now(),
+          marginRatio: 1,
+        };
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0.3, avgEntry: 100_000, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0.3, avgEntry: 100_000, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute(_snapshot: unknown, _position: unknown, controls: unknown) {
+        receivedControls = controls;
+        return {
+          bid: 99_900,
+          ask: 100_100,
+          bidSize: 0,
+          askSize: 0,
+          bidIntent: "disabled" as const,
+          askIntent: "disabled" as const,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    };
+    const qualityRepository = {
+      async getRecentSideQuality() {
+        return [
+          {
+            side: "buy" as const,
+            horizons: [{ horizonSec: 5, sampleCount: 2, averageMarkoutBps: -0.2 }],
+          },
+          {
+            side: "sell" as const,
+            horizons: [{ horizonSec: 5, sampleCount: 2, averageMarkoutBps: -2 }],
+          },
+        ];
+      },
+    };
+
+    await new RefreshQuotesUseCase(
+      marketFeed,
+      orderGateway,
+      positions,
+      quoteEngine as never,
+      undefined,
+      qualityRepository,
+      {
+        enabled: true,
+        minAverageMarkoutBps: 0,
+        minSamples: 2,
+        lookbackFills: 100,
+        horizonsSec: [5],
+      },
+    ).execute();
+
+    expect(receivedControls).toEqual({
+      bid: {
+        disableOpen: true,
+        reasonTags: ["quality_gate:buy:5s_markout_below_0bps"],
+      },
+      ask: {
+        disableOpen: true,
+        reasonTags: ["quality_gate:sell:5s_markout_below_0bps"],
       },
     });
   });
@@ -283,6 +608,137 @@ describe("RefreshQuotesUseCase", () => {
     await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
 
     expect(placed).toEqual([]);
+  });
+
+  test("keeps reduce-inventory sides even when the refreshed touch is stale", async () => {
+    const placed: OrderRequest[] = [];
+    const now = Date.now();
+    const snapshots = [
+      freshSnapshot(now),
+      freshSnapshot(now),
+      freshSnapshot(now),
+      staleBookSnapshot(now),
+      staleBookSnapshot(now),
+    ];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        placed.push(order);
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: -0.3, avgEntry: 100_100, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: -0.3, avgEntry: 100_100, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_980,
+          ask: 100_020,
+          bidSize: 0.3,
+          askSize: 0.01,
+          bidIntent: "reduce_inventory" as const,
+          askIntent: "open_quote" as const,
+          policy: "ALO" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+
+    await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
+
+    expect(placed).toHaveLength(1);
+    expect(placed[0]).toMatchObject({
+      side: "buy",
+      qty: 0.3,
+      reduceOnly: true,
+      intent: "reduce",
+    });
+  });
+
+  test("clamps ALO prices to the passive touch before placement", async () => {
+    const placed: OrderRequest[] = [];
+    const now = Date.now();
+    const snapshots = Array.from({ length: 5 }, () => freshSnapshot(now));
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        placed.push(order);
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 100_020,
+          ask: 99_980,
+          bidSize: 0.01,
+          askSize: 0.01,
+          policy: "ALO" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+
+    await new RefreshQuotesUseCase(marketFeed, orderGateway, positions, quoteEngine).execute();
+
+    expect(placed.map((order) => ({ side: order.side, price: order.price }))).toEqual([
+      { side: "buy", price: 99_990 },
+      { side: "sell", price: 100_010 },
+    ]);
   });
 
   test("keeps existing quote orders when refreshed prices and sizes stay within thresholds", async () => {

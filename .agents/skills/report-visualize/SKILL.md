@@ -54,13 +54,15 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 
 The report must keep these fields visible whenever the source data exists. These fields are the minimum evidence needed before recommending bot changes:
 
+- Sum markout is not a primary KPI. Keep it only as supplemental context if it remains visible; decisions must use bps-normalized average/VW markout, notional-weighted EV, tail, coverage, and buckets.
 - Fill count, fill rate, notional/min, and projected pace vs **50M/15d**.
-- Net PnL, trade PnL, fee/rebate, PnL per volume bps, and max drawdown.
-- 5s/30s/300s average and VW markout, markout coverage by horizon, 30s tail, and adverse selection by horizon.
-- Maker ratio, configured TIF, reject rate, cancel-before-fill rate, average latency, and average order live time.
+- Notional, Net PnL, trade PnL, fee/rebate bps, net EV bps, and max drawdown.
+- 5s/30s/300s average and VW markout, markout coverage by horizon, 30s p10/p5/p1/worst tail, and adverse selection by horizon.
+- Maker ratio, configured TIF, reject rate, cancel-before-fill rate, average latency, average order live time, and average quote age at fill.
 - Quote distance to mid/best, market spread, and stale rate.
 - Buy/sell and quote/reduce split for fill count, notional, PnL, markout, and adverse selection.
-- Average/max position, close cost, and shutdown/risk incidents.
+- Average/max absolute position, reduce/hard-reduce count, minimum margin ratio, close cost, and shutdown/risk incidents.
+- Side / intent / level / quote-age buckets (`<250ms`, `250-500ms`, `500-1000ms`, `1000-3000ms`, `3000ms+`) with fill count, notional, VW 5s/30s markout, 30s p5/p1 tail, and net EV bps.
 
 When a field is unavailable, the report should show it as missing rather than silently treating it as zero. Missing quote competitiveness, maker quality, or side/intent split is itself an analysis gap.
 
