@@ -86,6 +86,32 @@ describe("QuoteControlPolicy", () => {
     });
   });
 
+  test("keeps one deterministic side quoteable when both failed sides tie", () => {
+    const policy = new QuoteControlPolicy({
+      enabled: true,
+      minAverageMarkoutBps: 0,
+      minSamples: 2,
+      horizonsSec: [5],
+    });
+
+    const controls = policy.controlsFor([
+      {
+        side: "buy",
+        horizons: [{ horizonSec: 5, sampleCount: 2, averageMarkoutBps: -1 }],
+      },
+      {
+        side: "sell",
+        horizons: [{ horizonSec: 5, sampleCount: 2, averageMarkoutBps: -1 }],
+      },
+    ]);
+
+    expect(controls.bid).toBeUndefined();
+    expect(controls.ask).toEqual({
+      disableOpen: true,
+      reasonTags: ["quality_gate:sell:5s_markout_below_0bps"],
+    });
+  });
+
   test("keeps failed open sides gated when inventory can provide a reduce side", () => {
     const policy = new QuoteControlPolicy({
       enabled: true,

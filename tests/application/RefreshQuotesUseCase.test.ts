@@ -92,6 +92,7 @@ describe("RefreshQuotesUseCase", () => {
       { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
       { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
       { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
+      { ...freshSnapshot(now), bestBid: 100_090, bestAsk: 100_110 },
     ];
     const marketFeed = {
       async connect() {},
@@ -179,7 +180,7 @@ describe("RefreshQuotesUseCase", () => {
 
   test("captures slow quality gate, quote persistence, and reconcile latency in freshness telemetry", async () => {
     const now = Date.now();
-    const snapshots = Array.from({ length: 5 }, () => freshSnapshot(now));
+    const snapshots = Array.from({ length: 6 }, () => freshSnapshot(now));
     const marketFeed = {
       async connect() {},
       async disconnect() {},

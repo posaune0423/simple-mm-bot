@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import { formatMetricsReportMarkdown } from "../../scripts/generateMetricsReport.ts";
-import type { MetricsEvaluation } from "../../scripts/lib/MetricsEvaluation.ts";
+import {
+  emptyQuoteFreshness,
+  type MetricsEvaluation,
+} from "../../scripts/lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../../src/domain/ports/IMetricsRepository.ts";
 
 describe("generateMetricsReport", () => {
@@ -242,22 +245,29 @@ describe("generateMetricsReport", () => {
     expect(markdown).toContain("- Mid-move p95 abs: 4.5000 bps");
     expect(markdown).toContain("- Slow cycle rate: 20.0%");
   });
-});
 
-function emptyQuoteFreshness() {
-  return {
-    sampleCount: 0,
-    totalRefreshMsP50: null,
-    totalRefreshMsP95: null,
-    totalRefreshMsMax: null,
-    qualityGateMsP95: null,
-    recordQuoteMsP95: null,
-    reconcileMsP95: null,
-    bookAgeMsAtDecisionP95: null,
-    midMoveDuringRefreshBpsP95Abs: null,
-    slowCycleRate: null,
-  };
-}
+  test("prints old evaluation JSON when quote freshness is missing", () => {
+    const run: TradingRunFact = {
+      id: "run-old-evaluation",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 1,
+      status: "completed",
+    };
+    const evaluation = minimalEvaluation();
+    delete evaluation.runtimeHealth.quoteFreshness;
+
+    const markdown = formatMetricsReportMarkdown({ run, evaluation });
+
+    expect(markdown).toContain("## Quote Freshness");
+    expect(markdown).toContain("- Samples: 0");
+  });
+});
 
 function minimalEvaluation(): MetricsEvaluation {
   return {

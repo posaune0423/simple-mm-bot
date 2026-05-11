@@ -102,13 +102,10 @@ function avoidFullQuoteBlackout(
     return [...decisions];
   }
 
-  if (bidDecision.worstAverageMarkoutBps > askDecision.worstAverageMarkoutBps) {
+  if (bidDecision.worstAverageMarkoutBps >= askDecision.worstAverageMarkoutBps) {
     return decisions.filter((decision) => decision.side !== "buy");
   }
-  if (askDecision.worstAverageMarkoutBps > bidDecision.worstAverageMarkoutBps) {
-    return decisions.filter((decision) => decision.side !== "sell");
-  }
-  return [...decisions];
+  return decisions.filter((decision) => decision.side !== "sell");
 }
 
 function formatThreshold(value: number): string {

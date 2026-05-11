@@ -110,7 +110,6 @@ export class RefreshQuotesUseCase {
         ? ((placementMid - this.previousPlacementMid) / this.previousPlacementMid) * 10_000
         : 0;
     this.previousPlacementMid = placementMid;
-    const submitMid = placementMid;
     const targetOrders: ManagedOrderRequest[] = [];
     const buildOrdersStartedAt = Date.now();
     let skippedCount = 0;
@@ -156,12 +155,19 @@ export class RefreshQuotesUseCase {
       }
     }
     const buildOrdersMs = Date.now() - buildOrdersStartedAt;
+    const shouldMeasureSubmitFreshness =
+      this.metrics !== undefined && typeof this.metrics.recordRuntimeHealth === "function";
+    const submitSnapshot = shouldMeasureSubmitFreshness
+      ? await this.marketFeed.getSnapshot()
+      : trendSnapshot;
+    const submitObservedAt = Date.now();
+    const submitMid = midPrice(submitSnapshot);
     const reconcileStartedAt = Date.now();
     const activeOrders = await this.orderManager.reconcile(targetOrders);
     const reconcileMs = Date.now() - reconcileStartedAt;
     const bookAgeMsAtSubmit = Math.max(
       0,
-      Date.now() - (trendSnapshot.bookUpdatedAt ?? trendSnapshot.timestamp),
+      submitObservedAt - (submitSnapshot.bookUpdatedAt ?? submitSnapshot.timestamp),
     );
     const midMoveDuringRefreshBps =
       decisionMid > 0 ? ((submitMid - decisionMid) / decisionMid) * 10_000 : 0;

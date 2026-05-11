@@ -44,7 +44,7 @@ export interface MetricsEvaluationInput {
   positionSkew?: number;
   avgAbsPosition?: number | null;
   maxAbsPosition?: number | null;
-  reduceCount?: number;
+  reduceCount?: number | null;
   hardReduceCount?: number;
   minMarginRatio?: number | null;
   avgQuoteDistanceToMidBps?: number;
@@ -55,18 +55,7 @@ export interface MetricsEvaluationInput {
   issueSignals?: string[];
   minFillCount?: number;
   minMarkoutCoverage?: number;
-  quoteFreshness?: {
-    sampleCount: number;
-    totalRefreshMsP50?: number | null;
-    totalRefreshMsP95?: number | null;
-    totalRefreshMsMax?: number | null;
-    qualityGateMsP95?: number | null;
-    recordQuoteMsP95?: number | null;
-    reconcileMsP95?: number | null;
-    bookAgeMsAtDecisionP95?: number | null;
-    midMoveDuringRefreshBpsP95Abs?: number | null;
-    slowCycleRate?: number | null;
-  };
+  quoteFreshness?: Partial<QuoteCycleFreshnessMetrics> & { sampleCount: number };
 }
 
 export interface MarkoutTailBps {
@@ -160,7 +149,7 @@ export interface MetricsEvaluation {
   runtimeHealth: {
     warningCount: number;
     errorCount: number;
-    quoteFreshness: QuoteCycleFreshnessMetrics;
+    quoteFreshness?: QuoteCycleFreshnessMetrics;
   };
   passFail: {
     netPnl: boolean;
@@ -265,7 +254,7 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       warningCount: input.warningCount ?? 0,
       errorCount: input.errorCount ?? 0,
       quoteFreshness: {
-        ...defaultQuoteFreshnessMetrics(),
+        ...emptyQuoteFreshness(),
         ...input.quoteFreshness,
       },
     },
@@ -487,7 +476,7 @@ function evBps(value: number, notionalUsd: number | undefined): number | null {
   return (value / notionalUsd) * 10_000;
 }
 
-function defaultQuoteFreshnessMetrics(): QuoteCycleFreshnessMetrics {
+export function emptyQuoteFreshness(): QuoteCycleFreshnessMetrics {
   return {
     sampleCount: 0,
     totalRefreshMsP50: null,

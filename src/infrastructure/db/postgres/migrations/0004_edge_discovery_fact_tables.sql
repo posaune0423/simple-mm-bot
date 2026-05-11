@@ -330,7 +330,6 @@ CREATE VIEW v_run_performance AS
     mk.p95_spread_bps,
     mk.stale_rate,
     ir.max_abs_position,
-    ir.avg_abs_position,
     ir.avg_position,
     ir.min_margin_ratio,
     ir.equity_drawdown

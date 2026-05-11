@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
 
 import type { BucketEvidence } from "./evaluateLiveRun.ts";
-import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
+import { emptyQuoteFreshness, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { LATEST_METRICS_EVALUATION_PATH, LATEST_METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
@@ -18,7 +18,7 @@ interface EvaluationResult {
 
 export function formatMetricsReportMarkdown(result: EvaluationResult): string {
   const { run, evaluation } = result;
-  const quoteFreshness = evaluation.runtimeHealth.quoteFreshness;
+  const quoteFreshness = evaluation.runtimeHealth.quoteFreshness ?? emptyQuoteFreshness();
   return [
     "# Metrics Run Report",
     "",
@@ -60,7 +60,7 @@ export function formatMetricsReportMarkdown(result: EvaluationResult): string {
     `- VW 5s markout: ${formatNullableBps(evaluation.markouts.vw5sBps)}`,
     `- VW 30s markout: ${formatNullableBps(evaluation.markouts.vw30sBps)}`,
     `- VW 300s markout: ${formatNullableBps(evaluation.markouts.vw300sBps)}`,
-    `- 30s markout tail: p10=${evaluation.markouts.tail30sBps.p10.toFixed(4)} bps, p5=${evaluation.markouts.tail30sBps.p5.toFixed(4)} bps, p1=${formatNullableBps(evaluation.markouts.tail30sBps.p1 ?? null)}, worst=${evaluation.markouts.tail30sBps.worst.toFixed(4)} bps`,
+    `- 30s markout tail: p10=${formatNullableBps(evaluation.markouts.tail30sBps.p10)}, p5=${formatNullableBps(evaluation.markouts.tail30sBps.p5)}, p1=${formatNullableBps(evaluation.markouts.tail30sBps.p1 ?? null)}, worst=${formatNullableBps(evaluation.markouts.tail30sBps.worst)}`,
     `- Adverse selection rate: ${(evaluation.markouts.adverseSelectionRate * 100).toFixed(1)}%`,
     `- Adverse selection 5s: ${(evaluation.markouts.adverseSelectionRate5s * 100).toFixed(1)}%`,
     `- Adverse selection 30s: ${formatNullablePercent(evaluation.markouts.adverseSelectionRate30s)}`,
@@ -162,7 +162,7 @@ function formatBucketTable(rows: BucketEvidence["sideIntent"]): string {
     return "No fills.";
   }
   return [
-    "| bucket | fills | notional | vw mo 5s | vw mo 30s | p5 mo 30s | p1 mo 30s | net ev bps | avg 5s | avg 30s | adverse 5s | adverse 30s | live ms |",
+    "| bucket | fills | notional | vw mo 5s | vw mo 30s | p5 mo 30s | p1 mo 30s | pnl/vol bps | avg 5s | avg 30s | adverse 5s | adverse 30s | live ms |",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...rows.map(
       (row) =>

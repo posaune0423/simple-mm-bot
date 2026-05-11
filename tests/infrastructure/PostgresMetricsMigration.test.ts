@@ -61,9 +61,29 @@ describe("Postgres metrics migration", () => {
     expect(migration).toContain("'<250ms'");
     expect(migration).toContain("'250-500ms'");
     expect(migration).toContain("'500-1000ms'");
+    expect(migration).toContain("'1000-3000ms'");
     expect(migration).toContain("'3000ms+'");
     expect(migration).toContain("vw_markout_5s_bps");
     expect(migration).toContain("vw_markout_30s_bps");
     expect(migration).toContain("net_ev_bps");
+  });
+
+  test("adds average absolute inventory risk through a forward migration", async () => {
+    const migration0002 = await Bun.file(
+      "src/infrastructure/db/postgres/migrations/0002_metrics_fact_tables.sql",
+    ).text();
+    const migration0004 = await Bun.file(
+      "src/infrastructure/db/postgres/migrations/0004_edge_discovery_fact_tables.sql",
+    ).text();
+    const migration0005 = await Bun.file(
+      "src/infrastructure/db/postgres/migrations/0005_inventory_avg_abs_position.sql",
+    ).text();
+
+    expect(migration0002).not.toContain("AVG(abs_position) AS avg_abs_position");
+    expect(migration0004).not.toContain("ir.avg_abs_position");
+    expect(migration0005).toContain("DROP VIEW IF EXISTS v_run_performance");
+    expect(migration0005).toContain("CREATE OR REPLACE VIEW v_inventory_risk");
+    expect(migration0005).toContain("AVG(abs_position) AS avg_abs_position");
+    expect(migration0005).toContain("ir.avg_abs_position");
   });
 });

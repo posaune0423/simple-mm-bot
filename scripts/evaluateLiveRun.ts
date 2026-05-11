@@ -322,11 +322,23 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
               SELECT AVG(f.filled_at - o.submitted_at)
               FROM trade_fills f
               JOIN v_order_lifecycle o
-                ON o.run_id = f.run_id
-               AND (
-                 o.id = f.submitted_order_id
-                 OR (f.venue_order_id IS NOT NULL AND o.venue_order_id = f.venue_order_id)
-               )
+                ON o.id = COALESCE(
+                  (
+                    SELECT matched.id
+                    FROM v_order_lifecycle matched
+                    WHERE matched.run_id = f.run_id
+                      AND matched.id = f.submitted_order_id
+                    LIMIT 1
+                  ),
+                  (
+                    SELECT matched.id
+                    FROM v_order_lifecycle matched
+                    WHERE matched.run_id = f.run_id
+                      AND f.venue_order_id IS NOT NULL
+                      AND matched.venue_order_id = f.venue_order_id
+                    LIMIT 1
+                  )
+                )
               WHERE f.run_id = ?
             ) AS avg_quote_age_ms
           FROM quote_pairs
