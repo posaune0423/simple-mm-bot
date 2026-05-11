@@ -1,5 +1,6 @@
 import type { OrderSide, OrderTimeInForce } from "../domain/entities/Quote.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../domain/ports/IOrderGateway.ts";
+import { stringifyError } from "../utils/errors.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface OrderManagerOptions {
@@ -113,7 +114,7 @@ export class OrderManager {
         cancellations.push(this.cancelTrackedOrder(target.key, previous, "replace"));
       }
       if (this.shouldDelayQuotePlacement(target)) {
-        logger.warn(
+        logger.debug(
           `order_manager.quote_placement_delayed key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} cooldownUntilMs=${this.quoteCooldownUntilMs}`,
         );
         continue;
@@ -134,7 +135,7 @@ export class OrderManager {
     const placed = await this.orderGateway.place(request).catch((error) => {
       this.activeOrders.delete(target.key);
       logger.warn(
-        `order_manager.place_failed key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} market=${target.market} side=${target.side} intent=${target.intent ?? "unknown"} error=${String(error)}`,
+        `order_manager.place_failed key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} market=${target.market} side=${target.side} intent=${target.intent ?? "unknown"} error=${stringifyError(error)}`,
       );
       return undefined;
     });
@@ -184,15 +185,15 @@ export class OrderManager {
     this.cancelFailures += 1;
     this.unknownOrders.set(key, order);
     logger.error(
-      `order_manager.cancel_failed_unknown_state key=${key} orderId=${order.id} reason=${reason} error=${String(error)}`,
+      `order_manager.cancel_failed_unknown_state key=${key} orderId=${order.id} reason=${reason} error=${stringifyError(error)}`,
     );
     await this.orderGateway.cancelAll().catch((cancelAllError) => {
       logger.error(
-        `order_manager.cancel_all_after_cancel_failure_failed key=${key} orderId=${order.id} error=${String(cancelAllError)}`,
+        `order_manager.cancel_all_after_cancel_failure_failed key=${key} orderId=${order.id} error=${stringifyError(cancelAllError)}`,
       );
     });
     throw new OrderManagerUnknownStateError(
-      `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${String(error)}`,
+      `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${stringifyError(error)}`,
       error,
     );
   }

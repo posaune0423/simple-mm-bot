@@ -37,6 +37,9 @@ risk:
   imrBuffer: 0.08
   mmrBuffer: 0.04
   maxPositionQty: 0.5
+  # Keep paper canaries aligned with live Bulk beta snapshot freshness.
+  maxBookAgeMs: 2500
+  maxTickerAgeMs: 2500
 
 bot:
   intervalMs: 250

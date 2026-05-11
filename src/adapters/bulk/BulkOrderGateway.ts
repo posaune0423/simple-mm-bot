@@ -10,6 +10,7 @@ import type {
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
 type BulkStatus = Record<string, Record<string, unknown> | undefined>;
@@ -192,7 +193,7 @@ function orderErrorStatus(error: unknown): number | null {
       return status;
     }
   }
-  const message = String(error);
+  const message = stringifyError(error);
   if (message.includes("HTTP error 422")) {
     return 422;
   }
@@ -236,7 +237,7 @@ function isTransientBulkPollingError(error: unknown): boolean {
     }
   }
 
-  const message = String(error);
+  const message = stringifyError(error);
   return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
 }
 
@@ -552,7 +553,7 @@ export class BulkOrderGateway implements IOrderGateway {
   private async waitForInFlightPoll(): Promise<void> {
     await this.pollInFlight?.catch((error) => {
       logger.warn(
-        `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${String(error)}`,
+        `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${stringifyError(error)}`,
       );
     });
   }
@@ -564,12 +565,12 @@ export class BulkOrderGateway implements IOrderGateway {
     await this.pollFillsSerialized().catch((error) => {
       if (isTransientBulkPollingError(error)) {
         logger.warn(
-          `bulk_order_gateway.fills_poll_transient_failed market=${this.params.market} error=${String(error)}`,
+          `bulk_order_gateway.fills_poll_transient_failed market=${this.params.market} error=${stringifyError(error)}`,
         );
         return;
       }
       logger.error(
-        `bulk_order_gateway.fills_poll_failed market=${this.params.market} error=${String(error)}`,
+        `bulk_order_gateway.fills_poll_failed market=${this.params.market} error=${stringifyError(error)}`,
       );
     });
   }

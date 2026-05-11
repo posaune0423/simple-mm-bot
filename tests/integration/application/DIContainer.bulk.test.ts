@@ -7,20 +7,21 @@ import { BulkOrderGateway } from "../../../src/adapters/bulk/BulkOrderGateway.ts
 import { HistoricalMarketFeed } from "../../../src/adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../../../src/adapters/paper/PaperOrderGateway.ts";
 import { DIContainer, resolveCapitalMode } from "../../../src/application/di.ts";
-import type { AppConfig } from "../../../src/config.ts";
+import type { LoadedAppConfig } from "../../../src/config.ts";
 
 const TEST_DB_DIR = join(process.cwd(), "data", "test-dbs", "di");
 
 function config(
   mode: "live" | "paper" | "backtest",
-  strategy: AppConfig["quoteEngine"]["strategy"] = {
+  strategy: LoadedAppConfig["quoteEngine"]["strategy"] = {
     type: "avellaneda-stoikov",
     params: { gamma: 0.02, kappa: 1.5, kInv: 0.3 },
   },
-): AppConfig {
+): LoadedAppConfig {
   return {
     mode,
     venue: "bulk",
+    market: "ETH-USD",
     connections: {
       bulk: {
         httpUrl: "https://api.bulk.trade",
@@ -61,7 +62,7 @@ function config(
   };
 }
 
-function configWithoutBulkPrivateKey(): AppConfig {
+function configWithoutBulkPrivateKey(): LoadedAppConfig {
   const appConfig = config("live");
   if (appConfig.venue !== "bulk") {
     throw new Error("Expected bulk config");
@@ -71,27 +72,19 @@ function configWithoutBulkPrivateKey(): AppConfig {
 }
 
 describe("DIContainer Bulk venue", () => {
-  let previousDbPath: string | undefined;
   let previousDatabaseUrl: string | undefined;
   let tempDir: string;
   let dbPath: string;
 
   beforeEach(async () => {
-    previousDbPath = Bun.env.DB_PATH;
     previousDatabaseUrl = Bun.env.DATABASE_URL;
     await mkdir(TEST_DB_DIR, { recursive: true });
     tempDir = await mkdtemp(join(TEST_DB_DIR, "run-"));
     dbPath = join(tempDir, "di.db");
-    Bun.env.DB_PATH = dbPath;
-    delete Bun.env.DATABASE_URL;
+    Bun.env.DATABASE_URL = `file:${dbPath}`;
   });
 
   afterEach(async () => {
-    if (previousDbPath === undefined) {
-      delete Bun.env.DB_PATH;
-    } else {
-      Bun.env.DB_PATH = previousDbPath;
-    }
     if (previousDatabaseUrl === undefined) {
       delete Bun.env.DATABASE_URL;
     } else {

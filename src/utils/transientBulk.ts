@@ -1,3 +1,5 @@
+import { stringifyError } from "./errors.ts";
+
 type ErrorLike = {
   name?: unknown;
   status?: unknown;
@@ -24,7 +26,7 @@ export function isTransientBulkError(error: unknown): boolean {
     }
   }
 
-  const message = String(error);
+  const message = stringifyError(error);
   return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
 }
 

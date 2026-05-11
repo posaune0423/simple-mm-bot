@@ -4,6 +4,7 @@ import type { Position } from "../../domain/entities/Position.ts";
 import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
 const reduceFallbackOffsetBps = 50;
@@ -131,7 +132,7 @@ export class ReduceInventoryUseCase {
   private async refreshLivePosition(fallback: Position): Promise<Position> {
     await this.orderGateway.syncFills?.().catch((error) => {
       logger.warn(
-        `reduce_inventory.sync_fills_failed market=${this.market} error=${String(error)}`,
+        `reduce_inventory.sync_fills_failed market=${this.market} error=${stringifyError(error)}`,
       );
     });
     if (!this.orderGateway.getPosition) {
@@ -145,7 +146,7 @@ export class ReduceInventoryUseCase {
       },
       (error) => {
         logger.warn(
-          `reduce_inventory.live_position_failed market=${this.market} error=${String(error)}`,
+          `reduce_inventory.live_position_failed market=${this.market} error=${stringifyError(error)}`,
         );
         return fallback;
       },
@@ -158,10 +159,10 @@ export class ReduceInventoryUseCase {
   ): Promise<PlacedOrder | null> {
     return await this.orderGateway.place(orderRequest).catch((error) => {
       if (phase === "fallback") {
-        this.recordReduceFailure("submit_error", String(error));
+        this.recordReduceFailure("submit_error", stringifyError(error));
       } else {
         logger.warn(
-          `reduce_inventory.market_reduce_submit_failed market=${this.market} side=${orderRequest.side} qty=${orderRequest.qty} error=${String(error)}`,
+          `reduce_inventory.market_reduce_submit_failed market=${this.market} side=${orderRequest.side} qty=${orderRequest.qty} error=${stringifyError(error)}`,
         );
       }
       return null;

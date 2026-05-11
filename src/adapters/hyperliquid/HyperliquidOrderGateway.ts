@@ -9,6 +9,7 @@ import type {
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
 export class HyperliquidOrderGateway implements IOrderGateway {
@@ -98,7 +99,7 @@ export class HyperliquidOrderGateway implements IOrderGateway {
   private startFillPolling(): void {
     this.fillTimer = setInterval(() => {
       void this.pollFills().catch((error) => {
-        logger.warn(`hyperliquid_order_gateway.poll_fills_failed error=${String(error)}`);
+        logger.warn(`hyperliquid_order_gateway.poll_fills_failed error=${stringifyError(error)}`);
       });
     }, this.params.pollIntervalMs ?? 1000);
     logger.info(
@@ -138,7 +139,7 @@ export class HyperliquidOrderGateway implements IOrderGateway {
       }
     } catch (error) {
       // Next interval will retry.
-      logger.warn(`hyperliquid_order_gateway.poll_fills_failed error=${String(error)}`);
+      logger.warn(`hyperliquid_order_gateway.poll_fills_failed error=${stringifyError(error)}`);
     }
   }
 

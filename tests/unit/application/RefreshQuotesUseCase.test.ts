@@ -54,8 +54,8 @@ function freshSnapshot(now: number) {
 function staleBookSnapshot(now: number) {
   return {
     ...freshSnapshot(now),
-    timestamp: now - 1_000,
-    bookUpdatedAt: now - 1_000,
+    timestamp: now - 2_000,
+    bookUpdatedAt: now - 2_000,
   };
 }
 
@@ -1203,7 +1203,7 @@ describe("RefreshQuotesUseCase", () => {
   });
 
   test("does not fail the bot when every quote placement is rejected", async () => {
-    const logs = captureWarnLogs();
+    const logs = captureInfoLogs();
     const placedStatuses = ["rejected", "rejected", "open", "open"] as const;
     const placed: string[] = [];
     const marketFeed = {

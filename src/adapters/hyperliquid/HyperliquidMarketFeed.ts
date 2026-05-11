@@ -6,6 +6,7 @@ import type {
   MarketSnapshot,
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
 function computeMicroPrice(
@@ -87,7 +88,7 @@ export class HyperliquidMarketFeed implements IMarketFeed {
     this.pollTimer = setInterval(() => {
       void this.refreshSnapshot().catch((error) => {
         logger.warn(
-          `hyperliquid_market_feed.refresh_failed market=${this.params.market} error=${String(error)}`,
+          `hyperliquid_market_feed.refresh_failed market=${this.params.market} error=${stringifyError(error)}`,
         );
       });
     }, this.params.pollIntervalMs ?? 1000);

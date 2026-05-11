@@ -56,6 +56,26 @@ export default {
     },
     overrides: [
       {
+        files: ["src/**/*.ts", "scripts/**/*.ts", "*.config.ts"],
+        rules: {
+          "unicorn/filename-case": [
+            "error",
+            {
+              cases: {
+                camelCase: true,
+                pascalCase: true,
+              },
+            },
+          ],
+        },
+      },
+      {
+        files: ["src/utils/**/*.ts"],
+        rules: {
+          "unicorn/filename-case": ["error", { case: "camelCase" }],
+        },
+      },
+      {
         files: ["src/domain/**/*.ts"],
         rules: {
           "no-restricted-imports": [

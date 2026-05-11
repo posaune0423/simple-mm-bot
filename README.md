@@ -136,8 +136,7 @@ Repository split:
 - Bulk template: `config/config.example.yml`
 - Bulk backtest preset: `config/config.backtest.yml`
 - `MODE` can override the config file mode at runtime
-- `DATABASE_URL` switches storage to PostgreSQL
-- `DB_PATH` controls the local SQLite file path; the default is `data/mm.db`
+- `DATABASE_URL` controls storage. Use `file:data/mm.db` for local SQLite, or `postgres://` / `postgresql://` for PostgreSQL.
 
 Bulk backtest currently replays historical OHLCV from `klines` and uses the paper fill model. Bulk historical L2 is not exposed by the current SDK/API, so backtest fill quality is approximate.
 

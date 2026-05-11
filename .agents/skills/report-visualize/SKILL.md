@@ -23,7 +23,7 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 - `--venue` venue name (e.g. `hyperliquid`, `bulk`). Omit to include all venues.
 - `--period` `24h` | `7d` | `both` (default: `both`).
 - `--output` output directory (default: `docs/reports`).
-- `--db` SQLite path (default: `Bun.env.DB_PATH ?? "data/mm.db"`).
+- `--db` SQLite path (default: `DATABASE_URL=file:data/mm.db`).
 - `--now` epoch ms — for deterministic runs/tests; omit in production.
 
 ## Outputs

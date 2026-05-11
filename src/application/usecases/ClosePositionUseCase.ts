@@ -5,6 +5,7 @@ import type { IOrderGateway, PlacedOrder } from "../../domain/ports/IOrderGatewa
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { Position } from "../../domain/entities/Position.ts";
 import { isFlatPositionQty } from "../../domain/entities/Position.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
 const closeMaxAttempts = 30;
@@ -44,7 +45,9 @@ export class ClosePositionUseCase {
 
   private async currentPosition(): Promise<Position> {
     await this.orderGateway.syncFills?.().catch((error) => {
-      logger.warn(`close_position.sync_fills_failed market=${this.market} error=${String(error)}`);
+      logger.warn(
+        `close_position.sync_fills_failed market=${this.market} error=${stringifyError(error)}`,
+      );
     });
 
     if (!this.orderGateway.getPosition) {
@@ -53,7 +56,7 @@ export class ClosePositionUseCase {
 
     return await this.orderGateway.getPosition().catch(async (error) => {
       logger.warn(
-        `close_position.live_position_failed market=${this.market} error=${String(error)}`,
+        `close_position.live_position_failed market=${this.market} error=${stringifyError(error)}`,
       );
       return await this.positionRepository.get();
     });
@@ -72,7 +75,7 @@ export class ClosePositionUseCase {
       }
       await this.orderGateway.syncFills?.().catch((error) => {
         logger.warn(
-          `close_position.post_close_sync_fills_failed market=${this.market} error=${String(error)}`,
+          `close_position.post_close_sync_fills_failed market=${this.market} error=${stringifyError(error)}`,
         );
       });
     }
@@ -152,7 +155,7 @@ export class ClosePositionUseCase {
         intent: "close",
       })
       .catch((err) => {
-        const error = String(err);
+        const error = stringifyError(err);
         recordStatus(`error: ${error}`);
         if (error.includes("order.price is required")) {
           this.useMarketClose = false;
@@ -196,9 +199,9 @@ export class ClosePositionUseCase {
         intent: "close",
       })
       .catch((err) => {
-        recordStatus(`error: ${String(err)}`);
+        recordStatus(`error: ${stringifyError(err)}`);
         logger.warn(
-          `close_position.order_failed market=${this.market} side=${side} qty=${qty} price=${price} offsetBps=${offsetBps} error=${String(err)} attempt=${attempt}/${closeMaxAttempts}`,
+          `close_position.order_failed market=${this.market} side=${side} qty=${qty} price=${price} offsetBps=${offsetBps} error=${stringifyError(err)} attempt=${attempt}/${closeMaxAttempts}`,
         );
         return undefined;
       });

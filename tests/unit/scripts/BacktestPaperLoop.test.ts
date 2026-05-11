@@ -5,8 +5,8 @@ import { resolveBacktestPaperLoopOptions } from "../../../scripts/backtestPaperL
 
 describe("resolveBacktestPaperLoopOptions", () => {
   test("defaults to the shared SQLite DB and data-local run results", () => {
-    const previousDbPath = Bun.env.DB_PATH;
-    delete Bun.env.DB_PATH;
+    const previousDatabaseUrl = Bun.env.DATABASE_URL;
+    delete Bun.env.DATABASE_URL;
 
     try {
       const options = resolveBacktestPaperLoopOptions([], 1_771_459_200_000);
@@ -15,13 +15,13 @@ describe("resolveBacktestPaperLoopOptions", () => {
       expect(options.outputDir).toBe(join("data/strategy-runs", "20260219-000000-loop"));
       expect(options.dbPath).not.toContain("loop.db");
     } finally {
-      restoreEnv("DB_PATH", previousDbPath);
+      restoreEnv("DATABASE_URL", previousDatabaseUrl);
     }
   });
 
-  test("allows explicit DB_PATH and --db override while keeping run results separate", () => {
-    const previousDbPath = Bun.env.DB_PATH;
-    Bun.env.DB_PATH = "tmp/env.db";
+  test("allows explicit DATABASE_URL and --db override while keeping run results separate", () => {
+    const previousDatabaseUrl = Bun.env.DATABASE_URL;
+    Bun.env.DATABASE_URL = "file:tmp/env.db";
 
     try {
       const fromEnv = resolveBacktestPaperLoopOptions(["--label", "sweep-a"], 1_771_459_200_000);
@@ -35,7 +35,7 @@ describe("resolveBacktestPaperLoopOptions", () => {
       expect(fromFlag.dbPath).toBe("tmp/flag.db");
       expect(fromFlag.outputDir).toBe("tmp/run");
     } finally {
-      restoreEnv("DB_PATH", previousDbPath);
+      restoreEnv("DATABASE_URL", previousDatabaseUrl);
     }
   });
 });

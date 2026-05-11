@@ -1,4 +1,10 @@
-import type { Candle as BulkCandle } from "bulk-ts-sdk";
+import type {
+  BookUpdate as BulkBook,
+  Candle as BulkCandle,
+  Level as BulkLevel,
+  MarketStats as BulkTicker,
+  WsSubscription,
+} from "bulk-ts-sdk";
 
 import type {
   IMarketFeed,
@@ -7,17 +13,10 @@ import type {
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
 import { calculateDepthVampPrice } from "../../domain/FairPriceCalculator.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import { retryTransientBulk } from "../../utils/transientBulk.ts";
 
-type BulkLevel = { price?: number; px?: number; size?: number; sz?: number };
-type BulkBook = { updateType?: "snapshot" | "delta"; levels?: BulkLevel[][]; timestamp?: number };
-type BulkTicker = {
-  markPrice?: number;
-  lastPrice?: number;
-  fairBookPx?: number;
-  timestamp?: number;
-};
 type BulkPositionEntry = {
   symbol?: string;
   size?: number;
@@ -36,6 +35,16 @@ interface BulkMarginState {
 }
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
 type MarketWsStaleReason = "book_ws_stale" | "ticker_ws_stale";
+type ParsedBookSnapshot = {
+  bestBid: number;
+  bestAsk: number;
+  microPrice: number;
+  vampPrice: number | undefined;
+  orderBookLevels: OrderBookLevel[];
+};
+type BookSnapshotParseResult =
+  | ({ ok: true } & ParsedBookSnapshot)
+  | { ok: false; reason: "empty_book" | "crossed_book"; bestBid?: number; bestAsk?: number };
 
 interface BulkMarketClient {
   ticker(symbol: string): Promise<BulkTicker>;
@@ -48,7 +57,7 @@ interface BulkAccountClient {
 
 interface BulkWsClient {
   subscribe(
-    subscription: unknown,
+    subscription: WsSubscription,
     handler: (message: unknown) => void,
   ): Promise<BulkSubscriptionHandle>;
   close(): Promise<void>;
@@ -78,7 +87,7 @@ const DEFAULT_MARKET_WS_WATCHDOG_INTERVAL_MS = 250;
 const DEFAULT_MARKET_WS_RECONNECT_AFTER_MS = 5_000;
 const MAX_CANDLES_PER_MESSAGE = 20;
 
-function nsToMs(timestamp: number | undefined): number {
+function timestampToMs(timestamp: number | undefined): number {
   if (timestamp === undefined) {
     return Date.now();
   }
@@ -90,11 +99,11 @@ function ageMs(timestamp: number | undefined, nowMs = Date.now()): number {
 }
 
 function levelPrice(level: BulkLevel): number | undefined {
-  return level.price ?? level.px;
+  return level.px;
 }
 
 function levelSize(level: BulkLevel): number {
-  return level.size ?? level.sz ?? 0;
+  return level.sz ?? 0;
 }
 
 function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: number): number {
@@ -103,6 +112,67 @@ function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: 
     return (bestBid + bestAsk) / 2;
   }
   return (bestAsk * bidSize + bestBid * askSize) / denominator;
+}
+
+function sortedBookSide(
+  levels: BulkLevel[],
+  side: "bid" | "ask",
+  nlevels?: number,
+): Array<[number, number]> {
+  return levels
+    .flatMap((level): Array<[number, number]> => {
+      const price = levelPrice(level);
+      const size = levelSize(level);
+      if (
+        price === undefined ||
+        !Number.isFinite(price) ||
+        !Number.isFinite(size) ||
+        price <= 0 ||
+        size <= 0
+      ) {
+        return [];
+      }
+      return [[price, size]];
+    })
+    .sort(([left], [right]) => (side === "bid" ? right - left : left - right))
+    .slice(0, nlevels);
+}
+
+function parseBookSnapshot(book: BulkBook, nlevels?: number): BookSnapshotParseResult {
+  const bids = sortedBookSide(book.levels?.[0] ?? [], "bid", nlevels);
+  const asks = sortedBookSide(book.levels?.[1] ?? [], "ask", nlevels);
+  const bestBid = bids[0]?.[0];
+  const bestAsk = asks[0]?.[0];
+  if (bestBid === undefined || bestAsk === undefined) {
+    return { ok: false, reason: "empty_book", bestBid, bestAsk };
+  }
+  if (bestBid >= bestAsk) {
+    return { ok: false, reason: "crossed_book", bestBid, bestAsk };
+  }
+  const length = Math.min(bids.length, asks.length);
+  const orderBookLevels: OrderBookLevel[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const bid = bids[index];
+    const ask = asks[index];
+    if (bid === undefined || ask === undefined) {
+      continue;
+    }
+    const [bidPrice, bidSize] = bid;
+    const [askPrice, askSize] = ask;
+    orderBookLevels.push({ bidPrice, bidSize, askPrice, askSize });
+  }
+  const topLevel = orderBookLevels[0];
+  if (topLevel === undefined) {
+    return { ok: false, reason: "empty_book", bestBid, bestAsk };
+  }
+  return {
+    ok: true,
+    bestBid,
+    bestAsk,
+    microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
+    vampPrice: calculateDepthVampPrice(orderBookLevels),
+    orderBookLevels,
+  };
 }
 
 function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
@@ -136,18 +206,24 @@ function dataOf(message: unknown): Record<string, unknown> {
   }
   const record = message as Record<string, unknown>;
   const data = record.data;
-  return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : record;
+  return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
 }
 
-function payloadOf(message: unknown, nestedKeys: string[]): Record<string, unknown> {
+function nestedRecord(data: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const nested = data[key];
+  return typeof nested === "object" && nested !== null && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : null;
+}
+
+function tickerOf(message: unknown): BulkTicker | null {
   const data = dataOf(message);
-  for (const key of nestedKeys) {
-    const nested = data[key];
-    if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
-      return nested as Record<string, unknown>;
-    }
-  }
-  return data;
+  return nestedRecord(data, "ticker") as BulkTicker | null;
+}
+
+function bookOf(message: unknown): BulkBook | null {
+  const data = dataOf(message);
+  return nestedRecord(data, "book") as BulkBook | null;
 }
 
 function crossPositionQty(positions: BulkPositionEntry[] | undefined, market: string): number {
@@ -166,14 +242,11 @@ function candlesOf(message: unknown): BulkCandle[] {
 export class BulkMarketFeed implements IMarketFeed {
   private readonly listeners = new Set<SnapshotListener>();
   private readonly unsubscribers: Array<() => Promise<void>> = [];
-  private readonly bidLevels = new Map<number, number>();
-  private readonly askLevels = new Map<number, number>();
   private lastCandleTs: number | null = null;
   private snapshot: MarketSnapshot | null = null;
   private accountPollTimer: ReturnType<typeof setInterval> | null = null;
   private marketWsWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private accountPollInFlight = false;
-  private marketResyncInFlight = false;
   private wsReconnectInFlight = false;
   private wsSubscribedAtMs: number | null = null;
   private lastWsBookReceivedAtMs: number | null = null;
@@ -216,7 +289,9 @@ export class BulkMarketFeed implements IMarketFeed {
     );
     for (const result of results) {
       if (result.status === "rejected") {
-        logger.warn(`BulkMarketFeed.disconnect unsubscribe failed: ${String(result.reason)}`);
+        logger.warn(
+          `BulkMarketFeed.disconnect unsubscribe failed: ${stringifyError(result.reason)}`,
+        );
       }
     }
     await this.client.ws.close();
@@ -253,32 +328,6 @@ export class BulkMarketFeed implements IMarketFeed {
     this.publish(this.snapshot);
   }
 
-  private async resyncMarketState(reason: string): Promise<void> {
-    const currentSnapshot = this.snapshot;
-    if (!this.isConnected() || currentSnapshot === null) {
-      return;
-    }
-    const [ticker, book] = await Promise.all([
-      this.client.market.ticker(this.params.market),
-      this.client.market.l2Book({ symbol: this.params.market, nlevels: this.params.nlevels }),
-    ]);
-    if (!this.isConnected()) {
-      return;
-    }
-    const seeded = this.snapshotFrom(ticker, book, {
-      marginRatio: currentSnapshot.marginRatio,
-      availableMarginUsd: currentSnapshot.availableMarginUsd ?? null,
-      accountUpdatedAt: currentSnapshot.accountUpdatedAt ?? null,
-      positionQty: currentSnapshot.positionQty ?? null,
-      positionUpdatedAt: currentSnapshot.positionUpdatedAt ?? null,
-    });
-    this.snapshot = seeded;
-    logger.info(
-      `bulk_market_feed.market_resynced market=${this.snapshot.market} reason=${reason} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} bookUpdatedAt=${this.snapshot.bookUpdatedAt ?? "null"} tickerUpdatedAt=${this.snapshot.tickerUpdatedAt ?? "null"}`,
-    );
-    this.publish(this.snapshot);
-  }
-
   private async subscribeWs(): Promise<void> {
     if (!this.isConnected()) {
       return;
@@ -291,7 +340,7 @@ export class BulkMarketFeed implements IMarketFeed {
       (message: unknown) => this.mergeTicker(message),
     );
     const book = await this.client.ws.subscribe(
-      { type: "l2Delta", symbol: this.params.market },
+      { type: "l2Snapshot", symbol: this.params.market, nlevels: this.params.nlevels },
       (message: unknown) => this.mergeBook(message),
     );
     const candle = await this.client.ws.subscribe(
@@ -308,7 +357,7 @@ export class BulkMarketFeed implements IMarketFeed {
       async () => candle.unsubscribe(),
     );
     logger.info(
-      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Delta,candle`,
+      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Snapshot,candle`,
     );
   }
 
@@ -327,7 +376,9 @@ export class BulkMarketFeed implements IMarketFeed {
       );
       for (const result of results) {
         if (result.status === "rejected") {
-          logger.warn(`BulkMarketFeed.reconnect unsubscribe failed: ${String(result.reason)}`);
+          logger.warn(
+            `BulkMarketFeed.reconnect unsubscribe failed: ${stringifyError(result.reason)}`,
+          );
         }
       }
       await this.client.ws.close();
@@ -348,28 +399,27 @@ export class BulkMarketFeed implements IMarketFeed {
     book: BulkBook,
     marginState: BulkMarginState,
   ): MarketSnapshot {
-    this.replaceLocalBook(book);
-    const bookLevels = this.bookLevelsFromLocalBook();
-    const topLevel = bookLevels[0];
-    if (topLevel === undefined) {
-      throw new Error(`No Bulk order book levels for ${this.params.market}`);
+    const parsedBook = parseBookSnapshot(book, this.params.nlevels);
+    if (!parsedBook.ok) {
+      throw new Error(`No valid Bulk order book snapshot for ${this.params.market}`);
     }
-    const bestBid = topLevel.bidPrice;
-    const bestAsk = topLevel.askPrice;
     const receivedAt = Date.now();
     const bookExchangeTimestamp =
-      typeof book.timestamp === "number" ? nsToMs(book.timestamp) : undefined;
+      typeof book.timestamp === "number" ? timestampToMs(book.timestamp) : undefined;
     const tickerExchangeTimestamp =
-      typeof ticker.timestamp === "number" ? nsToMs(ticker.timestamp) : undefined;
+      typeof ticker.timestamp === "number" ? timestampToMs(ticker.timestamp) : undefined;
     return {
       market: this.params.market,
-      bestBid,
-      bestAsk,
-      microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
-      vampPrice: calculateDepthVampPrice(bookLevels),
-      orderBookLevels: bookLevels,
+      bestBid: parsedBook.bestBid,
+      bestAsk: parsedBook.bestAsk,
+      microPrice: parsedBook.microPrice,
+      vampPrice: parsedBook.vampPrice,
+      orderBookLevels: parsedBook.orderBookLevels,
       markPrice:
-        ticker.markPrice ?? ticker.fairBookPx ?? ticker.lastPrice ?? (bestBid + bestAsk) / 2,
+        ticker.markPrice ??
+        ticker.fairBookPx ??
+        ticker.lastPrice ??
+        (parsedBook.bestBid + parsedBook.bestAsk) / 2,
       timestamp: receivedAt,
       bookUpdatedAt: receivedAt,
       tickerUpdatedAt: receivedAt,
@@ -393,13 +443,16 @@ export class BulkMarketFeed implements IMarketFeed {
     const receivedAt = Date.now();
     const previousMarkPrice = this.snapshot.markPrice;
     this.lastWsTickerReceivedAtMs = receivedAt;
-    const data = payloadOf(message, ["ticker"]);
+    const data = tickerOf(message);
+    if (data === null) {
+      return;
+    }
     const markPrice = Number(data.markPrice ?? data.fairBookPx ?? data.lastPrice);
     if (!Number.isFinite(markPrice)) {
       return;
     }
     const exchangeTimestamp =
-      typeof data.timestamp === "number" ? nsToMs(data.timestamp) : undefined;
+      typeof data.timestamp === "number" ? timestampToMs(data.timestamp) : undefined;
     this.snapshot = {
       ...quoteSnapshot(this.snapshot),
       markPrice,
@@ -424,37 +477,32 @@ export class BulkMarketFeed implements IMarketFeed {
     const previousBestBid = this.snapshot.bestBid;
     const previousBestAsk = this.snapshot.bestAsk;
     this.lastWsBookReceivedAtMs = receivedAt;
-    const data = payloadOf(message, ["l2Delta", "l2delta", "book"]) as BulkBook;
-    if (!this.applyBookDelta(data)) {
+    const data = bookOf(message);
+    if (data === null) {
       return;
     }
-    const bookLevels = this.bookLevelsFromLocalBook();
-    const topLevel = bookLevels[0];
-    if (topLevel === undefined) {
-      this.resyncMarketStateOnce("book_empty");
-      return;
-    }
-    const bestBid = topLevel.bidPrice;
-    const bestAsk = topLevel.askPrice;
-    if (bestBid >= bestAsk) {
-      this.resyncMarketStateOnce("book_crossed");
+    const parsedBook = parseBookSnapshot(data, this.params.nlevels);
+    if (!parsedBook.ok) {
+      logger.warn(
+        `bulk_market_feed.book_snapshot_invalid market=${this.params.market} reason=${parsedBook.reason} bestBid=${parsedBook.bestBid ?? "null"} bestAsk=${parsedBook.bestAsk ?? "null"}`,
+      );
       return;
     }
     const exchangeTimestamp =
-      typeof data.timestamp === "number" ? nsToMs(data.timestamp) : undefined;
+      typeof data.timestamp === "number" ? timestampToMs(data.timestamp) : undefined;
     this.snapshot = {
       ...quoteSnapshot(this.snapshot),
-      bestBid,
-      bestAsk,
-      microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
-      vampPrice: calculateDepthVampPrice(bookLevels),
-      orderBookLevels: bookLevels,
+      bestBid: parsedBook.bestBid,
+      bestAsk: parsedBook.bestAsk,
+      microPrice: parsedBook.microPrice,
+      vampPrice: parsedBook.vampPrice,
+      orderBookLevels: parsedBook.orderBookLevels,
       timestamp: receivedAt,
       bookUpdatedAt: receivedAt,
       bookReceivedAt: receivedAt,
       bookExchangeTimestamp: exchangeTimestamp,
     };
-    if (previousBestBid !== bestBid || previousBestAsk !== bestAsk) {
+    if (previousBestBid !== parsedBook.bestBid || previousBestAsk !== parsedBook.bestAsk) {
       logger.debug(
         `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
       );
@@ -492,7 +540,7 @@ export class BulkMarketFeed implements IMarketFeed {
     ) {
       return;
     }
-    const ts = nsToMs(timestamp);
+    const ts = timestampToMs(timestamp);
     if (this.lastCandleTs !== null && ts < this.lastCandleTs) {
       return;
     }
@@ -528,7 +576,7 @@ export class BulkMarketFeed implements IMarketFeed {
       void this.refreshAccountState()
         .catch((error) => {
           logger.warn(
-            `bulk_market_feed.account_poll_failed market=${this.params.market} error=${String(error)}`,
+            `bulk_market_feed.account_poll_failed market=${this.params.market} error=${stringifyError(error)}`,
           );
         })
         .finally(() => {
@@ -567,7 +615,7 @@ export class BulkMarketFeed implements IMarketFeed {
       );
       void this.reconnectWs(staleReason).catch((error) => {
         logger.warn(
-          `bulk_market_feed.ws_reconnect_failed market=${this.params.market} reason=${staleReason} error=${String(error)}`,
+          `bulk_market_feed.ws_reconnect_failed market=${this.params.market} reason=${staleReason} error=${stringifyError(error)}`,
         );
       });
     }, intervalMs);
@@ -599,22 +647,8 @@ export class BulkMarketFeed implements IMarketFeed {
     if (nowMs - lastBookMessageAt > staleAfterMs) {
       return "book_ws_stale";
     }
-    if (
-      this.lastWsBookReceivedAtMs !== null &&
-      this.snapshot?.bookExchangeTimestamp !== undefined &&
-      nowMs - this.snapshot.bookExchangeTimestamp > staleAfterMs
-    ) {
-      return "book_ws_stale";
-    }
     const lastTickerMessageAt = this.lastWsTickerReceivedAtMs ?? subscribedAt;
     if (nowMs - lastTickerMessageAt > staleAfterMs) {
-      return "ticker_ws_stale";
-    }
-    if (
-      this.lastWsTickerReceivedAtMs !== null &&
-      this.snapshot?.tickerExchangeTimestamp !== undefined &&
-      nowMs - this.snapshot.tickerExchangeTimestamp > staleAfterMs
-    ) {
       return "ticker_ws_stale";
     }
     return null;
@@ -639,95 +673,6 @@ export class BulkMarketFeed implements IMarketFeed {
     this.publish(this.snapshot);
   }
 
-  private replaceLocalBook(book: BulkBook): void {
-    this.bidLevels.clear();
-    this.askLevels.clear();
-    this.replaceSide(this.bidLevels, book.levels?.[0] ?? []);
-    this.replaceSide(this.askLevels, book.levels?.[1] ?? []);
-  }
-
-  private replaceSide(side: Map<number, number>, levels: BulkLevel[]): void {
-    for (const level of levels) {
-      const price = levelPrice(level);
-      const size = levelSize(level);
-      if (
-        price === undefined ||
-        !Number.isFinite(price) ||
-        !Number.isFinite(size) ||
-        price <= 0 ||
-        size <= 0
-      ) {
-        continue;
-      }
-      side.set(price, size);
-    }
-  }
-
-  private applyBookDelta(book: BulkBook): boolean {
-    const bidUpdates = book.levels?.[0] ?? [];
-    const askUpdates = book.levels?.[1] ?? [];
-    let changed = false;
-    changed = this.applySideDelta(this.bidLevels, bidUpdates) || changed;
-    changed = this.applySideDelta(this.askLevels, askUpdates) || changed;
-    return changed;
-  }
-
-  private applySideDelta(side: Map<number, number>, levels: BulkLevel[]): boolean {
-    let changed = false;
-    for (const level of levels) {
-      const price = levelPrice(level);
-      const size = levelSize(level);
-      if (price === undefined || !Number.isFinite(price) || !Number.isFinite(size) || price <= 0) {
-        continue;
-      }
-      if (size <= 0) {
-        changed = side.delete(price) || changed;
-        continue;
-      }
-      side.set(price, size);
-      changed = true;
-    }
-    return changed;
-  }
-
-  private bookLevelsFromLocalBook(): OrderBookLevel[] {
-    const bids = [...this.bidLevels.entries()]
-      .sort(([left], [right]) => right - left)
-      .slice(0, this.params.nlevels);
-    const asks = [...this.askLevels.entries()]
-      .sort(([left], [right]) => left - right)
-      .slice(0, this.params.nlevels);
-    const length = Math.min(bids.length, asks.length);
-    const levels: OrderBookLevel[] = [];
-    for (let index = 0; index < length; index += 1) {
-      const bid = bids[index];
-      const ask = asks[index];
-      if (bid === undefined || ask === undefined) {
-        continue;
-      }
-      const [bidPrice, bidSize] = bid;
-      const [askPrice, askSize] = ask;
-      levels.push({ bidPrice, bidSize, askPrice, askSize });
-    }
-    return levels;
-  }
-
-  private resyncMarketStateOnce(reason: string): void {
-    if (this.marketResyncInFlight) {
-      return;
-    }
-    this.marketResyncInFlight = true;
-    void this.resyncMarketState(reason)
-      .catch((error) => {
-        logger.warn(
-          `bulk_market_feed.market_resync_failed market=${this.params.market} reason=${reason} error=${String(error)}`,
-        );
-      })
-      .finally(() => {
-        this.marketResyncInFlight = false;
-      });
-  }
-
   private async fetchMarginState(options: { attempts?: number } = {}): Promise<BulkMarginState> {
     if (!this.params.accountId) {
       return {
@@ -746,7 +691,7 @@ export class BulkMarketFeed implements IMarketFeed {
         sleep: this.params.sleep,
         onRetry: (error, attempt, attempts) => {
           logger.warn(
-            `bulk_market_feed.margin_transient_retry market=${this.params.market} attempt=${attempt}/${attempts} error=${String(error)}`,
+            `bulk_market_feed.margin_transient_retry market=${this.params.market} attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
           );
         },
       },

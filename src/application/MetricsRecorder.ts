@@ -12,6 +12,7 @@ import type {
 } from "../domain/ports/IMetricsRepository.ts";
 import type { OrderGatewayEvent } from "../domain/ports/IOrderGateway.ts";
 import type { AppMode } from "../config.ts";
+import { stringifyError } from "../utils/errors.ts";
 import { logger } from "../utils/logger.ts";
 
 interface MetricsRecorderOptions {
@@ -70,7 +71,7 @@ export class MetricsBuffer {
 
   constructor(options: MetricsBufferOptions = {}) {
     this.normalCapacity = options.normalCapacity ?? 10_000;
-    this.criticalCapacity = options.criticalCapacity ?? 2_000;
+    this.criticalCapacity = options.criticalCapacity ?? 10_000;
   }
 
   enqueue(operation: MetricsWriteOperation): void {
@@ -181,7 +182,7 @@ export class MetricsFlushLoop {
     private readonly options: MetricsFlushLoopOptions = {},
   ) {
     this.batchSize = options.batchSize ?? 500;
-    this.drainTimeoutMs = options.drainTimeoutMs ?? 5_000;
+    this.drainTimeoutMs = options.drainTimeoutMs ?? 15_000;
     this.intervalMs = options.intervalMs ?? 500;
   }
 
@@ -211,7 +212,7 @@ export class MetricsFlushLoop {
         try {
           await operation.run();
         } catch (error) {
-          logger.warn(`metrics.flush_failed type=${operation.type} error=${String(error)}`);
+          logger.warn(`metrics.flush_failed type=${operation.type} error=${stringifyError(error)}`);
         } finally {
           this.inFlightCount -= 1;
         }
@@ -267,7 +268,7 @@ export class MetricsFlushLoop {
       `metrics.buffer_dropped dropped=${JSON.stringify(summary.dropped)} criticalBacklogExceeded=${summary.criticalBacklogExceeded}`,
     );
     await this.options.onDropSummary?.(summary).catch((error) => {
-      logger.warn(`metrics.drop_summary_record_failed error=${String(error)}`);
+      logger.warn(`metrics.drop_summary_record_failed error=${stringifyError(error)}`);
     });
   }
 }

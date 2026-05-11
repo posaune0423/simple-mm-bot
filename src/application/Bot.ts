@@ -1,6 +1,7 @@
 import type { Fill } from "../domain/entities/Fill.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
+import { stringifyError } from "../utils/errors.ts";
 import { logger } from "../utils/logger.ts";
 import { isTransientBulkError } from "../utils/transientBulk.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";
@@ -55,10 +56,10 @@ export class Bot {
       await this.runLoop(maxTicks);
     } catch (err) {
       if (this.wasStopRequested()) {
-        logger.warn(`bot.run_error_ignored_after_stop error=${String(err)}`);
+        logger.warn(`bot.run_error_ignored_after_stop error=${stringifyError(err)}`);
       } else {
         runError = err;
-        await this.metrics?.recordRuntimeHealth("error", "runtime_error", String(err));
+        await this.metrics?.recordRuntimeHealth("error", "runtime_error", stringifyError(err));
       }
     } finally {
       closePositionError = await this.cleanup();
@@ -137,11 +138,11 @@ export class Bot {
       if (!isTransientBulkError(error)) {
         throw error;
       }
-      logger.warn(`bot.initial_sync_transient_error error=${String(error)}`);
+      logger.warn(`bot.initial_sync_transient_error error=${stringifyError(error)}`);
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "initial_sync_transient_error",
-        String(error),
+        stringifyError(error),
       );
     });
   }
@@ -169,10 +170,15 @@ export class Bot {
       if (!isTransientBulkError(error)) {
         throw error;
       }
-      logger.warn(`bot.tick_transient_error tick=${tick} error=${String(error)}`);
-      await this.metrics?.recordRuntimeHealth("warn", "transient_tick_error", String(error), {
-        tick,
-      });
+      logger.warn(`bot.tick_transient_error tick=${tick} error=${stringifyError(error)}`);
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "transient_tick_error",
+        stringifyError(error),
+        {
+          tick,
+        },
+      );
       return "continue";
     }
   }
@@ -293,22 +299,27 @@ export class Bot {
       );
     } catch (error) {
       const latencyMs = Date.now() - startedAt;
-      logger.error(`bot.pause_quote_cancel_all_failed tick=${tick} error=${String(error)}`);
+      logger.error(`bot.pause_quote_cancel_all_failed tick=${tick} error=${stringifyError(error)}`);
       await this.metrics?.recordRuntimeHealth(
         "error",
         "pause_quote_cancel_all",
         "Failed to cancel open orders while quote refresh is paused",
-        { ...summary, latencyMs, success: false, error: String(error) },
+        { ...summary, latencyMs, success: false, error: stringifyError(error) },
       );
     }
   }
 
   private async syncCleanupFills(phase: string): Promise<void> {
     await this.orderGateway.syncFills?.().catch(async (error) => {
-      logger.warn(`bot.cleanup.sync_fills_failed phase=${phase} error=${String(error)}`);
-      await this.metrics?.recordRuntimeHealth("warn", "cleanup_sync_fills_failed", String(error), {
-        phase,
-      });
+      logger.warn(`bot.cleanup.sync_fills_failed phase=${phase} error=${stringifyError(error)}`);
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "cleanup_sync_fills_failed",
+        stringifyError(error),
+        {
+          phase,
+        },
+      );
     });
   }
 
@@ -316,12 +327,17 @@ export class Bot {
     await this.metrics?.recordMarketSnapshot(snapshot);
     await this.useCases.recordOhlcv.execute(snapshot).catch((err) => {
       logger.warn(
-        `bot.market_snapshot_record_failed market=${snapshot.market} ts=${snapshot.timestamp} error=${String(err)}`,
+        `bot.market_snapshot_record_failed market=${snapshot.market} ts=${snapshot.timestamp} error=${stringifyError(err)}`,
       );
-      void this.metrics?.recordRuntimeHealth("warn", "market_snapshot_record_failed", String(err), {
-        market: snapshot.market,
-        ts: snapshot.timestamp,
-      });
+      void this.metrics?.recordRuntimeHealth(
+        "warn",
+        "market_snapshot_record_failed",
+        stringifyError(err),
+        {
+          market: snapshot.market,
+          ts: snapshot.timestamp,
+        },
+      );
     });
   }
 
@@ -349,7 +365,7 @@ export class Bot {
       { timeoutMs },
     );
     void pendingTasks.catch((error) => {
-      logger.warn(`bot.event_tasks_detached_failed error=${String(error)}`);
+      logger.warn(`bot.event_tasks_detached_failed error=${stringifyError(error)}`);
     });
     if (this.eventTasks === pendingTasks) {
       this.eventTasks = Promise.resolve();

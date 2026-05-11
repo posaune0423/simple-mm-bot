@@ -95,7 +95,7 @@ bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report
 
 ## Data Policy
 
-- Use shared SQLite `data/mm.db` by default for live / paper / backtest telemetry.
+- Use shared SQLite `data/mm.db` by default via `DATABASE_URL=file:data/mm.db` for live / paper / backtest telemetry.
 - Do not create a DB per run by default. `trading_runs.id` separates runs and keeps multi-run analysis possible.
 - Use a separate DB only for destructive, reproducible, or isolated experiments with an explicit `--db data/tmp/<label>.db`.
 - Store evaluation results under `data/metrics/<run_id>/` or `data/metrics/latest/`. Do not write optimization results under `artifacts/`.

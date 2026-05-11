@@ -1,12 +1,13 @@
 import { createEnv } from "@t3-oss/env-core";
 import * as v from "valibot";
 
+import { DEFAULT_DATABASE_URL } from "./utils/databaseUrl.ts";
+
 export const env = createEnv({
   server: {
     CONFIG_PATH: v.optional(v.pipe(v.string(), v.minLength(1)), "config/config.bulk.beta.yml"),
     MODE: v.optional(v.picklist(["live", "paper", "backtest"])),
-    DATABASE_URL: v.optional(v.pipe(v.string(), v.url())),
-    DB_PATH: v.optional(v.pipe(v.string(), v.minLength(1)), "data/mm.db"),
+    DATABASE_URL: v.optional(v.pipe(v.string(), v.minLength(1)), DEFAULT_DATABASE_URL),
     SLACK_WEBHOOK_URL: v.optional(v.pipe(v.string(), v.url())),
     HL_WS_URL: v.optional(v.pipe(v.string(), v.url())),
     HL_HTTP_URL: v.optional(v.pipe(v.string(), v.url())),

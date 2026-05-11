@@ -2,21 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { parse as parseYaml } from "yaml";
 
 import { ConfigLoader } from "../../src/config.ts";
+import { DEFAULT_DATABASE_URL } from "../../src/utils/databaseUrl.ts";
 
 const DEFAULT_BULK_BETA_CONFIG_PATH = "config/config.bulk.beta.yml";
 const DEFAULT_CONFIG_PATH = DEFAULT_BULK_BETA_CONFIG_PATH;
-const DEFAULT_SQLITE_DB_PATH = "data/mm.db";
 
 describe("ConfigLoader", () => {
-  test("uses data/mm.db as the default SQLite database path", () => {
-    expect(DEFAULT_SQLITE_DB_PATH).toBe("data/mm.db");
+  test("uses DATABASE_URL as the default SQLite database setting", () => {
+    expect(DEFAULT_DATABASE_URL).toBe("file:data/mm.db");
   });
 
-  test("keeps the sample env file aligned with the default SQLite database path", async () => {
+  test("keeps the sample env file aligned with the default database URL", async () => {
     const envExample = await Bun.file(".env.example").text();
 
-    expect(envExample).toContain(`DB_PATH=${DEFAULT_SQLITE_DB_PATH}`);
-    expect(envExample).not.toContain("DB_PATH=data/mmbot.db");
+    expect(envExample).toContain(`DATABASE_URL=${DEFAULT_DATABASE_URL}`);
+    expect(envExample).not.toContain("DB_PATH=");
   });
 
   test("loads quote sizing from committed config", async () => {
@@ -24,6 +24,8 @@ describe("ConfigLoader", () => {
 
     expect(config.quoteEngine.sizing.positionSize).toBe(0.05);
     expect(config.quoteEngine.sizing.budgetUsd).toBe(250);
+    expect(config.risk.maxBookAgeMs).toBe(2500);
+    expect(config.risk.maxTickerAgeMs).toBe(2500);
   });
 
   test("loads committed Bulk beta config tuned to deploy the daily mock balance", async () => {
@@ -42,6 +44,7 @@ describe("ConfigLoader", () => {
     expect(config.connections.bulk.httpUrl).toBe("https://exchange-api.bulk.trade/api/v1");
     expect(config.connections.bulk.wsUrl).toBe("wss://exchange-ws1.bulk.trade");
     expect(config.connections.bulk.market).toBe("BTC-USD");
+    expect(config.market).toBe("BTC-USD");
     expect(config.connections.bulk.nlevels).toBe(20);
     expect(config.connections.bulk.timeoutMs).toBe(30_000);
     expect(config.connections.bulk.maxLeverage).toBe(50);
@@ -85,7 +88,8 @@ describe("ConfigLoader", () => {
     expect(config.risk.reduceTriggerQty).toBe(1.05);
     expect(config.risk.maxUnrealizedLossUsd).toBe(650);
     expect(config.risk.maxAdverseMoveBps).toBe(220);
-    expect(config.risk.maxBookAgeMs).toBe(1_100);
+    expect(config.risk.maxBookAgeMs).toBe(2500);
+    expect(config.risk.maxTickerAgeMs).toBe(2500);
     expect(config.bot.intervalMs).toBe(150);
     expect(config.bot.maxRestingMs).toBe(3_000);
     expect(config.shutdown.closePositionPolicy).toBe("always");
@@ -331,6 +335,7 @@ backtest:
       expect(config.connections.bulk.httpUrl).toBe("https://api.bulk.trade");
       expect(config.connections.bulk.wsUrl).toBe("wss://api.bulk.trade/ws");
       expect(config.connections.bulk.market).toBe("ETH-USD");
+      expect(config.market).toBe("ETH-USD");
       expect(config.connections.bulk.nlevels).toBe(20);
       expect(config.connections.bulk.privateKey).toBeDefined();
       expect(config.quoteEngine.defaultTimeInForce).toBe("GTC");
@@ -347,6 +352,63 @@ backtest:
         Bun.env.BULK_HTTP_URL = previousHttpUrl;
       }
       await configFile.delete();
+    }
+  });
+
+  test("normalizes the configured venue market on the loaded config", async () => {
+    const hyperliquidConfigFile = Bun.file("config/config.hyperliquid-test.yml");
+    await Bun.write(
+      hyperliquidConfigFile,
+      `
+mode: paper
+venue: hyperliquid
+
+connections:
+  hyperliquid:
+    wsUrl: wss://api.hyperliquid.xyz/ws
+    httpUrl: https://api.hyperliquid.xyz
+    market: ETH
+
+quoteEngine:
+  markWeight: 0.6
+  inventoryScale: 0.05
+  timeHorizonSec: 30
+  slideMarginThreshold: 0.12
+  sizing:
+    positionSize: 0.01
+  strategy:
+    type: avellaneda-stoikov
+    params:
+      gamma: 0.02
+      kappa: 1.5
+      kInv: 0.3
+
+risk:
+  imrBuffer: 0.15
+  mmrBuffer: 0.08
+  maxPositionQty: 0.05
+
+bot:
+  intervalMs: 1000
+
+backtest:
+  market: ETH
+  timeframe: 1h
+  from: "2024-01-01"
+  to: "2024-01-07"
+`,
+    );
+
+    const bulkConfig = await ConfigLoader.load({ configPath: "config/config.bulk.beta.yml" });
+    try {
+      const hyperliquidConfig = await ConfigLoader.load({
+        configPath: "config/config.hyperliquid-test.yml",
+      });
+
+      expect(bulkConfig.market).toBe("BTC-USD");
+      expect(hyperliquidConfig.market).toBe("ETH");
+    } finally {
+      await hyperliquidConfigFile.delete();
     }
   });
 });

@@ -41,9 +41,9 @@ describe("backtest and paper smoke", () => {
     const config = await ConfigLoader.load({ configPath: "config/config.backtest.yml" });
     config.backtest.from = start.toISOString();
     config.backtest.to = end.toISOString();
-    const previousDbPath = Bun.env.DB_PATH;
+    const previousDatabaseUrl = Bun.env.DATABASE_URL;
     const dbPath = join(tempDir, "backtest.db");
-    Bun.env.DB_PATH = dbPath;
+    Bun.env.DATABASE_URL = `file:${dbPath}`;
     try {
       const bot = await new DIContainer(config).buildBot();
       await bot.start(4);
@@ -52,7 +52,7 @@ describe("backtest and paper smoke", () => {
       expect(performance?.venue).toBe("bulk");
       expect(performance?.fill_rate).toBeGreaterThanOrEqual(0);
     } finally {
-      restoreEnv("DB_PATH", previousDbPath);
+      restoreEnv("DATABASE_URL", previousDatabaseUrl);
       restoreEnv("MODE", previousMode);
     }
   }, 30_000);
@@ -61,9 +61,9 @@ describe("backtest and paper smoke", () => {
     const previousMode = Bun.env.MODE;
     Bun.env.MODE = "paper";
     const config = await ConfigLoader.load({ configPath: "config/config.paper.yml" });
-    const previousDbPath = Bun.env.DB_PATH;
+    const previousDatabaseUrl = Bun.env.DATABASE_URL;
     const dbPath = join(tempDir, "paper.db");
-    Bun.env.DB_PATH = dbPath;
+    Bun.env.DATABASE_URL = `file:${dbPath}`;
     try {
       const bot = await new DIContainer(config).buildBot();
       await bot.start(2);
@@ -72,7 +72,7 @@ describe("backtest and paper smoke", () => {
       expect(performance?.venue).toBe("bulk");
       expect(performance?.fill_rate).toBeGreaterThanOrEqual(0);
     } finally {
-      restoreEnv("DB_PATH", previousDbPath);
+      restoreEnv("DATABASE_URL", previousDatabaseUrl);
       restoreEnv("MODE", previousMode);
     }
   }, 30_000);

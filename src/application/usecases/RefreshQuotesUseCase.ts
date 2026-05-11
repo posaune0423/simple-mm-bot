@@ -12,6 +12,7 @@ import type { IPositionRepository } from "../../domain/ports/IPositionRepository
 import type { IQuoteQualityRepository } from "../../domain/ports/IQuoteQualityRepository.ts";
 import type { QuoteSideQuality } from "../../domain/QuoteQuality.ts";
 import type { QuoteControls } from "../../domain/QuoteControls.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import type { MetricsRecorder } from "../MetricsRecorder.ts";
 import {
   OrderManager,
@@ -22,7 +23,7 @@ import { logger } from "../../utils/logger.ts";
 
 const NORMAL_PASSIVE_TOUCH_MARGIN_BPS = 0.25;
 const REDUCE_PASSIVE_TOUCH_MARGIN_BPS = 0.05;
-const MAX_OPEN_QUOTE_TOUCH_STALENESS_MS = 750;
+const MAX_OPEN_QUOTE_TOUCH_STALENESS_MS = 1_500;
 const EPOCH_MS_LOWER_BOUND = 1_000_000_000_000;
 const MOMENTUM_GUARD_THRESHOLD_BPS = 0.05;
 const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
@@ -74,7 +75,7 @@ export class RefreshQuotesUseCase {
       await this.metrics.recordRuntimeHealth(level, code, message, rawSummary);
     } catch (error) {
       logger.warn(
-        `refresh_quotes.runtime_health_record_failed code=${code} error=${String(error)}`,
+        `refresh_quotes.runtime_health_record_failed code=${code} error=${stringifyError(error)}`,
       );
     }
   }
@@ -235,11 +236,11 @@ export class RefreshQuotesUseCase {
       },
     );
     if (activeOrders.length === 0) {
-      logger.warn(
+      logger.info(
         `refresh_quotes.no_active_orders market=${snapshot.market} targetCount=${targetOrders.length} rejectedOrSkipped=true`,
       );
       await this.recordRuntimeHealth(
-        "warn",
+        "info",
         "quote_placement_no_active_orders",
         "No quote orders were submitted",
         { market: snapshot.market, targetCount: targetOrders.length },
@@ -270,11 +271,15 @@ export class RefreshQuotesUseCase {
     await this.metrics?.recordMarketSnapshot(touchSnapshot);
     const skipReason = quoteSkipReason(order, touchSnapshot);
     if (skipReason !== null) {
-      logger.warn(
-        `refresh_quotes.quote_side_skipped market=${order.market} side=${order.side} intent=${order.intent} reason=${skipReason} trendBps=${trendBps.toFixed(4)} touchStalenessMs=${touchStalenessMs(touchSnapshot)}`,
-      );
+      const healthLevel = quoteSkipHealthLevel(skipReason);
+      const logMessage = `refresh_quotes.quote_side_skipped market=${order.market} side=${order.side} intent=${order.intent} reason=${skipReason} trendBps=${trendBps.toFixed(4)} touchStalenessMs=${touchStalenessMs(touchSnapshot)}`;
+      if (healthLevel === "warn") {
+        logger.warn(logMessage);
+      } else {
+        logger.debug(logMessage);
+      }
       await this.recordRuntimeHealth(
-        "warn",
+        healthLevel,
         "quote_side_skipped",
         "Skipped quote side before placement",
         {
@@ -469,6 +474,10 @@ function quoteSkipReason(
     return "uptrend_open_ask";
   }
   return null;
+}
+
+function quoteSkipHealthLevel(reason: string): "info" | "warn" {
+  return reason === "stale_touch" ? "warn" : "info";
 }
 
 function isStaleEpochSnapshot(snapshot: MarketSnapshot): boolean {

@@ -151,6 +151,7 @@ const appConfigSchema = v.variant("venue", [
 ]);
 
 export type AppConfig = v.InferOutput<typeof appConfigSchema>;
+export type LoadedAppConfig = AppConfig & { market: string };
 export type AppMode = AppConfig["mode"];
 
 interface LoadConfigOptions {
@@ -195,7 +196,17 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
   };
 }
 
-function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, AppError> {
+function normalizeConfig(config: AppConfig): LoadedAppConfig {
+  return {
+    ...config,
+    market:
+      config.venue === "bulk"
+        ? config.connections.bulk.market
+        : config.connections.hyperliquid.market,
+  };
+}
+
+function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, AppError> {
   const configPath = options.configPath ?? env.CONFIG_PATH;
 
   return tryCatchAsync(Bun.file(configPath).text(), (error) =>
@@ -203,7 +214,10 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, App
   ).andThen((text) =>
     fromResult(
       tryCatch(
-        () => applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
+        () =>
+          normalizeConfig(
+            applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
+          ),
         (error) => createAppError("config.invalid", "Config validation failed", error),
       ),
     ),
@@ -211,7 +225,7 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, App
 }
 
 export class ConfigLoader {
-  static async load(options: LoadConfigOptions = {}): Promise<AppConfig> {
+  static async load(options: LoadConfigOptions = {}): Promise<LoadedAppConfig> {
     const result = await loadConfig(options);
     if (result.isErr()) {
       throw result.error;

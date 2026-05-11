@@ -225,9 +225,9 @@ Runtime default は `src/env.ts`、Drizzle schema / migration path は `drizzle.
 生成データは原則 `data/` 配下へ置く。`src/`、`scripts/`、`docs/` の source file 生成とは分け、local runtime / agent loop が読む state として扱う。
 
 - `data/mm.db`
-  - default SQLite DB。`DATABASE_URL` がなく、`DB_PATH` も未指定の場合に live / paper / backtest / metrics scripts が読む。
+  - default SQLite DB。`DATABASE_URL=file:data/mm.db` として live / paper / backtest / metrics scripts が読む。
   - 通常の backtest、paper、live optimization はこの同一 DB を共有する。`trading_runs.id` と mode / venue / market / capitalMode で run を分離し、複数 run の比較や latest run 評価を DB 内で行う。
-  - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `--db data/tmp/<label>.db` や一時 path を明示する。
+  - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `DATABASE_URL=file:data/tmp/<label>.db`、`--db data/tmp/<label>.db`、または一時 path を明示する。
 - `data/metrics/`
   - bot 性能評価結果の格納先。
   - `bun run metrics:evaluate` は `evaluation.json` を `data/metrics/<run_id>/`、または明示した `--output-dir` に書く。

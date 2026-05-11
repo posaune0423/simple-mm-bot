@@ -23,7 +23,7 @@ bun run report:generate -- --mode live --venue hyperliquid --period both --outpu
 - `--venue` venue名 (例: `hyperliquid`, `bulk`)。未指定で全venue
 - `--period` `24h` | `7d` | `both` (default: `both`)
 - `--output` 出力ディレクトリ (default: `docs/reports`)
-- `--db` SQLiteパス (default: `Bun.env.DB_PATH ?? "data/mm.db"`)
+- `--db` SQLiteパス (default: `DATABASE_URL=file:data/mm.db`)
 - `--now` epoch ms — テスト/再現用。本番は省略
 
 ## 出力

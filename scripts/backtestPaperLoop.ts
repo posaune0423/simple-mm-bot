@@ -5,18 +5,14 @@ import { ResultAsync } from "neverthrow";
 import { DIContainer } from "../src/application/di.ts";
 import { ConfigLoader } from "../src/config.ts";
 import type { PerformanceMetrics } from "../src/domain/entities/PerformanceMetrics.ts";
+import { resolveSqliteDatabasePath } from "../src/utils/databaseUrl.ts";
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
 import type { AppError } from "../src/utils/errors.ts";
 import { createAppError, formatAppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { logger } from "../src/utils/logger.ts";
-import {
-  BACKTEST_CONFIG_PATH,
-  DEFAULT_SQLITE_DB_PATH,
-  PAPER_CONFIG_PATH,
-  STRATEGY_RUNS_DIR,
-} from "./lib/paths.ts";
+import { BACKTEST_CONFIG_PATH, PAPER_CONFIG_PATH, STRATEGY_RUNS_DIR } from "./lib/paths.ts";
 import { evaluateMetricsRun, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 
 interface BacktestPaperLoopSummary {
@@ -64,7 +60,7 @@ export function resolveBacktestPaperLoopOptions(
     from: options.from ?? "2024-01-01",
     to: options.to ?? "2024-01-07",
     paperDurationMin: Number(options["paper-duration-min"] ?? "1"),
-    dbPath: options.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH,
+    dbPath: options.db ?? resolveSqliteDatabasePath(Bun.env.DATABASE_URL),
   };
 }
 
@@ -101,16 +97,24 @@ function buildBot(
       config.mode = mode;
       config.backtest.from = backtestWindow?.from ?? config.backtest.from;
       config.backtest.to = backtestWindow?.to ?? config.backtest.to;
-      const previousDbPath = Bun.env.DB_PATH;
-      Bun.env.DB_PATH = dbPath;
+      const previousDatabaseUrl = Bun.env.DATABASE_URL;
+      Bun.env.DATABASE_URL = `file:${dbPath}`;
       try {
         return await new DIContainer(config).buildBot();
       } finally {
-        Bun.env.DB_PATH = previousDbPath;
+        restoreEnv("DATABASE_URL", previousDatabaseUrl);
       }
     }),
     (error) => createAppError("loop.build_failed", "Failed to build bot runtime", error),
   );
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete Bun.env[key];
+    return;
+  }
+  Bun.env[key] = value;
 }
 
 function loadLatestRunReport(

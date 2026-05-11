@@ -5,8 +5,7 @@ import {
   postSlackWebhook,
   type SlackWebhookMessage,
 } from "../lib/slack/index.ts";
-import type { AppError } from "./errors.ts";
-import { formatAppError } from "./errors.ts";
+import { describeError, type ErrorDescription, stringifyError } from "./errors.ts";
 import { logger } from "./logger.ts";
 
 interface FatalErrorSlackContext {
@@ -14,10 +13,6 @@ interface FatalErrorSlackContext {
   venue?: string;
   market?: string;
   configPath?: string;
-}
-
-function isAppError(error: unknown): error is AppError {
-  return typeof error === "object" && error !== null && "code" in error && "message" in error;
 }
 
 const MAX_TEXT = 3000;
@@ -32,74 +27,20 @@ function truncateText(value: string, max: number): string {
   return `${value.slice(0, max - 3)}...`;
 }
 
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function errorReason(error: unknown): {
-  code?: string;
-  title: string;
-  reason: string;
-  cause?: string;
-  details: string;
-  stack?: string;
-} {
-  if (isAppError(error)) {
-    return {
-      code: error.code,
-      title: error.code,
-      reason: error.message,
-      cause: error.cause === undefined ? undefined : errorCauseText(error.cause),
-      details: formatAppError(error),
-      stack: error.cause instanceof Error ? error.cause.stack : undefined,
-    };
-  }
-
-  if (error instanceof Error) {
-    return {
-      title: error.name || "Error",
-      reason: error.message || String(error),
-      details: error.stack ?? error.message,
-      stack: error.stack,
-    };
-  }
-
-  const reason = typeof error === "string" ? error : safeStringify(error);
-  return {
-    title: "Error",
-    reason,
-    details: reason,
-  };
-}
-
-function errorCauseText(cause: unknown): string {
-  if (cause instanceof Error) {
-    return cause.message;
-  }
-  if (typeof cause === "string") {
-    return cause;
-  }
-  return safeStringify(cause);
-}
-
 function formatBotStateValues(context: FatalErrorSlackContext): string[] {
   return [context.mode, context.venue, context.market, context.configPath]
     .filter((value): value is string => value !== undefined)
     .map((value) => `\`${escapeSlackText(truncateText(value, MAX_FIELD))}\``);
 }
 
-function fallbackAttachmentText(reason: ReturnType<typeof errorReason>): string {
+function fallbackAttachmentText(reason: ErrorDescription): string {
   return truncateText(`${reason.title}: ${reason.reason}`, MAX_TEXT);
 }
 
 function buildAttachmentText(input: {
   emoji: string;
   level: string;
-  reason: ReturnType<typeof errorReason>;
+  reason: ErrorDescription;
   context: FatalErrorSlackContext;
 }): string {
   const botStateValues = formatBotStateValues(input.context);
@@ -145,7 +86,7 @@ function buildFatalErrorSlackMessage(
   const level = getErrorLevel(error);
   const emoji = ERROR_LEVEL_TO_EMOJI[level];
   const color = ERROR_LEVEL_TO_SLACK_COLOR[level];
-  const reason = errorReason(error);
+  const reason = describeError(error);
 
   return {
     attachments: [
@@ -168,6 +109,6 @@ export async function notifyFatalErrorToSlack(
   try {
     await postSlackWebhook(webhookUrl, buildFatalErrorSlackMessage(error, context));
   } catch (notifyError) {
-    logger.warn(`slack_notification_failed: ${String(notifyError)}`);
+    logger.warn(`slack_notification_failed: ${stringifyError(notifyError)}`);
   }
 }

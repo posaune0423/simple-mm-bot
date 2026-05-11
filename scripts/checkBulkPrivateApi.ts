@@ -1,9 +1,10 @@
 import { BulkClient } from "bulk-ts-sdk";
 
 import { ConfigLoader } from "../src/config.ts";
-import { DEFAULT_BULK_BETA_CONFIG_PATH } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
+import { getErrorName, stringifyError } from "../src/utils/errors.ts";
 import { logger } from "../src/utils/logger.ts";
+import { DEFAULT_BULK_BETA_CONFIG_PATH } from "./lib/paths.ts";
 
 interface CheckResult {
   ok: boolean;
@@ -32,10 +33,6 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
-function errorName(error: unknown): string | undefined {
-  return error instanceof Error ? error.name : undefined;
-}
-
 function errorStatus(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null || !("status" in error)) {
     return undefined;
@@ -55,8 +52,8 @@ export function summarizeError(
   error: unknown,
 ): Pick<CheckResult, "error" | "name" | "status" | "data"> {
   return {
-    error: String(error),
-    name: errorName(error),
+    error: stringifyError(error),
+    name: getErrorName(error),
     status: errorStatus(error),
     data: errorData(error),
   };
@@ -196,7 +193,7 @@ async function main(argv: string[]): Promise<void> {
 
 if (import.meta.main) {
   void main(Bun.argv.slice(2)).catch((error) => {
-    logger.error(String(error));
+    logger.error(stringifyError(error));
     process.exitCode = 1;
   });
 }

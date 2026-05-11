@@ -48,12 +48,12 @@ describe("BulkMarketFeed", () => {
           return {
             levels: [
               [
-                { price: 99, size: 2 },
-                { price: 98, size: 4 },
+                { px: 99, sz: 2 },
+                { px: 98, sz: 4 },
               ],
               [
-                { price: 101, size: 1 },
-                { price: 102, size: 3 },
+                { px: 101, sz: 1 },
+                { px: 102, sz: 3 },
               ],
             ],
           };
@@ -108,12 +108,12 @@ describe("BulkMarketFeed", () => {
           return {
             levels: [
               [
-                { price: 0, size: 2 },
-                { price: 99, size: 2 },
+                { px: 0, sz: 2 },
+                { px: 99, sz: 2 },
               ],
               [
-                { price: 101, size: 1 },
-                { price: 102, size: 3 },
+                { px: 101, sz: 1 },
+                { px: 102, sz: 3 },
               ],
             ],
           };
@@ -152,7 +152,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 2 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 2 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -178,14 +178,14 @@ describe("BulkMarketFeed", () => {
         "bulk_market_feed.snapshot_seeded market=BTC-USD bestBid=99 bestAsk=101 markPrice=101 marginRatio=null availableMarginUsd=null",
       );
       expect(logs.messages).toContain(
-        "bulk_market_feed.ws_subscribed market=BTC-USD topics=ticker,l2Delta,candle",
+        "bulk_market_feed.ws_subscribed market=BTC-USD topics=ticker,l2Snapshot,candle",
       );
     } finally {
       logs.restore();
     }
   });
 
-  test("updates snapshot from websocket ticker and L2 delta messages", async () => {
+  test("updates snapshot from websocket ticker and L2 snapshot messages", async () => {
     const handlers: Array<(message: unknown) => void> = [];
     const client = {
       market: {
@@ -194,7 +194,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -221,25 +221,19 @@ describe("BulkMarketFeed", () => {
     });
 
     await feed.connect();
-    handlers[0]?.({ data: { markPrice: 102, timestamp: 1_700_000_001_000 * 1_000_000 } });
-    const beforeDelta = Date.now();
-    handlers[1]?.({
-      data: {
-        book: {
-          updateType: "delta",
-          levels: [[{ px: 100, sz: 3 }], []],
-          timestamp: 1_700_000_002_000 * 1_000_000,
-        },
-      },
+    handlers[0]?.({
+      data: { ticker: { markPrice: 102, timestamp: 1_700_000_001_000 * 1_000_000 } },
     });
+    const beforeSnapshot = Date.now();
     handlers[1]?.({
       data: {
         book: {
-          updateType: "delta",
           levels: [
-            [],
             [
-              { px: 101, sz: 0 },
+              { px: 100, sz: 3 },
+              { px: 99, sz: 5 },
+            ],
+            [
               { px: 104, sz: 1 },
               { px: 105, sz: 2 },
             ],
@@ -248,16 +242,6 @@ describe("BulkMarketFeed", () => {
         },
       },
     });
-    handlers[1]?.({
-      data: {
-        book: {
-          updateType: "delta",
-          levels: [[{ px: 99, sz: 5 }], []],
-          timestamp: 1_700_000_002_000 * 1_000_000,
-        },
-      },
-    });
-
     const snapshot = await feed.getSnapshot();
     expect(snapshot.markPrice).toBe(102);
     expect(snapshot.bestBid).toBe(100);
@@ -268,8 +252,8 @@ describe("BulkMarketFeed", () => {
       { bidPrice: 100, bidSize: 3, askPrice: 104, askSize: 1 },
       { bidPrice: 99, bidSize: 5, askPrice: 105, askSize: 2 },
     ]);
-    expect(snapshot.timestamp).toBeGreaterThanOrEqual(beforeDelta);
-    expect(snapshot.bookUpdatedAt).toBeGreaterThanOrEqual(beforeDelta);
+    expect(snapshot.timestamp).toBeGreaterThanOrEqual(beforeSnapshot);
+    expect(snapshot.bookUpdatedAt).toBeGreaterThanOrEqual(beforeSnapshot);
     expect(snapshot.bookExchangeTimestamp).toBe(1_700_000_002_000);
     expect(snapshot.tickerExchangeTimestamp).toBe(1_700_000_001_000);
     expect(snapshot.marginRatio).toBe(0.75);
@@ -288,7 +272,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: 1_700_000_000_000 * 1_000_000,
           };
         },
@@ -343,7 +327,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: 1_700_000_000_000 * 1_000_000,
           };
         },
@@ -400,7 +384,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -459,7 +443,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -501,20 +485,15 @@ describe("BulkMarketFeed", () => {
         ],
       },
     });
-    handlers[0]?.({ data: { markPrice: 106, timestamp: 1_700_000_010_000 * 1_000_000 } });
+    handlers[0]?.({
+      data: { ticker: { markPrice: 106, timestamp: 1_700_000_010_000 * 1_000_000 } },
+    });
     handlers[1]?.({
       data: {
         book: {
-          updateType: "delta",
-          levels: [
-            [{ price: 104, size: 1 }],
-            [
-              { price: 101, size: 0 },
-              { price: 108, size: 1 },
-            ],
-          ],
+          levels: [[{ px: 104, sz: 1 }], [{ px: 108, sz: 1 }]],
+          timestamp: 1_700_000_020_000 * 1_000_000,
         },
-        timestamp: 1_700_000_020_000 * 1_000_000,
       },
     });
 
@@ -539,7 +518,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -586,7 +565,7 @@ describe("BulkMarketFeed", () => {
     expect(snapshots.at(-1)).toEqual({ timestamp: 1_700_001_440_000, volume: 24 });
   });
 
-  test("ignores empty websocket L2 deltas after initial seed", async () => {
+  test("ignores empty websocket L2 snapshots after initial seed", async () => {
     const handlers: Array<(message: unknown) => void> = [];
     const client = {
       market: {
@@ -595,7 +574,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -618,7 +597,6 @@ describe("BulkMarketFeed", () => {
     handlers[1]?.({
       data: {
         book: {
-          updateType: "delta",
           levels: [[], []],
           timestamp: 1_700_000_002_000 * 1_000_000,
         },
@@ -631,9 +609,10 @@ describe("BulkMarketFeed", () => {
     expect(snapshot.timestamp).toBeGreaterThan(1_000_000_000_000);
   });
 
-  test("resyncs from REST when an L2 delta crosses the local book", async () => {
+  test("ignores crossed websocket L2 snapshots without refreshing REST", async () => {
     const handlers: Array<(message: unknown) => void> = [];
     let bookCalls = 0;
+    const logs = captureLogs();
     const client = {
       market: {
         async ticker() {
@@ -643,10 +622,10 @@ describe("BulkMarketFeed", () => {
           bookCalls += 1;
           return bookCalls === 1
             ? {
-                levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+                levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
               }
             : {
-                levels: [[{ price: 98, size: 2 }], [{ price: 102, size: 2 }]],
+                levels: [[{ px: 98, sz: 2 }], [{ px: 102, sz: 2 }]],
                 timestamp: 1_700_000_003_000 * 1_000_000,
               };
         },
@@ -664,24 +643,30 @@ describe("BulkMarketFeed", () => {
         async close() {},
       },
     };
-    const feed = new BulkMarketFeed(client, { market: "ETH-USD", nlevels: 20 });
+    try {
+      const feed = new BulkMarketFeed(client, { market: "ETH-USD", nlevels: 20 });
 
-    await feed.connect();
-    handlers[1]?.({
-      data: {
-        book: {
-          updateType: "delta",
-          levels: [[{ price: 103, size: 1 }], []],
-          timestamp: 1_700_000_002_000 * 1_000_000,
+      await feed.connect();
+      handlers[1]?.({
+        data: {
+          book: {
+            levels: [[{ px: 103, sz: 1 }], [{ px: 101, sz: 1 }]],
+            timestamp: 1_700_000_002_000 * 1_000_000,
+          },
         },
-      },
-    });
-    await waitFor(() => bookCalls >= 2);
-    await Bun.sleep(1);
+      });
+      await Bun.sleep(1);
 
-    const snapshot = await feed.getSnapshot();
-    expect(snapshot.bestBid).toBe(98);
-    expect(snapshot.bestAsk).toBe(102);
+      const snapshot = await feed.getSnapshot();
+      expect(bookCalls).toBe(1);
+      expect(snapshot.bestBid).toBe(99);
+      expect(snapshot.bestAsk).toBe(101);
+      expect(logs.messages).toContain(
+        "bulk_market_feed.book_snapshot_invalid market=ETH-USD reason=crossed_book bestBid=103 bestAsk=101",
+      );
+    } finally {
+      logs.restore();
+    }
   });
 
   test("fails closed when account margin lookup fails with an account id", async () => {
@@ -692,7 +677,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -731,7 +716,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
           };
         },
       },
@@ -788,11 +773,11 @@ describe("BulkMarketFeed", () => {
           bookCalls += 1;
           return bookCalls === 1
             ? {
-                levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+                levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
                 timestamp: staleTs,
               }
             : {
-                levels: [[{ price: 104, size: 1 }], [{ price: 106, size: 1 }]],
+                levels: [[{ px: 104, sz: 1 }], [{ px: 106, sz: 1 }]],
                 timestamp: Date.now(),
               };
         },
@@ -829,9 +814,6 @@ describe("BulkMarketFeed", () => {
       expect(logs.messages.some((message) => message.includes("market_stale_detected"))).toBe(
         false,
       );
-      expect(logs.messages.some((message) => message.includes("market_rest_refreshed"))).toBe(
-        false,
-      );
     } finally {
       logs.restore();
     }
@@ -849,7 +831,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: staleTs,
           };
         },
@@ -898,7 +880,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: staleTs,
           };
         },
@@ -941,7 +923,7 @@ describe("BulkMarketFeed", () => {
     expect(closeCalls).toBeGreaterThanOrEqual(2);
   });
 
-  test("reconnects websocket subscriptions when book frames carry stale exchange timestamps", async () => {
+  test("keeps websocket subscriptions when received frames carry stale exchange timestamps", async () => {
     const handlers: Array<(message: unknown) => void> = [];
     let subscribeCalls = 0;
     let closeCalls = 0;
@@ -953,7 +935,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: Date.now() * 1_000_000,
           };
         },
@@ -986,13 +968,12 @@ describe("BulkMarketFeed", () => {
     await feed.connect();
     const frameTimer = setInterval(() => {
       handlers[0]?.({
-        data: { markPrice: 100, timestamp: Date.now() * 1_000_000 },
+        data: { ticker: { markPrice: 100, timestamp: Date.now() * 1_000_000 } },
       });
       handlers[1]?.({
         data: {
           book: {
-            updateType: "delta",
-            levels: [[{ price: 99, size: 1.1 }], []],
+            levels: [[{ px: 99, sz: 1.1 }], [{ px: 101, sz: 1 }]],
             timestamp: (Date.now() - 10_000) * 1_000_000,
           },
         },
@@ -1000,15 +981,15 @@ describe("BulkMarketFeed", () => {
     }, 5);
     frameTimer.unref();
 
-    try {
-      await waitFor(() => closeCalls >= 1);
-    } finally {
-      clearInterval(frameTimer);
-      await feed.disconnect();
-    }
+    await Bun.sleep(80);
+    expect(closeCalls).toBe(0);
+    expect(subscribeCalls).toBe(3);
 
-    expect(subscribeCalls).toBeGreaterThanOrEqual(6);
-    expect(unsubscribeCalls).toBeGreaterThanOrEqual(3);
+    clearInterval(frameTimer);
+    await feed.disconnect();
+
+    expect(closeCalls).toBe(1);
+    expect(unsubscribeCalls).toBe(3);
   });
 
   test("does not resubscribe after disconnect during in-flight stale recovery", async () => {
@@ -1023,7 +1004,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: staleTs,
           };
         },
@@ -1074,7 +1055,7 @@ describe("BulkMarketFeed", () => {
         },
         async l2Book() {
           return {
-            levels: [[{ price: 99, size: 1 }], [{ price: 101, size: 1 }]],
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
             timestamp: Date.now(),
           };
         },
