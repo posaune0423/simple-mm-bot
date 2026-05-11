@@ -469,7 +469,6 @@ export class BulkOrderGateway implements IOrderGateway {
     await this.publishOrderEvent({
       action: "cancel",
       orderId: id,
-      intent: "quote",
       latencyMs: Date.now() - submittedAt,
       rawSummary: { request: "cancelOrder" },
     });

@@ -48,15 +48,16 @@ live最適化の回答には必ず次のsectionを含める。
 
 live最適化の回答では、bot修正案を出す前に必ず以下を `metrics:evaluate` / `metrics:report` から取得・分析する。
 
+- **Metric policy**: summed markoutを主KPIにしない。bps正規化average/VW markout、notional加重EV、tail loss、horizon coverage、bucket evidenceで判断する。funding/reward/external contextが無い場合は0推定せず `unavailable` とする。
 - **Run identity**: run id、mode、venue、market、`capitalMode`、strategy name、git sha/dirty、config snapshot、開始/終了時刻。
 - **Data health**: fill count、5s/30s/300s markout coverage、snapshot freshness、raw field coverage。fill数やcoverage不足ならtuningしない。
 - **PnL edge**: net PnL、trade PnL、fee/rebate、PnL per volume bps、max drawdown。
-- **Execution quality**: 5s/30s/300s average/VW markout、30s tail、horizon別 adverse selection、spread capture、realized spread。
+- **Execution quality**: 5s/30s/300s average/VW markout、30s p10/p5/p1/worst tail、horizon別 adverse selection、spread capture、realized spread。
 - **Order quality**: submit数、fill rate、reject rate、cancel rate、cancel-before-fill rate、平均latency、平均order live time。
 - **Maker quality**: maker ratio と設定TIF。Bulk quoteは`ALO`前提。maker ratioが低い場合はvolume増加より先にtaker混入を調べる。
 - **Quote competitiveness**: quote distance to mid/best、market spread、stale rate。0-fill runが続く場合はsize変更より先にここを見る。
 - **Side/intent split**: buy/sell、quote/reduce別のfill count、notional、PnL、markout、adverse selection。toxicなopen sideだけ止める/広げる/縮める。reduce-only sideは残す。
-- **Inventory/risk**: average/max position、position skew、close cost、risk guard hit、shutdown close成功。
+- **Inventory/risk**: average/max abs position、position skew、reduce/hard-reduce count、min margin ratio、close cost、risk guard hit、shutdown close成功。
 - **Volume pace**: current notional、**50M/15d** に対するprojected pace、required multiplier、floor未達かどうか。150M/14dはrebate tier参考値として別に報告する。
 - **Live/backtest gap**: live canaryのfill count、fill rate、notional/minを最新backtest候補と比較する。backtestはfill-richなのにliveが0-4 fillsなら、fill modelまたはquote competitivenessのgapを疑う。
 
@@ -116,7 +117,7 @@ bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report
    - data health、PnL、markout、order quality、inventory、runtime healthを見る。
    - negative PnLの要因を、fee負け、negative markout、adverse selection、fill不足、live/backtest fill gap、inventory偏り、reject/cancel/close失敗、stale feed、高latencyに分解する。
    - maker fee tierが0 bpsまたは-1 bpsに近い場合は、現在のnet edgeとtier到達後のfee-adjusted edgeを分けて評価する。
-   - reportをbucket evidenceへ変換する。raw dataがある場合は、最低でもside、level、quote age、market freshness bucketを見る。
+   - reportをbucket evidenceへ変換する。raw dataがある場合は、最低でもside、intent、level、quote-age (`<250ms`, `250-500ms`, `500-1000ms`, `1000-3000ms`, `3000ms+`)、market freshness bucketを見る。各bucketは fill count、notional、VW 5s/30s markout、30s p5/p1 tail、net EV bps を含める。
 
 3. **Market状況確認**
    - top book spread、mid/micro/mark、top depth、imbalance、volatility、stalenessを確認する。

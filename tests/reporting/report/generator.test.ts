@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { generateReport } from "../../../src/lib/reporting/report/generator.ts";
-import { sampleFills } from "../fixtures.ts";
+import { buildFill, sampleFills } from "../fixtures.ts";
 
 describe("generateReport", () => {
   const tempDir = join(process.cwd(), "tmp-tests-report");
@@ -57,5 +57,39 @@ describe("generateReport", () => {
 
     const historyMd = await readFile(result.historyMd, "utf8");
     expect(historyMd).toContain("./charts/24h/equity.svg");
+  });
+
+  test("reports volume-weighted markout bps in the KPI table", async () => {
+    const now = Date.UTC(2026, 4, 6, 12, 0, 0);
+    const fills = [
+      buildFill({
+        id: "small-positive",
+        price: 100,
+        qty: 1,
+        markPriceAtFill: 100,
+        markPrice5s: 101,
+        markPrice30s: 101,
+      }),
+      buildFill({
+        id: "large-negative",
+        price: 100,
+        qty: 9,
+        markPriceAtFill: 100,
+        markPrice5s: 99,
+        markPrice30s: 99,
+      }),
+    ];
+
+    const result = await generateReport({
+      fetchFills: async () => fills,
+      now,
+      mode: "live",
+      venue: "bulk",
+      outputDir: tempDir,
+      periods: [{ key: "24h", label: "24h", durationMs: 24 * 60 * 60 * 1000 }],
+    });
+
+    const latest = await readFile(result.latestMd, "utf8");
+    expect(latest).toContain("| VW Markout 30s | -80.0000 |");
   });
 });

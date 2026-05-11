@@ -23,6 +23,7 @@ interface ReportFillRow {
   mark_price_at_fill: number | null;
   mark_price_5s: number | null;
   mark_price_30s: number | null;
+  maker_taker: "maker" | "taker" | "unknown" | null;
 }
 
 export async function fetchReportFills({
@@ -44,6 +45,7 @@ export async function fetchReportFills({
           f.quantity AS qty,
           f.fee,
           f.trade_pnl,
+          f.maker_taker,
           f.filled_at,
           f.venue_order_id AS quote_id,
           (
@@ -80,5 +82,6 @@ export async function fetchReportFills({
     markPriceAtFill: row.mark_price_at_fill ?? undefined,
     markPrice5s: row.mark_price_5s ?? undefined,
     markPrice30s: row.mark_price_30s ?? undefined,
+    makerTaker: row.maker_taker ?? undefined,
   }));
 }

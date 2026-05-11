@@ -11,7 +11,11 @@ import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { IQuoteQualityRepository } from "../../domain/ports/IQuoteQualityRepository.ts";
 import type { MetricsRecorder } from "../MetricsRecorder.ts";
-import { OrderManager, type ManagedOrderRequest } from "../OrderManager.ts";
+import {
+  OrderManager,
+  type ManagedOrderRequest,
+  type OrderManagerOptions,
+} from "../OrderManager.ts";
 import { logger } from "../../utils/logger.ts";
 
 const NORMAL_PASSIVE_TOUCH_MARGIN_BPS = 0.25;
@@ -22,6 +26,10 @@ const MOMENTUM_GUARD_THRESHOLD_BPS = 0.05;
 const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
 const MOMENTUM_GUARD_MULTIPLIER = 1;
 const MAX_MOMENTUM_GUARD_BPS = 8;
+
+interface RefreshQuotesUseCaseOptions {
+  orderManager?: Partial<OrderManagerOptions>;
+}
 
 export class RefreshQuotesUseCase {
   private previousPlacementMid: number | null = null;
@@ -41,8 +49,9 @@ export class RefreshQuotesUseCase {
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
     },
+    options: RefreshQuotesUseCaseOptions = {},
   ) {
-    this.orderManager = new OrderManager(orderGateway);
+    this.orderManager = new OrderManager(orderGateway, options.orderManager);
     this.qualityGate = qualityGate;
     this.quoteControlPolicy = new QuoteControlPolicy(qualityGate);
   }
@@ -50,13 +59,43 @@ export class RefreshQuotesUseCase {
   private readonly qualityGate: QuoteQualityGateConfig;
   private readonly quoteControlPolicy: QuoteControlPolicy;
 
+  private async recordRuntimeHealth(
+    level: "info" | "warn" | "error",
+    code: string,
+    message: string,
+    rawSummary?: unknown,
+  ): Promise<void> {
+    if (this.metrics === undefined || typeof this.metrics.recordRuntimeHealth !== "function") {
+      return;
+    }
+    try {
+      await this.metrics.recordRuntimeHealth(level, code, message, rawSummary);
+    } catch (error) {
+      logger.warn(
+        `refresh_quotes.runtime_health_record_failed code=${code} error=${String(error)}`,
+      );
+    }
+  }
+
   async execute(): Promise<void> {
+    const cycleStartedAt = Date.now();
     await this.marketFeed.getSnapshot();
     const [snapshot, position] = await Promise.all([
       this.marketFeed.getSnapshot(),
       this.positionRepository.get(),
     ]);
+    const quoteCycleId = randomUUID();
+    const decisionMid = midPrice(snapshot);
+    const bookAgeMsAtDecision = Math.max(
+      0,
+      Date.now() - (snapshot.bookUpdatedAt ?? snapshot.timestamp),
+    );
+    const tickerAgeMsAtDecision = Math.max(
+      0,
+      Date.now() - (snapshot.tickerUpdatedAt ?? snapshot.timestamp),
+    );
 
+    const qualityGateStartedAt = Date.now();
     const quoteQuality =
       !this.qualityGate.enabled || this.quoteQualityRepository === undefined
         ? []
@@ -65,13 +104,20 @@ export class RefreshQuotesUseCase {
             lookbackFills: this.qualityGate.lookbackFills ?? 100,
             horizonsSec: this.qualityGate.horizonsSec,
           });
-    const quoteControls = this.quoteControlPolicy.controlsFor(quoteQuality);
+    const qualityGateMs = Date.now() - qualityGateStartedAt;
+
+    const quoteComputeStartedAt = Date.now();
+    const quoteControls = this.quoteControlPolicy.controlsFor(quoteQuality, {
+      positionQty: position.qty,
+    });
     const quote = this.quoteEngine.compute(snapshot, position, quoteControls);
+    const quoteComputeMs = Date.now() - quoteComputeStartedAt;
     logger.info(
       `refresh_quotes.quote_created market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} policy=${quote.policy} positionQty=${position.qty}`,
     );
-    const quoteCycleId = randomUUID();
+    const recordQuoteStartedAt = Date.now();
     await this.metrics?.recordQuote(snapshot, position.qty, quote, quoteCycleId);
+    const recordQuoteMs = Date.now() - recordQuoteStartedAt;
     const trendSnapshot = await this.marketFeed.getSnapshot();
     const placementMid = midPrice(trendSnapshot);
     const trendBps =
@@ -80,6 +126,8 @@ export class RefreshQuotesUseCase {
         : 0;
     this.previousPlacementMid = placementMid;
     const targetOrders: ManagedOrderRequest[] = [];
+    const buildOrdersStartedAt = Date.now();
+    let skippedCount = 0;
     for (const level of quoteLevels(quote)) {
       const suffix = quote.levels === undefined ? "" : `:${level.level}`;
       if (shouldSubmitSide(level.bidSize, level.bidIntent)) {
@@ -97,6 +145,8 @@ export class RefreshQuotesUseCase {
         });
         if (bidRequest !== undefined) {
           targetOrders.push(bidRequest);
+        } else {
+          skippedCount += 1;
         }
       }
       if (shouldSubmitSide(level.askSize, level.askIntent)) {
@@ -114,15 +164,58 @@ export class RefreshQuotesUseCase {
         });
         if (askRequest !== undefined) {
           targetOrders.push(askRequest);
+        } else {
+          skippedCount += 1;
         }
       }
     }
+    const buildOrdersMs = Date.now() - buildOrdersStartedAt;
+    const shouldMeasureSubmitFreshness =
+      this.metrics !== undefined && typeof this.metrics.recordRuntimeHealth === "function";
+    const submitSnapshot = shouldMeasureSubmitFreshness
+      ? await this.marketFeed.getSnapshot()
+      : trendSnapshot;
+    const submitObservedAt = Date.now();
+    const submitMid = midPrice(submitSnapshot);
+    const reconcileStartedAt = Date.now();
     const activeOrders = await this.orderManager.reconcile(targetOrders);
+    const reconcileMs = Date.now() - reconcileStartedAt;
+    const bookAgeMsAtSubmit = Math.max(
+      0,
+      submitObservedAt - (submitSnapshot.bookUpdatedAt ?? submitSnapshot.timestamp),
+    );
+    const midMoveDuringRefreshBps =
+      decisionMid > 0 ? ((submitMid - decisionMid) / decisionMid) * 10_000 : 0;
+    const totalRefreshMs = Date.now() - cycleStartedAt;
+    await this.recordRuntimeHealth(
+      "info",
+      "quote_cycle_freshness",
+      "Quote cycle freshness measured",
+      {
+        market: snapshot.market,
+        qualityGateMs,
+        quoteComputeMs,
+        recordQuoteMs,
+        buildOrdersMs,
+        reconcileMs,
+        totalRefreshMs,
+        bookAgeMsAtDecision,
+        tickerAgeMsAtDecision,
+        bookAgeMsAtSubmit,
+        decisionMid,
+        submitMid,
+        midMoveDuringRefreshBps,
+        targetOrderCount: targetOrders.length,
+        activeOrderCount: activeOrders.length,
+        skippedCount,
+        quoteCycleId,
+      },
+    );
     if (activeOrders.length === 0) {
       logger.warn(
         `refresh_quotes.no_active_orders market=${snapshot.market} targetCount=${targetOrders.length} rejectedOrSkipped=true`,
       );
-      await this.metrics?.recordRuntimeHealth(
+      await this.recordRuntimeHealth(
         "warn",
         "quote_placement_no_active_orders",
         "No quote orders were submitted",
@@ -157,7 +250,7 @@ export class RefreshQuotesUseCase {
       logger.warn(
         `refresh_quotes.quote_side_skipped market=${order.market} side=${order.side} intent=${order.intent} reason=${skipReason} trendBps=${trendBps.toFixed(4)} touchStalenessMs=${touchStalenessMs(touchSnapshot)}`,
       );
-      await this.metrics?.recordRuntimeHealth(
+      await this.recordRuntimeHealth(
         "warn",
         "quote_side_skipped",
         "Skipped quote side before placement",
@@ -228,11 +321,11 @@ function quoteSkipReason(
   },
   snapshot: MarketSnapshot,
 ): string | null {
-  if (isStaleEpochSnapshot(snapshot)) {
-    return "stale_touch";
-  }
   if (order.intent !== "quote") {
     return null;
+  }
+  if (isStaleEpochSnapshot(snapshot)) {
+    return "stale_touch";
   }
   if (order.side === "buy" && order.trendBps <= -OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
     return "downtrend_open_bid";
@@ -275,8 +368,12 @@ function guardedLimitPrice(
   snapshot: MarketSnapshot,
   trendBps: number,
 ): number {
-  if (policy !== "GTC") {
+  if (policy === "IOC") {
     return price;
+  }
+
+  if (policy === "ALO") {
+    return side === "buy" ? Math.min(price, snapshot.bestBid) : Math.max(price, snapshot.bestAsk);
   }
 
   const currentMid = midPrice(snapshot);

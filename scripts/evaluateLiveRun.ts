@@ -40,6 +40,7 @@ interface PerformanceRow {
   avg_spread_bps: number | null;
   stale_rate: number | null;
   max_abs_position: number | null;
+  avg_abs_position: number | null;
   avg_position: number | null;
   min_margin_ratio: number | null;
 }
@@ -53,6 +54,15 @@ interface RunMetadataRow {
 
 interface FreshnessRow {
   staleness_ms: number | null;
+}
+
+interface QuoteFreshnessRuntimeEventRow {
+  rawJson: string | null;
+}
+
+interface RuntimeHealthCountsRow {
+  warning_count: number;
+  error_count: number;
 }
 
 interface MarkoutSummaryRow {
@@ -79,6 +89,19 @@ interface OrderDiagnosticsRow {
   quoted_spread_bps: number | null;
   realized_spread_bps: number | null;
   side_imbalance: number | null;
+  avg_quote_age_ms: number | null;
+}
+
+interface RiskActionCountsRow {
+  reduce_count: number;
+  hard_reduce_count: number;
+}
+
+interface InventoryRiskRow {
+  max_abs_position: number | null;
+  avg_abs_position: number | null;
+  avg_position: number | null;
+  min_margin_ratio: number | null;
 }
 
 interface QuoteCompetitivenessRow {
@@ -101,6 +124,8 @@ export interface BucketEvidenceRow {
   adverseSelectionRate5s: number | null;
   adverseSelectionRate30s: number | null;
   adverseSelectionRate300s: number | null;
+  p5Markout30sBps: number | null;
+  p1Markout30sBps: number | null;
   avgOrderLiveMs: number | null;
 }
 
@@ -221,7 +246,7 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
       .all(runId)
       .map((entry) => entry.markout_30s_bps);
     const orderDiagnostics = db
-      .query<OrderDiagnosticsRow, [string, string, string]>(
+      .query<OrderDiagnosticsRow, [string, string, string, string]>(
         `
           WITH order_prefixes AS (
             SELECT
@@ -292,11 +317,34 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
                 ELSE 0
               END
               FROM side_counts
-            ) AS side_imbalance
+            ) AS side_imbalance,
+            (
+              SELECT AVG(f.filled_at - o.submitted_at)
+              FROM trade_fills f
+              JOIN v_order_lifecycle o
+                ON o.id = COALESCE(
+                  (
+                    SELECT matched.id
+                    FROM v_order_lifecycle matched
+                    WHERE matched.run_id = f.run_id
+                      AND matched.id = f.submitted_order_id
+                    LIMIT 1
+                  ),
+                  (
+                    SELECT matched.id
+                    FROM v_order_lifecycle matched
+                    WHERE matched.run_id = f.run_id
+                      AND f.venue_order_id IS NOT NULL
+                      AND matched.venue_order_id = f.venue_order_id
+                    LIMIT 1
+                  )
+                )
+              WHERE f.run_id = ?
+            ) AS avg_quote_age_ms
           FROM quote_pairs
         `,
       )
-      .get(runId, runId, runId);
+      .get(runId, runId, runId, runId);
     const quoteCompetitiveness = db
       .query<QuoteCompetitivenessRow, [string]>(
         `
@@ -308,6 +356,55 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
         `,
       )
       .get(runId);
+    const runtimeHealthCounts = db
+      .query<RuntimeHealthCountsRow, [string]>(
+        `
+          SELECT
+            COALESCE(SUM(CASE WHEN level = 'warn' THEN 1 ELSE 0 END), 0) AS warning_count,
+            COALESCE(SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END), 0) AS error_count
+          FROM runtime_health_events
+          WHERE run_id = ?
+        `,
+      )
+      .get(runId);
+    const quoteFreshnessRows = db
+      .query<QuoteFreshnessRuntimeEventRow, [string]>(
+        `
+          SELECT raw_json AS rawJson
+          FROM runtime_health_events
+          WHERE run_id = ?
+            AND code = 'quote_cycle_freshness'
+          ORDER BY observed_at ASC
+        `,
+      )
+      .all(runId);
+    const riskActionCounts = db
+      .query<RiskActionCountsRow, [string]>(
+        `
+          SELECT
+            COALESCE(SUM(CASE WHEN intent = 'reduce' THEN 1 ELSE 0 END), 0) AS reduce_count,
+            COALESCE(SUM(CASE WHEN intent = 'close' THEN 1 ELSE 0 END), 0) AS hard_reduce_count
+          FROM submitted_orders
+          WHERE run_id = ?
+        `,
+      )
+      .get(runId);
+    const inventoryRisk = db
+      .query<InventoryRiskRow, [string]>(
+        `
+          SELECT
+            MAX(ABS(COALESCE(position_qty, 0))) AS max_abs_position,
+            AVG(ABS(COALESCE(position_qty, 0))) AS avg_abs_position,
+            AVG(position_qty) AS avg_position,
+            MIN(margin_ratio) AS min_margin_ratio
+          FROM account_state_observations
+          WHERE run_id = ?
+        `,
+      )
+      .get(runId);
+
+    const runConfig = parseConfigJson(runMetadata?.config_json);
+    const botIntervalMsConfig = botIntervalMs(runConfig);
 
     const run: TradingRunFact = {
       id: row.run_id,
@@ -316,7 +413,7 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
       market: row.market,
       capitalMode: row.capital_mode,
       strategyName: row.strategy_name,
-      configJson: parseConfigJson(runMetadata?.config_json),
+      configJson: runConfig,
       gitSha: runMetadata?.git_sha ?? undefined,
       gitDirty: Boolean(runMetadata?.git_dirty ?? false),
       startedAt: row.started_at,
@@ -367,9 +464,18 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
       makerRatio: fillMix?.maker_ratio ?? 0,
       avgLatencyMs: row.avg_latency_ms ?? 0,
       avgOrderLiveMs: row.avg_live_ms ?? undefined,
+      avgQuoteAgeMs: orderDiagnostics?.avg_quote_age_ms ?? null,
       avgQuoteDistanceToMidBps: quoteCompetitiveness?.avg_distance_to_mid_bps ?? 0,
       avgQuoteDistanceToBestBps: quoteCompetitiveness?.avg_distance_to_best_bps ?? 0,
-      positionSkew: row.avg_position ?? 0,
+      positionSkew: inventoryRisk?.avg_position ?? row.avg_position ?? 0,
+      avgAbsPosition: inventoryRisk?.avg_abs_position ?? row.avg_abs_position ?? null,
+      maxAbsPosition: inventoryRisk?.max_abs_position ?? row.max_abs_position ?? null,
+      reduceCount: riskActionCounts?.reduce_count ?? 0,
+      hardReduceCount: riskActionCounts?.hard_reduce_count ?? 0,
+      minMarginRatio: inventoryRisk?.min_margin_ratio ?? row.min_margin_ratio ?? null,
+      warningCount: runtimeHealthCounts?.warning_count ?? 0,
+      errorCount: runtimeHealthCounts?.error_count ?? 0,
+      quoteFreshness: quoteFreshnessSummary(quoteFreshnessRows, botIntervalMsConfig),
       issueSignals: row.status === "failed" ? ["order_lifecycle_inconsistency"] : [],
     });
     return { run, evaluation, bucketEvidence: loadBucketEvidence(db, runId) };
@@ -380,7 +486,7 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
 
 function loadBucketEvidence(db: Database, runId: string): BucketEvidence {
   return {
-    sideIntent: bucketRows(db, runId, "f.side || ':' || COALESCE(o.intent, 'unlinked')"),
+    sideIntent: bucketRows(db, runId, "f.side || ':' || COALESCE(q.intent, o.intent, 'unlinked')"),
     quoteLevel: bucketRows(
       db,
       runId,
@@ -392,10 +498,11 @@ function loadBucketEvidence(db: Database, runId: string): BucketEvidence {
       `
         CASE
           WHEN o.submitted_at IS NULL THEN 'unlinked'
-          WHEN f.filled_at - o.submitted_at < 1000 THEN '<1s'
-          WHEN f.filled_at - o.submitted_at < 3000 THEN '1-3s'
-          WHEN f.filled_at - o.submitted_at < 10000 THEN '3-10s'
-          ELSE '>=10s'
+          WHEN f.filled_at - o.submitted_at < 250 THEN '<250ms'
+          WHEN f.filled_at - o.submitted_at < 500 THEN '250-500ms'
+          WHEN f.filled_at - o.submitted_at < 1000 THEN '500-1000ms'
+          WHEN f.filled_at - o.submitted_at < 3000 THEN '1000-3000ms'
+          ELSE '3000ms+'
         END
       `,
     ),
@@ -438,30 +545,69 @@ function bucketRows(db: Database, runId: string, bucketExpression: string): Buck
                 LIMIT 1
               )
             )
+          LEFT JOIN quote_decisions q
+            ON q.run_id = f.run_id
+           AND q.market = f.market
+           AND q.quote_cycle_id = o.quote_cycle_id
+           AND q.side = o.side
+           AND q.level = o.quote_level
           LEFT JOIN v_fill_markouts m ON m.fill_id = f.id
           WHERE f.run_id = ?
+        ),
+        aggregated AS (
+          SELECT
+            bucket,
+            COUNT(*) AS fillCount,
+            SUM(price * quantity) AS notionalUsd,
+            SUM(trade_pnl - fee) AS netPnl,
+            CASE
+              WHEN SUM(price * quantity) > 0 THEN SUM(trade_pnl - fee) / SUM(price * quantity) * 10000
+              ELSE NULL
+            END AS pnlPerVolumeBps,
+            AVG(markout_5s_bps) AS avg5sMarkoutBps,
+            AVG(markout_30s_bps) AS avg30sMarkoutBps,
+            AVG(markout_300s_bps) AS avg300sMarkoutBps,
+            SUM(markout_5s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw5sMarkoutBps,
+            SUM(markout_30s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_30s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw30sMarkoutBps,
+            SUM(markout_300s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_300s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw300sMarkoutBps,
+            AVG(CASE WHEN markout_5s_bps IS NULL THEN NULL WHEN markout_5s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate5s,
+            AVG(CASE WHEN markout_30s_bps IS NULL THEN NULL WHEN markout_30s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate30s,
+            AVG(CASE WHEN markout_300s_bps IS NULL THEN NULL WHEN markout_300s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate300s,
+            AVG(live_ms) AS avgOrderLiveMs
+          FROM enriched
+          GROUP BY bucket
+        ),
+        ranked_30s AS (
+          SELECT
+            bucket,
+            markout_30s_bps,
+            ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY markout_30s_bps ASC) AS markoutRank,
+            COUNT(*) OVER (PARTITION BY bucket) AS markoutCount
+          FROM enriched
+          WHERE markout_30s_bps IS NOT NULL
+        ),
+        tails AS (
+          SELECT
+            bucket,
+            MIN(CASE
+              WHEN markoutRank >= CAST((markoutCount * 5 + 99) / 100 AS INTEGER)
+              THEN markout_30s_bps
+              ELSE NULL
+            END) AS p5Markout30sBps,
+            MIN(CASE
+              WHEN markoutRank >= CAST((markoutCount + 99) / 100 AS INTEGER)
+              THEN markout_30s_bps
+              ELSE NULL
+            END) AS p1Markout30sBps
+          FROM ranked_30s
+          GROUP BY bucket
         )
         SELECT
-          bucket,
-          COUNT(*) AS fillCount,
-          SUM(price * quantity) AS notionalUsd,
-          SUM(trade_pnl - fee) AS netPnl,
-          CASE
-            WHEN SUM(price * quantity) > 0 THEN SUM(trade_pnl - fee) / SUM(price * quantity) * 10000
-            ELSE NULL
-          END AS pnlPerVolumeBps,
-          AVG(markout_5s_bps) AS avg5sMarkoutBps,
-          AVG(markout_30s_bps) AS avg30sMarkoutBps,
-          AVG(markout_300s_bps) AS avg300sMarkoutBps,
-          SUM(markout_5s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw5sMarkoutBps,
-          SUM(markout_30s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_30s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw30sMarkoutBps,
-          SUM(markout_300s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_300s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw300sMarkoutBps,
-          AVG(CASE WHEN markout_5s_bps IS NULL THEN NULL WHEN markout_5s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate5s,
-          AVG(CASE WHEN markout_30s_bps IS NULL THEN NULL WHEN markout_30s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate30s,
-          AVG(CASE WHEN markout_300s_bps IS NULL THEN NULL WHEN markout_300s_bps < 0 THEN 1 ELSE 0 END) AS adverseSelectionRate300s,
-          AVG(live_ms) AS avgOrderLiveMs
-        FROM enriched
-        GROUP BY bucket
+          aggregated.*,
+          tails.p5Markout30sBps,
+          tails.p1Markout30sBps
+        FROM aggregated
+        LEFT JOIN tails ON tails.bucket = aggregated.bucket
         ORDER BY fillCount DESC, bucket ASC
       `,
     )
@@ -485,15 +631,135 @@ function coverage(observed: number, total: number): number {
   return total > 0 ? observed / total : 0;
 }
 
-function tail(values: number[]): { p10: number; p5: number; worst: number } {
+function tail(values: number[]): { p10: number; p5: number; p1: number | null; worst: number } {
   if (values.length === 0) {
-    return { p10: 0, p5: 0, worst: 0 };
+    return { p10: 0, p5: 0, p1: null, worst: 0 };
   }
   return {
     p10: percentileSorted(values, 0.1),
     p5: percentileSorted(values, 0.05),
+    p1: percentileSorted(values, 0.01),
     worst: values[0] ?? 0,
   };
+}
+
+function botIntervalMs(config: unknown): number | null {
+  if (typeof config !== "object" || config === null) {
+    return null;
+  }
+  const botConfig = (config as { bot?: { intervalMs?: unknown } }).bot;
+  if (botConfig === undefined || typeof botConfig !== "object") {
+    return null;
+  }
+  const intervalMs = botConfig.intervalMs;
+  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return null;
+  }
+  return intervalMs;
+}
+
+function quoteFreshnessSummary(
+  rows: QuoteFreshnessRuntimeEventRow[],
+  intervalMs: number | null,
+): {
+  sampleCount: number;
+  totalRefreshMsP50: number | null;
+  totalRefreshMsP95: number | null;
+  totalRefreshMsMax: number | null;
+  qualityGateMsP95: number | null;
+  recordQuoteMsP95: number | null;
+  reconcileMsP95: number | null;
+  bookAgeMsAtDecisionP95: number | null;
+  midMoveDuringRefreshBpsP95Abs: number | null;
+  slowCycleRate: number | null;
+} {
+  if (rows.length === 0) {
+    return {
+      sampleCount: 0,
+      totalRefreshMsP50: null,
+      totalRefreshMsP95: null,
+      totalRefreshMsMax: null,
+      qualityGateMsP95: null,
+      recordQuoteMsP95: null,
+      reconcileMsP95: null,
+      bookAgeMsAtDecisionP95: null,
+      midMoveDuringRefreshBpsP95Abs: null,
+      slowCycleRate: null,
+    };
+  }
+
+  const totalRefreshMs: number[] = [];
+  const qualityGateMs: number[] = [];
+  const recordQuoteMs: number[] = [];
+  const reconcileMs: number[] = [];
+  const bookAgeMsAtDecision: number[] = [];
+  const midMoveDuringRefreshBpsAbs: number[] = [];
+
+  for (const row of rows) {
+    const payload = parseQuoteFreshnessRawJson(row.rawJson);
+    if (payload === null) {
+      continue;
+    }
+    if (typeof payload.totalRefreshMs === "number" && Number.isFinite(payload.totalRefreshMs)) {
+      totalRefreshMs.push(payload.totalRefreshMs);
+    }
+    if (typeof payload.qualityGateMs === "number" && Number.isFinite(payload.qualityGateMs)) {
+      qualityGateMs.push(payload.qualityGateMs);
+    }
+    if (typeof payload.recordQuoteMs === "number" && Number.isFinite(payload.recordQuoteMs)) {
+      recordQuoteMs.push(payload.recordQuoteMs);
+    }
+    if (typeof payload.reconcileMs === "number" && Number.isFinite(payload.reconcileMs)) {
+      reconcileMs.push(payload.reconcileMs);
+    }
+    if (
+      typeof payload.bookAgeMsAtDecision === "number" &&
+      Number.isFinite(payload.bookAgeMsAtDecision)
+    ) {
+      bookAgeMsAtDecision.push(payload.bookAgeMsAtDecision);
+    }
+    if (
+      typeof payload.midMoveDuringRefreshBps === "number" &&
+      Number.isFinite(payload.midMoveDuringRefreshBps)
+    ) {
+      midMoveDuringRefreshBpsAbs.push(Math.abs(payload.midMoveDuringRefreshBps));
+    }
+  }
+
+  const sampleCount = totalRefreshMs.length;
+  const validIntervalMs = intervalMs === null ? null : Number(intervalMs);
+  const slowCycleRate =
+    validIntervalMs === null || sampleCount === 0
+      ? null
+      : totalRefreshMs.filter((value) => value > validIntervalMs).length / sampleCount;
+
+  return {
+    sampleCount,
+    totalRefreshMsP50: percentile(totalRefreshMs, 0.5),
+    totalRefreshMsP95: percentile(totalRefreshMs, 0.95),
+    totalRefreshMsMax: totalRefreshMs.length === 0 ? null : Math.max(...totalRefreshMs),
+    qualityGateMsP95: percentile(qualityGateMs, 0.95),
+    recordQuoteMsP95: percentile(recordQuoteMs, 0.95),
+    reconcileMsP95: percentile(reconcileMs, 0.95),
+    bookAgeMsAtDecisionP95: percentile(bookAgeMsAtDecision, 0.95),
+    midMoveDuringRefreshBpsP95Abs: percentile(midMoveDuringRefreshBpsAbs, 0.95),
+    slowCycleRate,
+  };
+}
+
+function parseQuoteFreshnessRawJson(rawJson: string | null): Record<string, unknown> | null {
+  if (rawJson === null) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function parseConfigJson(configJson: string | undefined): unknown {
@@ -510,6 +776,15 @@ function parseConfigJson(configJson: string | undefined): unknown {
 function percentileSorted(values: number[], percentile: number): number {
   const index = Math.max(0, Math.ceil(values.length * percentile) - 1);
   return values[index] ?? 0;
+}
+
+function percentile(values: number[], percentile: number): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sortedValues = [...values].sort((a, b) => a - b);
+  const index = Math.max(0, Math.ceil(sortedValues.length * percentile) - 1);
+  return sortedValues[index] ?? null;
 }
 
 function evaluate(argv: string[]): ResultAsync<string, AppError> {

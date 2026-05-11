@@ -30,25 +30,25 @@ quoteEngine:
   bookPriceSource: micro
   inventoryScale: 0.22
   timeHorizonSec: 10
-  minSpreadBps: 1.7
+  minSpreadBps: 4.0
   slideMarginThreshold: 0.06
   defaultTimeInForce: ALO
   sizing:
     positionSize: 1.0
-    # 90k no-churn baseline: backtest PnL/vol was positive with 0 rejects, but
-    # the short live canary had 0 fills. This protects leaderboard PnL while
-    # the live volume model gap is fixed; it is not a validated $150M/14d preset.
-    budgetUsd: 90000
+    # 2026-05-11 live loop: keep 1.25 as the default. Tightening bid distance
+    # to 1.10 improved reduce-buy markout but reduced aggregate EV/300s, and
+    # adding askDistance 1.20 still left high reduce churn.
+    # Stage13 askSize 0.45 improved live EV/300s and inventory versus baseline,
+    # while preserving enough projected volume for phase1/rebate targets.
+    budgetUsd: 45000
+    bidDistanceMultiplier: 1.25
+    askSizeMultiplier: 0.45
   levels:
-    - halfSpreadBps: 1.1
-      sizeUsd: 15000
-    - halfSpreadBps: 1.7
-      sizeUsd: 15000
-    - halfSpreadBps: 2.6
-      sizeUsd: 15000
     - halfSpreadBps: 4.0
       sizeUsd: 15000
     - halfSpreadBps: 6.4
+      sizeUsd: 15000
+    - halfSpreadBps: 9.6
       sizeUsd: 15000
   qualityGate:
     enabled: true
@@ -74,6 +74,7 @@ risk:
 
 bot:
   intervalMs: 150
+  maxRestingMs: 3000
 
 shutdown:
   closePositionPolicy: always

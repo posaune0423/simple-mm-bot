@@ -40,7 +40,13 @@ export interface MetricsEvaluationInput {
   makerRatio?: number;
   avgLatencyMs?: number;
   avgOrderLiveMs?: number;
+  avgQuoteAgeMs?: number | null;
   positionSkew?: number;
+  avgAbsPosition?: number | null;
+  maxAbsPosition?: number | null;
+  reduceCount?: number | null;
+  hardReduceCount?: number;
+  minMarginRatio?: number | null;
   avgQuoteDistanceToMidBps?: number;
   avgQuoteDistanceToBestBps?: number;
   closeCost?: number;
@@ -49,11 +55,13 @@ export interface MetricsEvaluationInput {
   issueSignals?: string[];
   minFillCount?: number;
   minMarkoutCoverage?: number;
+  quoteFreshness?: Partial<QuoteCycleFreshnessMetrics> & { sampleCount: number };
 }
 
 export interface MarkoutTailBps {
   p10: number;
   p5: number;
+  p1?: number | null;
   worst: number;
 }
 
@@ -86,9 +94,13 @@ export interface MetricsEvaluation {
     snapshotFreshnessMs: number | null;
   };
   pnl: {
+    notionalUsd: number | null;
     netPnl: number;
     tradePnl: number;
     fee: number;
+    netEvBps: number | null;
+    tradeEvBps: number | null;
+    feeBps: number | null;
     pnlPerNotional: number;
     pnlPerVolumeBps: number;
     maxDrawdown: number;
@@ -116,10 +128,16 @@ export interface MetricsEvaluation {
     makerRatio: number;
     avgLatencyMs: number;
     avgLiveMs: number;
+    avgQuoteAgeMs: number | null;
     sideImbalance: number;
   };
   inventory: {
     positionSkew: number;
+    avgAbsPosition: number | null;
+    maxAbsPosition: number | null;
+    reduceCount: number;
+    hardReduceCount: number;
+    minMarginRatio: number | null;
     closeCost: number;
   };
   market: {
@@ -131,6 +149,7 @@ export interface MetricsEvaluation {
   runtimeHealth: {
     warningCount: number;
     errorCount: number;
+    quoteFreshness?: QuoteCycleFreshnessMetrics;
   };
   passFail: {
     netPnl: boolean;
@@ -179,9 +198,13 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       snapshotFreshnessMs: input.snapshotFreshnessMs ?? null,
     },
     pnl: {
+      notionalUsd: input.notionalUsd ?? null,
       netPnl: input.netPnl,
       tradePnl: input.tradePnl,
       fee: input.fee,
+      netEvBps: evBps(input.netPnl, input.notionalUsd),
+      tradeEvBps: evBps(input.tradePnl, input.notionalUsd),
+      feeBps: evBps(input.fee, input.notionalUsd),
       pnlPerNotional: input.pnlPerNotional,
       pnlPerVolumeBps: input.pnlPerVolumeBps ?? input.pnlPerNotional * 10_000,
       maxDrawdown: input.maxDrawdown,
@@ -209,10 +232,16 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
       makerRatio: input.makerRatio ?? 0,
       avgLatencyMs: input.avgLatencyMs ?? 0,
       avgLiveMs: input.avgOrderLiveMs ?? 0,
+      avgQuoteAgeMs: input.avgQuoteAgeMs ?? null,
       sideImbalance: input.sideImbalance ?? 0,
     },
     inventory: {
       positionSkew: input.positionSkew ?? 0,
+      avgAbsPosition: input.avgAbsPosition ?? null,
+      maxAbsPosition: input.maxAbsPosition ?? null,
+      reduceCount: input.reduceCount ?? 0,
+      hardReduceCount: input.hardReduceCount ?? 0,
+      minMarginRatio: input.minMarginRatio ?? null,
       closeCost: input.closeCost ?? 0,
     },
     market: {
@@ -224,6 +253,10 @@ export function evaluateMetricsRun(input: MetricsEvaluationInput): MetricsEvalua
     runtimeHealth: {
       warningCount: input.warningCount ?? 0,
       errorCount: input.errorCount ?? 0,
+      quoteFreshness: {
+        ...emptyQuoteFreshness(),
+        ...input.quoteFreshness,
+      },
     },
     volume: volumeFor(input),
     passFail: passFailFor(input),
@@ -434,4 +467,38 @@ function inputRebateReferenceVolume(input: MetricsEvaluationInput): number {
 
 function inputBalanced14dVolume(input: MetricsEvaluationInput): number {
   return input.balanced14dVolumeUsd ?? 180_000_000;
+}
+
+function evBps(value: number, notionalUsd: number | undefined): number | null {
+  if (notionalUsd === undefined || notionalUsd <= 0) {
+    return null;
+  }
+  return (value / notionalUsd) * 10_000;
+}
+
+export function emptyQuoteFreshness(): QuoteCycleFreshnessMetrics {
+  return {
+    sampleCount: 0,
+    totalRefreshMsP50: null,
+    totalRefreshMsP95: null,
+    totalRefreshMsMax: null,
+    qualityGateMsP95: null,
+    recordQuoteMsP95: null,
+    reconcileMsP95: null,
+    bookAgeMsAtDecisionP95: null,
+    midMoveDuringRefreshBpsP95Abs: null,
+    slowCycleRate: null,
+  };
+}
+export interface QuoteCycleFreshnessMetrics {
+  sampleCount: number;
+  totalRefreshMsP50: number | null;
+  totalRefreshMsP95: number | null;
+  totalRefreshMsMax: number | null;
+  qualityGateMsP95: number | null;
+  recordQuoteMsP95: number | null;
+  reconcileMsP95: number | null;
+  bookAgeMsAtDecisionP95: number | null;
+  midMoveDuringRefreshBpsP95Abs: number | null;
+  slowCycleRate: number | null;
 }

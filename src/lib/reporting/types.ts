@@ -22,6 +22,18 @@ export interface ReportPerformanceMetrics {
   tradePnl: number;
   markout5s: number;
   markout30s: number;
+  notionalUsd?: number | null;
+  netEvBps?: number | null;
+  feeBps?: number | null;
+  vwMarkout5sBps?: number | null;
+  vwMarkout30sBps?: number | null;
+  p5Markout30sBps?: number | null;
+  p1Markout30sBps?: number | null;
+  markoutCoverage?: number | null;
+  makerRatio?: number | null;
+  avgQuoteAgeMs?: number | null;
+  maxAbsPosition?: number | null;
+  reduceCount?: number;
   maxDrawdown: number;
   sharpe: number;
   fillRate: number;

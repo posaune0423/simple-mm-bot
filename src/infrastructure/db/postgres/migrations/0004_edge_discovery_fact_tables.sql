@@ -224,10 +224,11 @@ CREATE VIEW v_edge_quote_bucket_quality AS
       *,
       CASE
         WHEN quote_age_ms IS NULL THEN 'unknown'
-        WHEN quote_age_ms < 300 THEN '<300'
-        WHEN quote_age_ms < 1000 THEN '300-1000'
-        WHEN quote_age_ms < 3000 THEN '1000-3000'
-        ELSE '>3000'
+        WHEN quote_age_ms < 250 THEN '<250ms'
+        WHEN quote_age_ms < 500 THEN '250-500ms'
+        WHEN quote_age_ms < 1000 THEN '500-1000ms'
+        WHEN quote_age_ms < 3000 THEN '1000-3000ms'
+        ELSE '3000ms+'
       END AS quote_age_bucket
     FROM v_fill_context
   )
@@ -246,6 +247,9 @@ CREATE VIEW v_edge_quote_bucket_quality AS
     AVG(markout_5s_bps) AS avg_markout_5s_bps,
     AVG(markout_30s_bps) AS avg_markout_30s_bps,
     AVG(markout_300s_bps) AS avg_markout_300s_bps,
+    SUM(markout_5s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_5s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw_markout_5s_bps,
+    SUM(markout_30s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_30s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw_markout_30s_bps,
+    SUM(markout_300s_bps * price * quantity) / NULLIF(SUM(CASE WHEN markout_300s_bps IS NOT NULL THEN price * quantity ELSE 0 END), 0) AS vw_markout_300s_bps,
     CASE
       WHEN SUM(price * quantity) > 0 THEN (SUM(trade_pnl - fee) / SUM(price * quantity)) * 10000
       ELSE NULL
