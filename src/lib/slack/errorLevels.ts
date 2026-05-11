@@ -1,4 +1,4 @@
-export type ErrorLevel = "error";
+type ErrorLevel = "error";
 
 export const ERROR_LEVEL_TO_EMOJI: Record<ErrorLevel, string> = {
   error: "🚨",

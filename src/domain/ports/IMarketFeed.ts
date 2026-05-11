@@ -16,6 +16,10 @@ export interface MarketSnapshot extends CandleLike {
   timestamp: number;
   bookUpdatedAt?: number;
   tickerUpdatedAt?: number;
+  bookReceivedAt?: number;
+  tickerReceivedAt?: number;
+  bookExchangeTimestamp?: number;
+  tickerExchangeTimestamp?: number;
   candleUpdatedAt?: number | null;
   accountUpdatedAt?: number | null;
   positionUpdatedAt?: number | null;

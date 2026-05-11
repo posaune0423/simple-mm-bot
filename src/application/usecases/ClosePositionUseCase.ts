@@ -5,6 +5,7 @@ import type { IOrderGateway, PlacedOrder } from "../../domain/ports/IOrderGatewa
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { Position } from "../../domain/entities/Position.ts";
 import { isFlatPositionQty } from "../../domain/entities/Position.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
 const closeMaxAttempts = 30;
@@ -44,7 +45,9 @@ export class ClosePositionUseCase {
 
   private async currentPosition(): Promise<Position> {
     await this.orderGateway.syncFills?.().catch((error) => {
-      logger.warn(`close_position.sync_fills_failed market=${this.market} error=${String(error)}`);
+      logger.warn(
+        `[application] ClosePosition | SYNC_FILLS_FAILED | market=${this.market} error=${stringifyError(error)}`,
+      );
     });
 
     if (!this.orderGateway.getPosition) {
@@ -53,7 +56,7 @@ export class ClosePositionUseCase {
 
     return await this.orderGateway.getPosition().catch(async (error) => {
       logger.warn(
-        `close_position.live_position_failed market=${this.market} error=${String(error)}`,
+        `[application] ClosePosition | LIVE_POSITION_FAILED | market=${this.market} error=${stringifyError(error)}`,
       );
       return await this.positionRepository.get();
     });
@@ -72,7 +75,7 @@ export class ClosePositionUseCase {
       }
       await this.orderGateway.syncFills?.().catch((error) => {
         logger.warn(
-          `close_position.post_close_sync_fills_failed market=${this.market} error=${String(error)}`,
+          `[application] ClosePosition | POST_CLOSE_SYNC_FILLS_FAILED | market=${this.market} error=${stringifyError(error)}`,
         );
       });
     }
@@ -138,7 +141,7 @@ export class ClosePositionUseCase {
   ): Promise<CloseResult> {
     const { attempt, side, qty } = closeAttempt;
     logger.info(
-      `close_position.order_submitted market=${this.market} side=${side} qty=${qty} price=market attempt=${attempt}/${closeMaxAttempts} forceClose=true`,
+      `[application] ClosePosition | ORDER_SUBMITTED | market=${this.market} side=${side} qty=${qty} price=market attempt=${attempt}/${closeMaxAttempts} forceClose=true`,
     );
 
     const placed = await this.orderGateway
@@ -152,14 +155,14 @@ export class ClosePositionUseCase {
         intent: "close",
       })
       .catch((err) => {
-        const error = String(err);
+        const error = stringifyError(err);
         recordStatus(`error: ${error}`);
         if (error.includes("order.price is required")) {
           this.useMarketClose = false;
           return "fallback" as const;
         }
         logger.warn(
-          `close_position.order_failed market=${this.market} side=${side} qty=${qty} price=market error=${error} attempt=${attempt}/${closeMaxAttempts}`,
+          `[application] ClosePosition | ORDER_FAILED | market=${this.market} side=${side} qty=${qty} price=market error=${error} attempt=${attempt}/${closeMaxAttempts}`,
         );
         return undefined;
       });
@@ -181,7 +184,7 @@ export class ClosePositionUseCase {
     const price = closePrice(snapshot.bestBid, snapshot.bestAsk, side, fallbackAttempt);
 
     logger.info(
-      `close_position.order_submitted market=${this.market} side=${side} qty=${qty} price=${price} offsetBps=${offsetBps} attempt=${attempt}/${closeMaxAttempts} forceClose=true fallback=limit`,
+      `[application] ClosePosition | ORDER_SUBMITTED | market=${this.market} side=${side} qty=${qty} price=${price} offsetBps=${offsetBps} attempt=${attempt}/${closeMaxAttempts} forceClose=true fallback=limit`,
     );
 
     const placed = await this.orderGateway
@@ -196,9 +199,9 @@ export class ClosePositionUseCase {
         intent: "close",
       })
       .catch((err) => {
-        recordStatus(`error: ${String(err)}`);
+        recordStatus(`error: ${stringifyError(err)}`);
         logger.warn(
-          `close_position.order_failed market=${this.market} side=${side} qty=${qty} price=${price} offsetBps=${offsetBps} error=${String(err)} attempt=${attempt}/${closeMaxAttempts}`,
+          `[application] ClosePosition | ORDER_FAILED | market=${this.market} side=${side} qty=${qty} price=${price} offsetBps=${offsetBps} error=${stringifyError(err)} attempt=${attempt}/${closeMaxAttempts}`,
         );
         return undefined;
       });
@@ -217,7 +220,7 @@ export class ClosePositionUseCase {
     if (placed !== undefined) {
       recordStatus(placed.status);
       logger.warn(
-        `close_position.order_not_filled market=${this.market} side=${closeAttempt.side} qty=${closeAttempt.qty} status=${placed.status} attempt=${closeAttempt.attempt}/${closeMaxAttempts}`,
+        `[application] ClosePosition | ORDER_NOT_FILLED | market=${this.market} side=${closeAttempt.side} qty=${closeAttempt.qty} status=${placed.status} attempt=${closeAttempt.attempt}/${closeMaxAttempts}`,
       );
     }
     return "not_filled";

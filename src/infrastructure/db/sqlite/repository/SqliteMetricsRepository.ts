@@ -160,6 +160,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
   }
 
   async getRecentSideQuality(query: QuoteQualityQuery): Promise<QuoteSideQuality[]> {
+    const minFilledAt = query.minFilledAt ?? null;
     const rows = this.db.all<MarkoutRow>(
       sql`
         WITH recent AS (
@@ -175,6 +176,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
             FROM trade_fills f
             WHERE f.market = ${query.market}
               AND f.side = 'buy'
+              AND (${minFilledAt} IS NULL OR f.filled_at >= ${minFilledAt})
               AND EXISTS (
                 SELECT 1
                 FROM submitted_orders o
@@ -201,6 +203,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
             FROM trade_fills f
             WHERE f.market = ${query.market}
               AND f.side = 'sell'
+              AND (${minFilledAt} IS NULL OR f.filled_at >= ${minFilledAt})
               AND EXISTS (
                 SELECT 1
                 FROM submitted_orders o

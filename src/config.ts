@@ -40,6 +40,7 @@ const quoteQualityGateSchema = v.optional(
     minAverageMarkoutBps: v.optional(v.number(), 0),
     minSamples: v.optional(positiveIntegerSchema, 20),
     lookbackFills: v.optional(positiveIntegerSchema, 100),
+    maxFillAgeMs: v.optional(positiveIntegerSchema),
     horizonsSec: v.optional(v.pipe(v.array(positiveIntegerSchema), v.minLength(1)), [5, 30, 300]),
   }),
   {
@@ -92,6 +93,10 @@ const commonConfigEntries = {
     reduceTargetQty: v.optional(nonNegativeNumberSchema),
     maxUnrealizedLossUsd: v.optional(positiveNumberSchema),
     maxAdverseMoveBps: v.optional(positiveNumberSchema),
+    maxBookAgeMs: v.optional(positiveIntegerSchema),
+    maxTickerAgeMs: v.optional(positiveIntegerSchema),
+    maxAccountAgeMs: v.optional(positiveIntegerSchema),
+    maxPositionAgeMs: v.optional(positiveIntegerSchema),
   }),
   bot: v.object({
     intervalMs: positiveIntegerSchema,
@@ -138,6 +143,7 @@ const appConfigSchema = v.variant("venue", [
         nlevels: v.optional(positiveIntegerSchema),
         timeoutMs: v.optional(positiveIntegerSchema),
         maxLeverage: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(50))),
+        marketWsReconnectAfterMs: v.optional(positiveIntegerSchema),
         privateKey: v.optional(v.string()),
       }),
     }),
@@ -145,6 +151,7 @@ const appConfigSchema = v.variant("venue", [
 ]);
 
 export type AppConfig = v.InferOutput<typeof appConfigSchema>;
+export type LoadedAppConfig = AppConfig & { market: string };
 export type AppMode = AppConfig["mode"];
 
 interface LoadConfigOptions {
@@ -189,7 +196,17 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
   };
 }
 
-function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, AppError> {
+function normalizeConfig(config: AppConfig): LoadedAppConfig {
+  return {
+    ...config,
+    market:
+      config.venue === "bulk"
+        ? config.connections.bulk.market
+        : config.connections.hyperliquid.market,
+  };
+}
+
+function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, AppError> {
   const configPath = options.configPath ?? env.CONFIG_PATH;
 
   return tryCatchAsync(Bun.file(configPath).text(), (error) =>
@@ -197,7 +214,10 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, App
   ).andThen((text) =>
     fromResult(
       tryCatch(
-        () => applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
+        () =>
+          normalizeConfig(
+            applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
+          ),
         (error) => createAppError("config.invalid", "Config validation failed", error),
       ),
     ),
@@ -205,7 +225,7 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<AppConfig, App
 }
 
 export class ConfigLoader {
-  static async load(options: LoadConfigOptions = {}): Promise<AppConfig> {
+  static async load(options: LoadConfigOptions = {}): Promise<LoadedAppConfig> {
     const result = await loadConfig(options);
     if (result.isErr()) {
       throw result.error;

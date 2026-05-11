@@ -93,7 +93,7 @@ export function crossCorrAtLag(x: number[], y: number[], lag: number): number | 
   return pearson(xs, ys);
 }
 
-export interface LagCorrelation {
+interface LagCorrelation {
   lag: number;
   correlation: number | null;
 }

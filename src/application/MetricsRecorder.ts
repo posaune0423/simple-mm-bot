@@ -12,6 +12,8 @@ import type {
 } from "../domain/ports/IMetricsRepository.ts";
 import type { OrderGatewayEvent } from "../domain/ports/IOrderGateway.ts";
 import type { AppMode } from "../config.ts";
+import { stringifyError } from "../utils/errors.ts";
+import { logger } from "../utils/logger.ts";
 
 interface MetricsRecorderOptions {
   runId?: string;
@@ -32,18 +34,269 @@ interface PnlPosition {
 }
 
 type SubmittedOrderState = SubmittedOrderFact;
+type MetricsOperationPriority = "critical" | "normal";
+type MetricsOperationType =
+  | "account_state"
+  | "order_lifecycle"
+  | "orderbook_snapshot"
+  | "quote_decision"
+  | "runtime_health"
+  | "submitted_order"
+  | "trade_fill"
+  | "ohlcv";
 
-export class MetricsRecorder {
+export interface MetricsWriteOperation {
+  type: MetricsOperationType;
+  priority: MetricsOperationPriority;
+  run: () => Promise<void>;
+}
+
+interface MetricsBufferOptions {
+  normalCapacity?: number;
+  criticalCapacity?: number;
+}
+
+export interface MetricsDropSummary {
+  dropped: Partial<Record<MetricsOperationType, number>>;
+  criticalBacklogExceeded: number;
+}
+
+export class MetricsBuffer {
+  private readonly normalCapacity: number;
+  private readonly criticalCapacity: number;
+  private readonly normalQueue: MetricsWriteOperation[] = [];
+  private readonly criticalQueue: MetricsWriteOperation[] = [];
+  private readonly dropped = new Map<MetricsOperationType, number>();
+  private criticalBacklogExceeded = 0;
+
+  constructor(options: MetricsBufferOptions = {}) {
+    this.normalCapacity = options.normalCapacity ?? 10_000;
+    this.criticalCapacity = options.criticalCapacity ?? 10_000;
+  }
+
+  enqueue(operation: MetricsWriteOperation): void {
+    if (operation.priority === "critical") {
+      this.enqueueCritical(operation);
+      return;
+    }
+    this.enqueueNormal(operation);
+  }
+
+  drainBatch(maxSize: number): MetricsWriteOperation[] {
+    const batch: MetricsWriteOperation[] = [];
+    while (batch.length < maxSize && this.criticalQueue.length > 0) {
+      const operation = this.criticalQueue.shift();
+      if (operation !== undefined) {
+        batch.push(operation);
+      }
+    }
+    while (batch.length < maxSize && this.normalQueue.length > 0) {
+      const operation = this.normalQueue.shift();
+      if (operation !== undefined) {
+        batch.push(operation);
+      }
+    }
+    return batch;
+  }
+
+  pendingCount(): number {
+    return this.criticalQueue.length + this.normalQueue.length;
+  }
+
+  criticalPendingCount(): number {
+    return this.criticalQueue.length;
+  }
+
+  takeDropSummary(): MetricsDropSummary {
+    const dropped = Object.fromEntries(this.dropped) as Partial<
+      Record<MetricsOperationType, number>
+    >;
+    this.dropped.clear();
+    const criticalBacklogExceeded = this.criticalBacklogExceeded;
+    this.criticalBacklogExceeded = 0;
+    return { dropped, criticalBacklogExceeded };
+  }
+
+  private enqueueNormal(operation: MetricsWriteOperation): void {
+    if (this.normalQueue.length >= this.normalCapacity) {
+      this.dropOldestNormal();
+    }
+    if (this.normalQueue.length < this.normalCapacity) {
+      this.normalQueue.push(operation);
+      return;
+    }
+    this.recordDrop(operation.type);
+  }
+
+  private enqueueCritical(operation: MetricsWriteOperation): void {
+    if (this.criticalQueue.length >= this.criticalCapacity) {
+      this.criticalBacklogExceeded += 1;
+      logger.error(
+        `[application] MetricsBuffer | CRITICAL_BACKLOG_EXCEEDED | type=${operation.type} criticalPending=${this.criticalQueue.length} normalPending=${this.normalQueue.length}`,
+      );
+      if (this.normalQueue.length > 0) {
+        this.dropOldestNormal();
+        this.criticalQueue.push(operation);
+        return;
+      }
+      if (this.criticalQueue.length >= this.criticalCapacity) {
+        const dropped = this.criticalQueue.shift();
+        if (dropped !== undefined) {
+          this.recordDrop(dropped.type);
+        }
+      }
+    }
+    this.criticalQueue.push(operation);
+  }
+
+  private dropOldestNormal(): void {
+    const dropped = this.normalQueue.shift();
+    if (dropped !== undefined) {
+      this.recordDrop(dropped.type);
+    }
+  }
+
+  private recordDrop(type: MetricsOperationType): void {
+    this.dropped.set(type, (this.dropped.get(type) ?? 0) + 1);
+  }
+}
+
+interface MetricsFlushLoopOptions {
+  batchSize?: number;
+  drainTimeoutMs?: number;
+  intervalMs?: number;
+  onDropSummary?: (summary: MetricsDropSummary) => Promise<void>;
+}
+
+export class MetricsFlushLoop {
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private flushing = false;
+  private activeFlush: Promise<void> | undefined;
+  private inFlightCount = 0;
+  private readonly batchSize: number;
+  private readonly drainTimeoutMs: number;
+  private readonly intervalMs: number;
+
+  constructor(
+    private readonly buffer: MetricsBuffer,
+    private readonly options: MetricsFlushLoopOptions = {},
+  ) {
+    this.batchSize = options.batchSize ?? 500;
+    this.drainTimeoutMs = options.drainTimeoutMs ?? 15_000;
+    this.intervalMs = options.intervalMs ?? 500;
+  }
+
+  start(): void {
+    if (this.timer !== undefined) {
+      return;
+    }
+    this.timer = setInterval(() => {
+      void this.flushOnce();
+    }, this.intervalMs);
+  }
+
+  async flushOnce(): Promise<void> {
+    if (this.flushing) {
+      return;
+    }
+    this.activeFlush = this.runFlushOnce();
+    await this.activeFlush;
+  }
+
+  private async runFlushOnce(): Promise<void> {
+    this.flushing = true;
+    try {
+      const batch = this.buffer.drainBatch(this.batchSize);
+      this.inFlightCount = batch.length;
+      for (const operation of batch) {
+        try {
+          await operation.run();
+        } catch (error) {
+          logger.warn(
+            `[application] MetricsFlushLoop | FLUSH_FAILED | type=${operation.type} error=${stringifyError(error)}`,
+          );
+        } finally {
+          this.inFlightCount -= 1;
+        }
+      }
+      await this.emitDropSummary();
+    } finally {
+      this.flushing = false;
+      this.activeFlush = undefined;
+    }
+  }
+
+  async drainAndStop(timeoutMs = this.drainTimeoutMs): Promise<void> {
+    this.stopTimer();
+    const startedAt = Date.now();
+    while (this.hasPendingWork() && Date.now() - startedAt < timeoutMs) {
+      if (this.activeFlush !== undefined) {
+        await this.activeFlush;
+        continue;
+      }
+      await this.flushOnce();
+    }
+    if (this.activeFlush !== undefined) {
+      await this.activeFlush;
+    }
+    await this.emitDropSummary();
+    const pending = this.buffer.pendingCount() + this.inFlightCount;
+    if (pending > 0) {
+      logger.warn(
+        `[application] MetricsFlushLoop | DRAIN_TIMEOUT | timeoutMs=${timeoutMs} pending=${pending} criticalPending=${this.buffer.criticalPendingCount()}`,
+      );
+    }
+  }
+
+  private hasPendingWork(): boolean {
+    return this.buffer.pendingCount() > 0 || this.inFlightCount > 0 || this.flushing;
+  }
+
+  private stopTimer(): void {
+    if (this.timer === undefined) {
+      return;
+    }
+    clearInterval(this.timer);
+    this.timer = undefined;
+  }
+
+  private async emitDropSummary(): Promise<void> {
+    const summary = this.buffer.takeDropSummary();
+    const droppedTotal = Object.values(summary.dropped).reduce((sum, count) => sum + count, 0);
+    if (droppedTotal === 0 && summary.criticalBacklogExceeded === 0) {
+      return;
+    }
+    logger.warn(
+      `[application] MetricsFlushLoop | BUFFER_DROPPED | dropped=${JSON.stringify(summary.dropped)} criticalBacklogExceeded=${summary.criticalBacklogExceeded}`,
+    );
+    await this.options.onDropSummary?.(summary).catch((error) => {
+      logger.warn(
+        `[application] MetricsFlushLoop | DROP_SUMMARY_RECORD_FAILED | error=${stringifyError(error)}`,
+      );
+    });
+  }
+}
+
+export class BufferedMetricsRecorder {
   readonly runId: string;
   private readonly pnlPositions = new Map<string, PnlPosition>();
   private readonly openOrders = new Map<string, SubmittedOrderState>();
   private readonly orderAliases = new Map<string, string>();
+  private cumulativeNetPnlUsd = 0;
+  private peakNetPnlUsd = Number.NEGATIVE_INFINITY;
+  private maxDrawdownUsd = 0;
+  private readonly flushLoop: MetricsFlushLoop;
+  private drained = false;
 
   constructor(
     private readonly repository: IMetricsRepository,
     private readonly options: MetricsRecorderOptions,
+    private readonly buffer = new MetricsBuffer(),
   ) {
     this.runId = options.runId ?? randomUUID();
+    this.flushLoop = new MetricsFlushLoop(this.buffer, {
+      onDropSummary: async (summary) => this.recordDropSummary(summary),
+    });
   }
 
   async start(startedAt = Date.now()): Promise<void> {
@@ -60,6 +313,8 @@ export class MetricsRecorder {
       startedAt,
       status: "running",
     });
+    this.flushLoop.start();
+    this.drained = false;
   }
 
   async finish(
@@ -67,12 +322,23 @@ export class MetricsRecorder {
     status: TradingRunFact["status"] = "completed",
     stopReason?: string,
   ): Promise<void> {
+    if (!this.drained) {
+      await this.drainAndStop();
+    }
     await this.repository.finishRun(this.runId, endedAt, status, stopReason);
+  }
+
+  async drainAndStop(timeoutMs?: number): Promise<void> {
+    if (this.drained) {
+      return;
+    }
+    await this.flushLoop.drainAndStop(timeoutMs);
+    this.drained = true;
   }
 
   async recordMarketSnapshot(snapshot: MarketSnapshot): Promise<void> {
     const observedAt = secondBucket(snapshot.timestamp);
-    await this.repository.recordOrderbookSnapshot({
+    const orderbookSnapshot = {
       id: `${this.runId}:${snapshot.market}:${observedAt}`,
       runId: this.runId,
       venue: this.options.venue,
@@ -87,9 +353,12 @@ export class MetricsRecorder {
       spreadBps: spreadBps(snapshot),
       stalenessMs: Math.max(0, Date.now() - (snapshot.bookUpdatedAt ?? snapshot.timestamp)),
       rawJson: snapshotPayload(snapshot),
+    };
+    this.enqueue("orderbook_snapshot", "normal", async () => {
+      await this.repository.recordOrderbookSnapshot(orderbookSnapshot);
     });
     if (snapshot.marginRatio !== null) {
-      await this.repository.recordAccountStateObservation({
+      const accountObservation = {
         id: `${this.runId}:${snapshot.market}:${observedAt}:account`,
         runId: this.runId,
         venue: this.options.venue,
@@ -97,6 +366,9 @@ export class MetricsRecorder {
         observedAt,
         marginRatio: snapshot.marginRatio,
         rawJson: { source: "market_snapshot" },
+      };
+      this.enqueue("account_state", "normal", async () => {
+        await this.repository.recordAccountStateObservation(accountObservation);
       });
     }
   }
@@ -107,7 +379,7 @@ export class MetricsRecorder {
     quote: Quote,
     quoteCycleId = `${snapshot.market}:${snapshot.timestamp}`,
   ): Promise<void> {
-    await this.repository.recordAccountStateObservation({
+    const accountObservation = {
       id: `${this.runId}:${snapshot.market}:${snapshot.timestamp}:quote`,
       runId: this.runId,
       venue: this.options.venue,
@@ -130,6 +402,9 @@ export class MetricsRecorder {
         askDistanceBps: distanceBps(quote.ask, quote.fairPrice),
         marketSpreadBps: spreadBps(snapshot),
       },
+    };
+    this.enqueue("account_state", "normal", async () => {
+      await this.repository.recordAccountStateObservation(accountObservation);
     });
     for (const decision of quoteDecisionFacts({
       runId: this.runId,
@@ -139,7 +414,9 @@ export class MetricsRecorder {
       quote,
       quoteCycleId,
     })) {
-      await this.repository.recordQuoteDecision(decision);
+      this.enqueue("quote_decision", "normal", async () => {
+        await this.repository.recordQuoteDecision(decision);
+      });
     }
   }
 
@@ -147,11 +424,20 @@ export class MetricsRecorder {
     const orderKey = this.orderKeyFor(payload);
     const previous = orderKey === undefined ? undefined : this.openOrders.get(orderKey);
     const now = Date.now();
-    await this.repository.recordOrderLifecycleEvent(
-      orderLifecycleEvent(this.runId, this.options.venue, market, payload, orderKey, previous, now),
+    const lifecycleEvent = orderLifecycleEvent(
+      this.runId,
+      this.options.venue,
+      market,
+      payload,
+      orderKey,
+      previous,
+      now,
     );
+    this.enqueue("order_lifecycle", "critical", async () => {
+      await this.repository.recordOrderLifecycleEvent(lifecycleEvent);
+    });
     if (payload.action === "cancel" && orderKey === undefined) {
-      await this.recordCancelAll(payload, market, now);
+      this.recordCancelAll(payload, market, now);
       return;
     }
     if (
@@ -163,15 +449,17 @@ export class MetricsRecorder {
       return;
     }
     const order = this.orderFactFrom(payload, orderKey, now, market, previous);
-    await this.repository.recordSubmittedOrder(order);
+    this.enqueue("submitted_order", "critical", async () => {
+      await this.repository.recordSubmittedOrder(order);
+    });
     this.updateOrderState(order);
   }
 
-  private async recordCancelAll(
+  private recordCancelAll(
     payload: OrderGatewayEvent,
     market = this.options.market,
     now = Date.now(),
-  ) {
+  ): void {
     const openOrders = [...this.openOrders.entries()].filter(
       ([, order]) => order.market === market,
     );
@@ -183,8 +471,10 @@ export class MetricsRecorder {
         latencyMs: payload.latencyMs,
         rawJson: rawSummary(payload, "cancelAll"),
       };
-      await this.repository.recordSubmittedOrder(canceledOrder);
-      await this.repository.recordOrderLifecycleEvent({
+      this.enqueue("submitted_order", "critical", async () => {
+        await this.repository.recordSubmittedOrder(canceledOrder);
+      });
+      const lifecycleEvent: OrderLifecycleEventFact = {
         id: `${this.runId}:${order.clientOrderId}:cancelAll:${now}`,
         runId: this.runId,
         venue: this.options.venue,
@@ -202,6 +492,9 @@ export class MetricsRecorder {
         latencyMs: payload.latencyMs,
         observedAt: now,
         rawJson: rawSummary(payload, "cancelAll"),
+      };
+      this.enqueue("order_lifecycle", "critical", async () => {
+        await this.repository.recordOrderLifecycleEvent(lifecycleEvent);
       });
       this.openOrders.delete(orderKey);
     }
@@ -271,10 +564,26 @@ export class MetricsRecorder {
     this.openOrders.set(orderKey, order);
   }
 
+  getRuntimeRisk(): { netPnlUsd: number; peakNetPnlUsd: number; maxDrawdownUsd: number } {
+    const peakNetPnlUsd = this.peakNetPnlUsd === Number.NEGATIVE_INFINITY ? 0 : this.peakNetPnlUsd;
+    return {
+      netPnlUsd: this.cumulativeNetPnlUsd,
+      peakNetPnlUsd,
+      maxDrawdownUsd: this.maxDrawdownUsd,
+    };
+  }
+
   async recordFill(fill: Fill): Promise<void> {
     const tradePnl = this.computeTradePnl(fill);
+    const netDelta = tradePnl - fill.fee;
+    this.cumulativeNetPnlUsd += netDelta;
+    this.peakNetPnlUsd = Math.max(this.peakNetPnlUsd, this.cumulativeNetPnlUsd);
+    this.maxDrawdownUsd = Math.max(
+      this.maxDrawdownUsd,
+      this.peakNetPnlUsd - this.cumulativeNetPnlUsd,
+    );
     const orderKey = fill.quoteId === undefined ? undefined : this.orderAliases.get(fill.quoteId);
-    await this.repository.recordTradeFill({
+    const tradeFill = {
       id: fill.id,
       runId: this.runId,
       submittedOrderId:
@@ -293,6 +602,9 @@ export class MetricsRecorder {
       makerTaker: fill.makerTaker ?? "unknown",
       filledAt: fill.filledAt,
       rawJson: { ...fill, computedTradePnl: tradePnl },
+    };
+    this.enqueue("trade_fill", "critical", async () => {
+      await this.repository.recordTradeFill(tradeFill);
     });
   }
 
@@ -303,7 +615,7 @@ export class MetricsRecorder {
     rawSummary?: unknown,
   ): Promise<void> {
     const observedAt = Date.now();
-    await this.repository.recordRuntimeHealthEvent({
+    const event = {
       id: `${this.runId}:${code}:${observedAt}`,
       runId: this.runId,
       venue: this.options.venue,
@@ -313,6 +625,9 @@ export class MetricsRecorder {
       code,
       message,
       rawJson: rawSummary,
+    };
+    this.enqueue("runtime_health", "normal", async () => {
+      await this.repository.recordRuntimeHealthEvent(event);
     });
   }
 
@@ -346,7 +661,48 @@ export class MetricsRecorder {
     this.pnlPositions.set(fill.market, position);
     return Number(tradePnl.toFixed(12));
   }
+
+  enqueue(
+    type: MetricsOperationType,
+    priority: MetricsOperationPriority,
+    run: () => Promise<void>,
+  ): void {
+    this.buffer.enqueue({ type, priority, run });
+  }
+
+  private async recordDropSummary(summary: MetricsDropSummary): Promise<void> {
+    const observedAt = Date.now();
+    const droppedTotal = Object.values(summary.dropped).reduce((sum, count) => sum + count, 0);
+    if (droppedTotal > 0) {
+      await this.repository.recordRuntimeHealthEvent({
+        id: `${this.runId}:metrics_buffer_dropped:${observedAt}`,
+        runId: this.runId,
+        venue: this.options.venue,
+        market: this.options.market,
+        observedAt,
+        level: "warn",
+        code: "metrics_buffer_dropped",
+        message: "Metrics buffer dropped low-priority facts",
+        rawJson: { dropped: summary.dropped },
+      });
+    }
+    if (summary.criticalBacklogExceeded > 0) {
+      await this.repository.recordRuntimeHealthEvent({
+        id: `${this.runId}:metrics_critical_backlog_exceeded:${observedAt}`,
+        runId: this.runId,
+        venue: this.options.venue,
+        market: this.options.market,
+        observedAt,
+        level: "error",
+        code: "metrics_critical_backlog_exceeded",
+        message: "Critical metrics backlog exceeded configured capacity",
+        rawJson: { count: summary.criticalBacklogExceeded },
+      });
+    }
+  }
 }
+
+export { BufferedMetricsRecorder as MetricsRecorder };
 
 function midPrice(snapshot: MarketSnapshot): number {
   return (snapshot.bestBid + snapshot.bestAsk) / 2;
@@ -547,6 +903,10 @@ function snapshotPayload(snapshot: MarketSnapshot): Record<string, unknown> {
     timestamp: snapshot.timestamp,
     bookUpdatedAt: snapshot.bookUpdatedAt,
     tickerUpdatedAt: snapshot.tickerUpdatedAt,
+    bookReceivedAt: snapshot.bookReceivedAt,
+    tickerReceivedAt: snapshot.tickerReceivedAt,
+    bookExchangeTimestamp: snapshot.bookExchangeTimestamp,
+    tickerExchangeTimestamp: snapshot.tickerExchangeTimestamp,
     candleUpdatedAt: snapshot.candleUpdatedAt,
     accountUpdatedAt: snapshot.accountUpdatedAt,
     positionUpdatedAt: snapshot.positionUpdatedAt,

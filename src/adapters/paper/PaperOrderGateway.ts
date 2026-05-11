@@ -9,7 +9,7 @@ import type {
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
-import { logger } from "../../utils/logger.ts";
+import { LOG_ORANGE, LOG_RESET, logger } from "../../utils/logger.ts";
 
 interface PaperOrderState extends PlacedOrder {
   openedAt: number;
@@ -36,7 +36,7 @@ export class PaperOrderGateway implements IOrderGateway {
     const id = order.clientOrderId ?? randomUUID();
     const orderType = order.price === undefined ? "market" : "limit";
     logger.info(
-      `paper_order_gateway.place_submitted market=${order.market} orderId=${id} side=${order.side} qty=${order.qty} price=${order.price ?? "market"} tif=${order.timeInForce} reduceOnly=${order.reduceOnly}`,
+      `[adapter] PaperOrderGateway | PLACE_SUBMITTED | market=${order.market} orderId=${id} side=${order.side} qty=${order.qty} price=${order.price ?? "market"} tif=${order.timeInForce} reduceOnly=${order.reduceOnly}`,
     );
     await this.publishOrderEvent({
       action: "submit",
@@ -75,7 +75,9 @@ export class PaperOrderGateway implements IOrderGateway {
           timeInForce: order.timeInForce,
           status: "cancelled",
         });
-        logger.info(`paper_order_gateway.ioc_cancelled market=${order.market} orderId=${id}`);
+        logger.info(
+          `[adapter] PaperOrderGateway | IOC_CANCELLED | market=${order.market} orderId=${id}`,
+        );
       }
       return placed;
     }
@@ -94,7 +96,9 @@ export class PaperOrderGateway implements IOrderGateway {
       timeInForce: order.timeInForce,
       status: "open",
     });
-    logger.debug(`paper_order_gateway.order_opened market=${order.market} orderId=${id}`);
+    logger.debug(
+      `[adapter] PaperOrderGateway | ORDER_OPENED | market=${order.market} orderId=${id}`,
+    );
     if (this.latestSnapshot !== null) {
       this.evaluateSnapshot(this.latestSnapshot);
     }
@@ -103,7 +107,7 @@ export class PaperOrderGateway implements IOrderGateway {
 
   async cancel(id: string): Promise<void> {
     this.openOrders.delete(id);
-    logger.info(`paper_order_gateway.cancel_submitted orderId=${id}`);
+    logger.info(`[adapter] PaperOrderGateway | CANCEL_SUBMITTED | orderId=${id}`);
     await this.publishOrderEvent({
       action: "cancel",
       clientOrderId: id,
@@ -114,7 +118,7 @@ export class PaperOrderGateway implements IOrderGateway {
 
   async cancelAll(): Promise<void> {
     this.openOrders.clear();
-    logger.info("paper_order_gateway.cancel_all_submitted");
+    logger.info("[adapter] PaperOrderGateway | CANCEL_ALL_SUBMITTED |");
     await this.publishOrderEvent({
       action: "cancel",
       rawSummary: { request: "cancelAll" },
@@ -137,7 +141,7 @@ export class PaperOrderGateway implements IOrderGateway {
 
   dispose(): void {
     this.unsubscribe();
-    logger.info("paper_order_gateway.disposed");
+    logger.info("[adapter] PaperOrderGateway | DISPOSED |");
   }
 
   private evaluateSnapshot(snapshot: MarketSnapshot): void {
@@ -145,7 +149,7 @@ export class PaperOrderGateway implements IOrderGateway {
       const shouldFill = this.shouldFill(order.request, snapshot);
       if (shouldFill) {
         logger.debug(
-          `paper_order_gateway.order_touched market=${order.request.market} orderId=${order.id} markPrice=${snapshot.markPrice}`,
+          `[adapter] PaperOrderGateway | ORDER_TOUCHED | market=${order.request.market} orderId=${order.id} markPrice=${snapshot.markPrice}`,
         );
         void this.fillOrder(order, snapshot);
       }
@@ -197,7 +201,7 @@ export class PaperOrderGateway implements IOrderGateway {
       markPrice30s: markout30s,
     };
     logger.info(
-      `paper_order_gateway.fill_created market=${fill.market} orderId=${fill.id} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
+      `[adapter] PaperOrderGateway | ${LOG_ORANGE}FILL_CREATED${LOG_RESET} | market=${fill.market} orderId=${fill.id} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
     );
     await this.publishOrderEvent({
       action: "fill",

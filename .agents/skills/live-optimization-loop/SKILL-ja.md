@@ -92,7 +92,7 @@ bun run metrics:issues --evaluation data/metrics/latest/evaluation.json --report
 
 ## データ方針 / Data Policy
 
-- live / paper / backtest telemetry は既定で共有 SQLite `data/mm.db` を使う。
+- live / paper / backtest telemetry は既定で `DATABASE_URL=file:data/mm.db` の共有 SQLite `data/mm.db` を使う。
 - runごとにDBを分けない。`trading_runs.id` でrunを分離し、同一DBで複数run比較を可能にする。
 - 破壊的検証、再現fixture、既存DBを汚したくない isolated experiment のときだけ `--db data/tmp/<label>.db` を明示する。
 - 評価結果は `data/metrics/<run_id>/` または `data/metrics/latest/` に保存する。optimization結果を `artifacts/` に書かない。

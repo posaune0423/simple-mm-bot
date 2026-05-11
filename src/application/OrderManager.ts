@@ -1,5 +1,6 @@
 import type { OrderSide, OrderTimeInForce } from "../domain/entities/Quote.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../domain/ports/IOrderGateway.ts";
+import { stringifyError } from "../utils/errors.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface OrderManagerOptions {
@@ -18,20 +19,24 @@ export interface ManagedOrderRequest extends OrderRequest {
   timeInForce: OrderTimeInForce;
 }
 
-export interface ActiveManagedOrder {
+interface ActiveManagedOrder {
   key: string;
   side: OrderSide;
   order: PlacedOrder;
   replaced: boolean;
 }
 
-export interface OrderManagerState {
+interface OrderManagerState {
   unknownOrderState: boolean;
   cancelFailures: number;
   unknownOrderKeys: string[];
+  trackedOrderCount: number;
+  trackedOrderKeys: string[];
+  quoteCooldownUntilMs: number;
+  quoteCooldownRemainingMs: number;
 }
 
-export class OrderManagerUnknownStateError extends Error {
+class OrderManagerUnknownStateError extends Error {
   constructor(
     message: string,
     override readonly cause: unknown,
@@ -64,16 +69,21 @@ export class OrderManager {
   }
 
   state(): OrderManagerState {
+    const nowMs = this.options.nowMs();
     return {
       unknownOrderState: this.unknownOrders.size > 0,
       cancelFailures: this.cancelFailures,
       unknownOrderKeys: [...this.unknownOrders.keys()],
+      trackedOrderCount: this.activeOrders.size,
+      trackedOrderKeys: [...this.activeOrders.keys()],
+      quoteCooldownUntilMs: this.quoteCooldownUntilMs,
+      quoteCooldownRemainingMs: Math.max(0, this.quoteCooldownUntilMs - nowMs),
     };
   }
 
   async reconcile(targetOrders: ReadonlyArray<ManagedOrderRequest>): Promise<ActiveManagedOrder[]> {
-    const droppedTrackedOrders = await this.syncExchangeOpenOrders();
-    if (droppedTrackedOrders) {
+    const droppedTrackedQuoteOrders = await this.syncExchangeOpenOrders();
+    if (droppedTrackedQuoteOrders) {
       this.quoteCooldownUntilMs = Math.max(
         this.quoteCooldownUntilMs,
         this.options.nowMs() + this.options.exchangeDropQuoteCooldownMs,
@@ -104,8 +114,8 @@ export class OrderManager {
         cancellations.push(this.cancelTrackedOrder(target.key, previous, "replace"));
       }
       if (this.shouldDelayQuotePlacement(target)) {
-        logger.warn(
-          `order_manager.quote_placement_delayed key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} cooldownUntilMs=${this.quoteCooldownUntilMs}`,
+        logger.debug(
+          `[application] OrderManager | QUOTE_PLACEMENT_DELAYED | key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} cooldownUntilMs=${this.quoteCooldownUntilMs}`,
         );
         continue;
       }
@@ -125,7 +135,7 @@ export class OrderManager {
     const placed = await this.orderGateway.place(request).catch((error) => {
       this.activeOrders.delete(target.key);
       logger.warn(
-        `order_manager.place_failed key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} market=${target.market} side=${target.side} intent=${target.intent ?? "unknown"} error=${String(error)}`,
+        `[application] OrderManager | PLACE_FAILED | key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} market=${target.market} side=${target.side} intent=${target.intent ?? "unknown"} error=${stringifyError(error)}`,
       );
       return undefined;
     });
@@ -175,15 +185,15 @@ export class OrderManager {
     this.cancelFailures += 1;
     this.unknownOrders.set(key, order);
     logger.error(
-      `order_manager.cancel_failed_unknown_state key=${key} orderId=${order.id} reason=${reason} error=${String(error)}`,
+      `[application] OrderManager | CANCEL_FAILED_UNKNOWN_STATE | key=${key} orderId=${order.id} reason=${reason} error=${stringifyError(error)}`,
     );
     await this.orderGateway.cancelAll().catch((cancelAllError) => {
       logger.error(
-        `order_manager.cancel_all_after_cancel_failure_failed key=${key} orderId=${order.id} error=${String(cancelAllError)}`,
+        `[application] OrderManager | CANCEL_ALL_AFTER_CANCEL_FAILURE_FAILED | key=${key} orderId=${order.id} error=${stringifyError(cancelAllError)}`,
       );
     });
     throw new OrderManagerUnknownStateError(
-      `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${String(error)}`,
+      `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${stringifyError(error)}`,
       error,
     );
   }
@@ -225,11 +235,13 @@ export class OrderManager {
 
     const exchangeOpenOrders = await this.orderGateway.getOpenOrders();
     const exchangeOpenIds = new Set(exchangeOpenOrders.map((order) => order.id));
-    let droppedTrackedOrders = false;
+    let droppedTrackedQuoteOrders = false;
     for (const [key, active] of this.activeOrders) {
       if (!exchangeOpenIds.has(active.order.id)) {
         this.activeOrders.delete(key);
-        droppedTrackedOrders = true;
+        if (active.order.request.intent === "quote") {
+          droppedTrackedQuoteOrders = true;
+        }
       }
     }
 
@@ -241,7 +253,7 @@ export class OrderManager {
         .filter((order) => !trackedOrderIds.has(order.id))
         .map(async (order) => this.cancelUntrackedOrder(order, "untracked_exchange_order")),
     );
-    return droppedTrackedOrders;
+    return droppedTrackedQuoteOrders;
   }
 
   private shouldDelayQuotePlacement(target: ManagedOrderRequest): boolean {

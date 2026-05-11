@@ -14,6 +14,7 @@ import { BulkClient } from "bulk-ts-sdk";
 
 import { ConfigLoader } from "../src/config.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
+import { stringifyError } from "../src/utils/errors.ts";
 import { logger } from "../src/utils/logger.ts";
 import { fetchBinanceKlines, verifyBinanceCredentials } from "./lib/binanceKlines.ts";
 import { fetchBulkKlinesRange } from "./lib/bulkKlinesRange.ts";
@@ -223,7 +224,7 @@ async function main(argv: string[]): Promise<void> {
 
 if (import.meta.main) {
   void main(Bun.argv.slice(2)).catch((error) => {
-    logger.error(String(error));
+    logger.error(stringifyError(error));
     process.exitCode = 1;
   });
 }

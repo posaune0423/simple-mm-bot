@@ -3,6 +3,7 @@ import type { QuoteSideQuality } from "../QuoteQuality.ts";
 export interface QuoteQualityQuery {
   market: string;
   lookbackFills: number;
+  minFilledAt?: number;
   horizonsSec: number[];
 }
 

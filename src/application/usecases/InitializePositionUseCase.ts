@@ -1,5 +1,6 @@
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import { retryTransientBulk } from "../../utils/transientBulk.ts";
 
@@ -29,14 +30,14 @@ export class InitializePositionUseCase {
         sleep: this.options.sleep,
         onRetry: (error, attempt, attempts) => {
           logger.warn(
-            `initialize_position.transient_retry attempt=${attempt}/${attempts} error=${String(error)}`,
+            `[application] InitializePosition | TRANSIENT_RETRY | attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
           );
         },
       },
     );
     await this.positionRepository.set(position);
     logger.info(
-      `initialize_position.seeded qty=${position.qty} avgEntry=${position.avgEntry} unrealizedPnl=${position.unrealizedPnl}`,
+      `[application] InitializePosition | SEEDED | qty=${position.qty} avgEntry=${position.avgEntry} unrealizedPnl=${position.unrealizedPnl}`,
     );
   }
 }

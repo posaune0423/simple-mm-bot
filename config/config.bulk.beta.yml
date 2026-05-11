@@ -21,6 +21,9 @@ connections:
     # Bulk beta mock account currently reports 50x leverage. Position/risk caps
     # remain bot-side; this avoids fail-closed startup during volume canaries.
     maxLeverage: 50
+    # Reconnect when quote-critical WS streams stop delivering messages.
+    # Book state is seeded from REST and then maintained from l2Snapshot.
+    marketWsReconnectAfterMs: 5000
 
 quoteEngine:
   markWeight: 0.25
@@ -55,6 +58,7 @@ quoteEngine:
     minAverageMarkoutBps: 0
     minSamples: 20
     lookbackFills: 100
+    maxFillAgeMs: 900000
     horizonsSec: [5, 30, 300]
   strategy:
     type: avellaneda-stoikov
@@ -66,6 +70,10 @@ quoteEngine:
 risk:
   imrBuffer: 0.06
   mmrBuffer: 0.03
+  # l2Snapshot frames can occasionally gap above 2s on Bulk beta.
+  maxBookAgeMs: 2500
+  # Ticker is quote-critical but can lag the initial snapshot by ~1.8s at startup.
+  maxTickerAgeMs: 2500
   maxPositionQty: 1.25
   reduceTriggerQty: 1.05
   reduceTargetQty: 0.25

@@ -1,6 +1,6 @@
 import type { OrderSide, OrderTimeInForce } from "../entities/Quote.ts";
 
-export type TradingRunMode = "live" | "paper" | "backtest";
+type TradingRunMode = "live" | "paper" | "backtest";
 export type CapitalMode = "beta_mock" | "paper" | "backtest" | "real";
 type RunStatus = "running" | "completed" | "failed";
 type OrderIntent = "quote" | "reduce" | "close";

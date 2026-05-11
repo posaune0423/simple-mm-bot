@@ -14,7 +14,7 @@ export class RecordOhlcvUseCase {
   async execute(snapshot: MarketSnapshot): Promise<void> {
     if (!Number.isFinite(snapshot.markPrice)) {
       logger.warn(
-        `record_ohlcv.skipped market=${snapshot.market} reason=invalid_mark_price price=${snapshot.markPrice}`,
+        `[application] RecordOhlcv | SKIPPED | market=${snapshot.market} reason=invalid_mark_price price=${snapshot.markPrice}`,
       );
       return;
     }
@@ -33,15 +33,12 @@ export class RecordOhlcvUseCase {
       this.candles.set(`${snapshot.market}:${this.timeframe}:${snapshot.timestamp}`, candle);
       await this.ohlcvRepository.saveMany([candle]);
       logger.debug(
-        `record_ohlcv.saved market=${candle.market} timeframe=${candle.timeframe} ts=${candle.ts} close=${candle.close} volume=${candle.volume}`,
+        `[application] RecordOhlcv | SAVED | market=${candle.market} timeframe=${candle.timeframe} ts=${candle.ts} close=${candle.close} volume=${candle.volume}`,
       );
       return;
     }
 
     if (snapshot.volume === undefined) {
-      logger.debug(
-        `record_ohlcv.skipped market=${snapshot.market} reason=top_of_book_snapshot ts=${snapshot.timestamp}`,
-      );
       return;
     }
 
@@ -61,7 +58,7 @@ export class RecordOhlcvUseCase {
     this.candles.set(key, candle);
     await this.ohlcvRepository.saveMany([candle]);
     logger.debug(
-      `record_ohlcv.saved market=${candle.market} timeframe=${candle.timeframe} ts=${candle.ts} close=${candle.close} volume=${candle.volume}`,
+      `[application] RecordOhlcv | SAVED | market=${candle.market} timeframe=${candle.timeframe} ts=${candle.ts} close=${candle.close} volume=${candle.volume}`,
     );
   }
 

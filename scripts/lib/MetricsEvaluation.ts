@@ -1,4 +1,4 @@
-export interface MetricsEvaluationInput {
+interface MetricsEvaluationInput {
   fillCount: number;
   markoutCoverage: number;
   markoutCoverageByHorizon?: MarkoutCoverageByHorizon;
@@ -58,20 +58,20 @@ export interface MetricsEvaluationInput {
   quoteFreshness?: Partial<QuoteCycleFreshnessMetrics> & { sampleCount: number };
 }
 
-export interface MarkoutTailBps {
+interface MarkoutTailBps {
   p10: number;
   p5: number;
   p1?: number | null;
   worst: number;
 }
 
-export interface MarkoutCoverage {
+interface MarkoutCoverage {
   observed: number;
   total: number;
   coverage: number;
 }
 
-export interface MarkoutCoverageByHorizon {
+interface MarkoutCoverageByHorizon {
   "5s": MarkoutCoverage;
   "30s": MarkoutCoverage;
   "300s": MarkoutCoverage;
@@ -490,7 +490,8 @@ export function emptyQuoteFreshness(): QuoteCycleFreshnessMetrics {
     slowCycleRate: null,
   };
 }
-export interface QuoteCycleFreshnessMetrics {
+
+interface QuoteCycleFreshnessMetrics {
   sampleCount: number;
   totalRefreshMsP50: number | null;
   totalRefreshMsP95: number | null;

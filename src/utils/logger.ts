@@ -65,6 +65,12 @@ const formatHeader = (level: LogLevel): string => {
   return colorize(`${timestamp} ${levelTag}`, level);
 };
 
+/** Orange highlight for fill-related event tokens when stdout is a TTY (empty otherwise). */
+export const LOG_ORANGE = process.stdout.isTTY ? "\x1B[38;5;208m" : "";
+
+/** Reset ANSI after `LOG_ORANGE` (empty when colors are disabled). */
+export const LOG_RESET = process.stdout.isTTY ? "\x1B[0m" : "";
+
 export const logger = {
   log: (...args: unknown[]): void => {
     if (!shouldLog(LogLevel.LOG)) return;

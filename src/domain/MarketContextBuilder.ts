@@ -1,7 +1,7 @@
 import type { MarketSnapshot } from "./ports/IMarketFeed.ts";
 import type { MarketContext } from "./MarketContext.ts";
 
-export interface MarketContextBuilderInput {
+interface MarketContextBuilderInput {
   snapshot: MarketSnapshot;
   positionQty?: number;
   now?: number;

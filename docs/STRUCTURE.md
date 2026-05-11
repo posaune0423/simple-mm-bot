@@ -72,13 +72,17 @@ simple-mm-bot/
 │   ├── config.backtest.yml
 │   └── config.example.yml
 ├── tests/
-│   ├── adapters/
-│   ├── application/
-│   ├── domain/
-│   ├── scripts/
-│   ├── e2e/
-│   ├── infrastructure/
-│   └── reporting/
+│   ├── unit/
+│   │   ├── adapters/
+│   │   ├── application/
+│   │   ├── domain/
+│   │   ├── reporting/
+│   │   └── scripts/
+│   ├── integration/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   └── latency/
+│   └── e2e/
 ├── scripts/
 │   ├── backtestPaperLoop.ts
 │   ├── evaluateLiveRun.ts
@@ -221,9 +225,9 @@ Runtime default は `src/env.ts`、Drizzle schema / migration path は `drizzle.
 生成データは原則 `data/` 配下へ置く。`src/`、`scripts/`、`docs/` の source file 生成とは分け、local runtime / agent loop が読む state として扱う。
 
 - `data/mm.db`
-  - default SQLite DB。`DATABASE_URL` がなく、`DB_PATH` も未指定の場合に live / paper / backtest / metrics scripts が読む。
+  - default SQLite DB。`DATABASE_URL=file:data/mm.db` として live / paper / backtest / metrics scripts が読む。
   - 通常の backtest、paper、live optimization はこの同一 DB を共有する。`trading_runs.id` と mode / venue / market / capitalMode で run を分離し、複数 run の比較や latest run 評価を DB 内で行う。
-  - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `--db data/tmp/<label>.db` や一時 path を明示する。
+  - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `DATABASE_URL=file:data/tmp/<label>.db`、`--db data/tmp/<label>.db`、または一時 path を明示する。
 - `data/metrics/`
   - bot 性能評価結果の格納先。
   - `bun run metrics:evaluate` は `evaluation.json` を `data/metrics/<run_id>/`、または明示した `--output-dir` に書く。
@@ -306,20 +310,26 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 
 ## テスト構成
 
-- `tests/domain/`
+- `tests/unit/domain/`
   - strategy、quote engine、analytics の pure unit test
-- `tests/scripts/`
+- `tests/unit/scripts/`
   - metrics evaluation、Bulk config tuning、design issue planning の unit test
-- `tests/application/`
-  - DI、bot loop、use case の orchestration test
-- `tests/adapters/`
+- `tests/unit/application/`
+  - bot loop、use case の orchestration test
+- `tests/unit/adapters/`
   - Bulk adapter と venue payload normalization の unit test
-- `tests/infrastructure/`
-  - SQLite/Postgres repository integration test、report query test
-- `tests/reporting/`
+- `tests/unit/reporting/`
   - metrics、Markdown report、SVG chart rendering の unit test
+- `tests/integration/application/`
+  - DI composition test
+- `tests/integration/infrastructure/`
+  - SQLite/Postgres repository integration test、report query test
+- `tests/integration/latency/`
+  - fixture-backed quote cycle latency test
 - `tests/e2e/`
   - public feed を使う smoke test
+
+詳細は `docs/TEST.md` を参照する。coverage は `bun run test:coverage` で `docs/coverage/` に出力する。
 
 Bulk main path を変更した場合は、少なくとも `bun run lint` と `bun run test` を実行する。
 public feed 依存の確認が必要な場合だけ `bun run test:e2e:paper` を追加する。

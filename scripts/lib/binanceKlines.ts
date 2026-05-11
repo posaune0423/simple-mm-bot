@@ -42,7 +42,7 @@ function bufferToHex(buf: ArrayBuffer): string {
   return hex;
 }
 
-export interface BinanceKlineFetchParams {
+interface BinanceKlineFetchParams {
   symbol: string;
   interval: string;
   startTime: number;

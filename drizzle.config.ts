@@ -1,17 +1,18 @@
 import { defineConfig } from "drizzle-kit";
 
 import { env } from "./src/env.ts";
+import { resolveDatabaseUrl } from "./src/utils/databaseUrl.ts";
 
-const databaseUrl = env.DATABASE_URL;
+const database = resolveDatabaseUrl(Bun.env.DATABASE_URL ?? env.DATABASE_URL);
 
 export default defineConfig(
-  databaseUrl
+  database.kind === "postgres"
     ? {
         dialect: "postgresql",
         schema: "./src/infrastructure/db/postgres/schema.ts",
         out: "./src/infrastructure/db/postgres/migrations",
         dbCredentials: {
-          url: databaseUrl,
+          url: database.url,
         },
       }
     : {
@@ -19,7 +20,7 @@ export default defineConfig(
         schema: "./src/infrastructure/db/sqlite/schema.ts",
         out: "./src/infrastructure/db/sqlite/migrations",
         dbCredentials: {
-          url: env.DB_PATH,
+          url: database.path,
         },
       },
 );

@@ -4,7 +4,8 @@ import { Database } from "bun:sqlite";
 import { ResultAsync } from "neverthrow";
 
 import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
-import { DEFAULT_SQLITE_DB_PATH, METRICS_RESULTS_DIR } from "./lib/paths.ts";
+import { resolveSqliteDatabasePath } from "../src/utils/databaseUrl.ts";
+import { METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";
@@ -789,7 +790,18 @@ function percentile(values: number[], percentile: number): number | null {
 
 function evaluate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const dbPath = options.db ?? Bun.env.DB_PATH ?? DEFAULT_SQLITE_DB_PATH;
+  let dbPath: string;
+  try {
+    dbPath = options.db ?? resolveSqliteDatabasePath(Bun.env.DATABASE_URL);
+  } catch (error) {
+    return ResultAsync.fromPromise(Promise.reject(error), (cause) =>
+      createAppError(
+        "metrics.invalid_database_url",
+        "metrics:evaluate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
+        cause,
+      ),
+    );
+  }
   const runId = options["run-id"] ?? latestRunId(dbPath);
   const outputDir = options["output-dir"] ?? join(METRICS_RESULTS_DIR, runId ?? "unknown");
 

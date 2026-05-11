@@ -1,6 +1,6 @@
 import { parse, stringify } from "yaml";
 
-export interface TuneResult {
+interface TuneResult {
   changed: boolean;
   content: string;
   actions: string[];

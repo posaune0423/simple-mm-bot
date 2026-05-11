@@ -13,7 +13,7 @@ bun run loop:backtest-paper --backtest-config config/config.backtest.yml --paper
 
 Defaults:
 
-- DB: `data/mm.db` (`DB_PATH` or `--db` can override).
+- DB: `data/mm.db` via `DATABASE_URL=file:data/mm.db` (`--db` can override for this command).
 - Results: `data/strategy-runs/<timestamp>-<label>/` (`--output-dir` can override).
 - Use the shared DB by default so `trading_runs` can compare runs. Create a separate DB only for destructive or isolated experiments, and pass `--db data/tmp/<label>.db` explicitly.
 

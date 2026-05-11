@@ -4,17 +4,38 @@ export interface AppError {
   cause?: unknown;
 }
 
+export interface ErrorDescription {
+  code?: string;
+  title: string;
+  reason: string;
+  cause?: string;
+  details: string;
+  stack?: string;
+}
+
 export function createAppError(code: string, message: string, cause?: unknown): AppError {
   return { code, message, cause };
 }
 
-function getErrorMessage(error: unknown): string {
+export function isAppError(error: unknown): error is AppError {
+  if (typeof error !== "object" || error === null || error instanceof Error) {
+    return false;
+  }
+  const candidate = error as { code?: unknown; message?: unknown };
+  return typeof candidate.code === "string" && typeof candidate.message === "string";
+}
+
+export function stringifyError(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    const message = error.message || "Unknown error";
+    return error.name && error.name !== "Error" ? `${error.name}: ${message}` : message;
   }
 
   if (typeof error === "string") {
     return error;
+  }
+  if (error === undefined || typeof error === "symbol" || typeof error === "function") {
+    return String(error);
   }
 
   try {
@@ -24,7 +45,45 @@ function getErrorMessage(error: unknown): string {
   }
 }
 
+export function getErrorName(error: unknown): string | undefined {
+  return error instanceof Error ? error.name : undefined;
+}
+
 export function formatAppError(error: AppError): string {
-  const detail = error.cause === undefined ? "" : `: ${getErrorMessage(error.cause)}`;
+  const detail = error.cause === undefined ? "" : `: ${stringifyError(error.cause)}`;
   return `[${error.code}] ${error.message}${detail}`;
+}
+
+export function formatUnknownError(error: unknown): string {
+  return describeError(error).details;
+}
+
+export function describeError(error: unknown): ErrorDescription {
+  if (isAppError(error)) {
+    return {
+      code: error.code,
+      title: error.code,
+      reason: error.message,
+      cause: error.cause === undefined ? undefined : stringifyError(error.cause),
+      details: formatAppError(error),
+      stack: error.cause instanceof Error ? error.cause.stack : undefined,
+    };
+  }
+
+  if (error instanceof Error) {
+    const details = stringifyError(error);
+    return {
+      title: error.name || "Error",
+      reason: error.message || details,
+      details,
+      stack: error.stack,
+    };
+  }
+
+  const reason = stringifyError(error);
+  return {
+    title: "Error",
+    reason,
+    details: reason,
+  };
 }

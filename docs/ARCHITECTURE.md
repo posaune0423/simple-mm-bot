@@ -348,14 +348,14 @@ flowchart TD
 ```mermaid
 flowchart TD
     Start["DIContainer.buildBot()"]
-    DBQ{DATABASE_URL?}
+    DBQ{DATABASE_URL scheme}
     Venue{config.venue}
     ModeBulk{config.mode}
     ModeHL{config.mode}
 
     Start --> DBQ
-    DBQ -- yes --> PG["PostgresMetricsRepository\nPostgresOhlcvRepository"]
-    DBQ -- no --> SQLite["SqliteMetricsRepository\nSqliteOhlcvRepository\nSqliteMetricsRepository as IQuoteQualityRepository"]
+    DBQ -- "postgres:// or postgresql://" --> PG["PostgresMetricsRepository\nPostgresOhlcvRepository"]
+    DBQ -- "file:<path>" --> SQLite["SqliteMetricsRepository\nSqliteOhlcvRepository\nSqliteMetricsRepository as IQuoteQualityRepository"]
     Start --> Pos["InMemoryPositionRepository"]
     Start --> Strategy["buildQuotingStrategy()\nAvellanedaStoikovStrategy"]
     Start --> QE["QuoteEngine"]
@@ -376,8 +376,8 @@ flowchart TD
 
 DB 解決:
 
-- `DATABASE_URL` があれば Postgres。
-- なければ SQLite。既定 path は `DB_PATH` / `src/env.ts` 経由で `data/mm.db`。
+- `DATABASE_URL=postgres://...` / `postgresql://...` は Postgres。
+- `DATABASE_URL=file:<path>` は SQLite。既定値は `src/env.ts` の `file:data/mm.db`。
 - SQLite metrics repository は `IQuoteQualityRepository` も実装し、quality gate の markout feedback に使われる。
 
 ---
@@ -517,8 +517,7 @@ flowchart LR
 
 - `CONFIG_PATH`: 読み込む YAML。default は `config/config.bulk.beta.yml`。
 - `MODE`: `live` / `paper` / `backtest` override。
-- `DATABASE_URL`: あれば Postgres、なければ SQLite。
-- `DB_PATH`: SQLite path。default は `data/mm.db`。
+- `DATABASE_URL`: `file:<path>` なら SQLite、`postgres://` / `postgresql://` なら Postgres。default は `file:data/mm.db`。
 - `BULK_PRIVATE_KEY`: Bulk live order placement 用。
 - `LOG_LEVEL`: repo logger の filter。
 - `HL_*`: Hyperliquid legacy path 用。

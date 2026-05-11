@@ -7,13 +7,3 @@ export interface PerformanceMetrics {
   sharpe: number;
   fillRate: number;
 }
-
-export interface EquityPoint {
-  timestamp: number;
-  value: number;
-}
-
-export interface FillAnalysis {
-  adverseSelectionCount: number;
-  fillCount: number;
-}

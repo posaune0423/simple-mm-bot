@@ -1,4 +1,10 @@
-import type { Candle as BulkCandle } from "bulk-ts-sdk";
+import type {
+  BookUpdate as BulkBook,
+  Candle as BulkCandle,
+  Level as BulkLevel,
+  MarketStats as BulkTicker,
+  WsSubscription,
+} from "bulk-ts-sdk";
 
 import type {
   IMarketFeed,
@@ -7,17 +13,10 @@ import type {
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
 import { calculateDepthVampPrice } from "../../domain/FairPriceCalculator.ts";
+import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import { retryTransientBulk } from "../../utils/transientBulk.ts";
 
-type BulkLevel = { price?: number; px?: number; size?: number; sz?: number };
-type BulkBook = { levels?: BulkLevel[][]; timestamp?: number };
-type BulkTicker = {
-  markPrice?: number;
-  lastPrice?: number;
-  fairBookPx?: number;
-  timestamp?: number;
-};
 type BulkPositionEntry = {
   symbol?: string;
   size?: number;
@@ -35,6 +34,17 @@ interface BulkMarginState {
   positionUpdatedAt: number | null;
 }
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
+type MarketWsStaleReason = "book_ws_stale" | "ticker_ws_stale";
+type ParsedBookSnapshot = {
+  bestBid: number;
+  bestAsk: number;
+  microPrice: number;
+  vampPrice: number | undefined;
+  orderBookLevels: OrderBookLevel[];
+};
+type BookSnapshotParseResult =
+  | ({ ok: true } & ParsedBookSnapshot)
+  | { ok: false; reason: "empty_book" | "crossed_book"; bestBid?: number; bestAsk?: number };
 
 interface BulkMarketClient {
   ticker(symbol: string): Promise<BulkTicker>;
@@ -47,7 +57,7 @@ interface BulkAccountClient {
 
 interface BulkWsClient {
   subscribe(
-    subscription: unknown,
+    subscription: WsSubscription,
     handler: (message: unknown) => void,
   ): Promise<BulkSubscriptionHandle>;
   close(): Promise<void>;
@@ -66,27 +76,34 @@ interface BulkMarketFeedParams {
   candleInterval?: "1m";
   accountRetryAttempts?: number;
   accountRetryDelayMs?: number;
+  marketWsReconnectAfterMs?: number;
   accountPollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_CANDLE_INTERVAL = "1m";
 const DEFAULT_ACCOUNT_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_MARKET_WS_WATCHDOG_INTERVAL_MS = 250;
+const DEFAULT_MARKET_WS_RECONNECT_AFTER_MS = 5_000;
 const MAX_CANDLES_PER_MESSAGE = 20;
 
-function nsToMs(timestamp: number | undefined): number {
+function timestampToMs(timestamp: number | undefined): number {
   if (timestamp === undefined) {
     return Date.now();
   }
   return timestamp > 9_999_999_999_999 ? Math.floor(timestamp / 1_000_000) : timestamp;
 }
 
+function ageMs(timestamp: number | undefined, nowMs = Date.now()): number {
+  return timestamp === undefined ? 0 : Math.max(0, nowMs - timestamp);
+}
+
 function levelPrice(level: BulkLevel): number | undefined {
-  return level.price ?? level.px;
+  return level.px;
 }
 
 function levelSize(level: BulkLevel): number {
-  return level.size ?? level.sz ?? 0;
+  return level.sz ?? 0;
 }
 
 function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: number): number {
@@ -95,6 +112,67 @@ function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: 
     return (bestBid + bestAsk) / 2;
   }
   return (bestAsk * bidSize + bestBid * askSize) / denominator;
+}
+
+function sortedBookSide(
+  levels: BulkLevel[],
+  side: "bid" | "ask",
+  nlevels?: number,
+): Array<[number, number]> {
+  return levels
+    .flatMap((level): Array<[number, number]> => {
+      const price = levelPrice(level);
+      const size = levelSize(level);
+      if (
+        price === undefined ||
+        !Number.isFinite(price) ||
+        !Number.isFinite(size) ||
+        price <= 0 ||
+        size <= 0
+      ) {
+        return [];
+      }
+      return [[price, size]];
+    })
+    .sort(([left], [right]) => (side === "bid" ? right - left : left - right))
+    .slice(0, nlevels);
+}
+
+function parseBookSnapshot(book: BulkBook, nlevels?: number): BookSnapshotParseResult {
+  const bids = sortedBookSide(book.levels?.[0] ?? [], "bid", nlevels);
+  const asks = sortedBookSide(book.levels?.[1] ?? [], "ask", nlevels);
+  const bestBid = bids[0]?.[0];
+  const bestAsk = asks[0]?.[0];
+  if (bestBid === undefined || bestAsk === undefined) {
+    return { ok: false, reason: "empty_book", bestBid, bestAsk };
+  }
+  if (bestBid >= bestAsk) {
+    return { ok: false, reason: "crossed_book", bestBid, bestAsk };
+  }
+  const length = Math.min(bids.length, asks.length);
+  const orderBookLevels: OrderBookLevel[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const bid = bids[index];
+    const ask = asks[index];
+    if (bid === undefined || ask === undefined) {
+      continue;
+    }
+    const [bidPrice, bidSize] = bid;
+    const [askPrice, askSize] = ask;
+    orderBookLevels.push({ bidPrice, bidSize, askPrice, askSize });
+  }
+  const topLevel = orderBookLevels[0];
+  if (topLevel === undefined) {
+    return { ok: false, reason: "empty_book", bestBid, bestAsk };
+  }
+  return {
+    ok: true,
+    bestBid,
+    bestAsk,
+    microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
+    vampPrice: calculateDepthVampPrice(orderBookLevels),
+    orderBookLevels,
+  };
 }
 
 function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
@@ -109,6 +187,10 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     timestamp: snapshot.timestamp,
     bookUpdatedAt: snapshot.bookUpdatedAt,
     tickerUpdatedAt: snapshot.tickerUpdatedAt,
+    bookReceivedAt: snapshot.bookReceivedAt,
+    tickerReceivedAt: snapshot.tickerReceivedAt,
+    bookExchangeTimestamp: snapshot.bookExchangeTimestamp,
+    tickerExchangeTimestamp: snapshot.tickerExchangeTimestamp,
     candleUpdatedAt: snapshot.candleUpdatedAt,
     accountUpdatedAt: snapshot.accountUpdatedAt,
     positionUpdatedAt: snapshot.positionUpdatedAt,
@@ -124,18 +206,24 @@ function dataOf(message: unknown): Record<string, unknown> {
   }
   const record = message as Record<string, unknown>;
   const data = record.data;
-  return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : record;
+  return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
 }
 
-function payloadOf(message: unknown, nestedKeys: string[]): Record<string, unknown> {
+function nestedRecord(data: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const nested = data[key];
+  return typeof nested === "object" && nested !== null && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : null;
+}
+
+function tickerOf(message: unknown): BulkTicker | null {
   const data = dataOf(message);
-  for (const key of nestedKeys) {
-    const nested = data[key];
-    if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
-      return nested as Record<string, unknown>;
-    }
-  }
-  return data;
+  return nestedRecord(data, "ticker") as BulkTicker | null;
+}
+
+function bookOf(message: unknown): BulkBook | null {
+  const data = dataOf(message);
+  return nestedRecord(data, "book") as BulkBook | null;
 }
 
 function crossPositionQty(positions: BulkPositionEntry[] | undefined, market: string): number {
@@ -157,36 +245,57 @@ export class BulkMarketFeed implements IMarketFeed {
   private lastCandleTs: number | null = null;
   private snapshot: MarketSnapshot | null = null;
   private accountPollTimer: ReturnType<typeof setInterval> | null = null;
+  private marketWsWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   private accountPollInFlight = false;
+  private wsReconnectInFlight = false;
+  private wsSubscribedAtMs: number | null = null;
+  private lastWsBookReceivedAtMs: number | null = null;
+  private lastWsTickerReceivedAtMs: number | null = null;
+  private connected = false;
 
   constructor(
     private readonly client: BulkMarketFeedClient,
     private readonly params: BulkMarketFeedParams,
   ) {}
 
+  private isConnected(): boolean {
+    return this.connected;
+  }
+
   async connect(): Promise<void> {
     logger.info(
-      `bulk_market_feed.connect market=${this.params.market} nlevels=${this.params.nlevels ?? "default"}`,
+      `[adapter] BulkMarketFeed | CONNECT | market=${this.params.market} nlevels=${this.params.nlevels ?? "default"}`,
     );
-    await this.refreshSnapshot();
-    await this.subscribeWs();
-    this.startAccountPolling();
-    logger.info(`bulk_market_feed.connected market=${this.params.market}`);
+    this.connected = true;
+    try {
+      await this.refreshSnapshot();
+      await this.subscribeWs();
+      this.startAccountPolling();
+      this.startMarketWsWatchdog();
+      logger.info(`[adapter] BulkMarketFeed | CONNECTED | market=${this.params.market}`);
+    } catch (error) {
+      this.connected = false;
+      throw error;
+    }
   }
 
   async disconnect(): Promise<void> {
-    logger.info(`bulk_market_feed.disconnect market=${this.params.market}`);
+    logger.info(`[adapter] BulkMarketFeed | DISCONNECT | market=${this.params.market}`);
+    this.connected = false;
     this.stopAccountPolling();
+    this.stopMarketWsWatchdog();
     const results = await Promise.allSettled(
       this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
     );
     for (const result of results) {
       if (result.status === "rejected") {
-        logger.warn(`BulkMarketFeed.disconnect unsubscribe failed: ${String(result.reason)}`);
+        logger.warn(
+          `[adapter] BulkMarketFeed | DISCONNECT_UNSUBSCRIBE_FAILED | error=${stringifyError(result.reason)}`,
+        );
       }
     }
     await this.client.ws.close();
-    logger.info(`bulk_market_feed.disconnected market=${this.params.market}`);
+    logger.info(`[adapter] BulkMarketFeed | DISCONNECTED | market=${this.params.market}`);
   }
 
   async getSnapshot(): Promise<MarketSnapshot> {
@@ -214,12 +323,18 @@ export class BulkMarketFeed implements IMarketFeed {
     ]);
     this.snapshot = this.snapshotFrom(ticker, book, marginState);
     logger.info(
-      `bulk_market_feed.snapshot_seeded market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"}`,
+      `[adapter] BulkMarketFeed | SNAPSHOT_SEEDED | market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"}`,
     );
     this.publish(this.snapshot);
   }
 
   private async subscribeWs(): Promise<void> {
+    if (!this.isConnected()) {
+      return;
+    }
+    this.wsSubscribedAtMs = Date.now();
+    this.lastWsBookReceivedAtMs = null;
+    this.lastWsTickerReceivedAtMs = null;
     const ticker = await this.client.ws.subscribe(
       { type: "ticker", symbol: this.params.market },
       (message: unknown) => this.mergeTicker(message),
@@ -242,8 +357,41 @@ export class BulkMarketFeed implements IMarketFeed {
       async () => candle.unsubscribe(),
     );
     logger.info(
-      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Snapshot,candle`,
+      `[adapter] BulkMarketFeed | WS_SUBSCRIBED | market=${this.params.market} topics=ticker,l2Snapshot,candle`,
     );
+  }
+
+  private async reconnectWs(reason: string): Promise<void> {
+    if (!this.isConnected() || this.wsReconnectInFlight) {
+      return;
+    }
+    this.wsReconnectInFlight = true;
+    const startedAt = Date.now();
+    try {
+      logger.warn(
+        `[adapter] BulkMarketFeed | WS_RECONNECT_STARTED | market=${this.params.market} reason=${reason}`,
+      );
+      const results = await Promise.allSettled(
+        this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
+      );
+      for (const result of results) {
+        if (result.status === "rejected") {
+          logger.warn(
+            `[adapter] BulkMarketFeed | RECONNECT_UNSUBSCRIBE_FAILED | error=${stringifyError(result.reason)}`,
+          );
+        }
+      }
+      await this.client.ws.close();
+      if (!this.isConnected()) {
+        return;
+      }
+      await this.subscribeWs();
+      logger.warn(
+        `[adapter] BulkMarketFeed | WS_RECONNECT_COMPLETE | market=${this.params.market} reason=${reason} latencyMs=${Date.now() - startedAt}`,
+      );
+    } finally {
+      this.wsReconnectInFlight = false;
+    }
   }
 
   private snapshotFrom(
@@ -251,27 +399,34 @@ export class BulkMarketFeed implements IMarketFeed {
     book: BulkBook,
     marginState: BulkMarginState,
   ): MarketSnapshot {
-    const bookLevels = this.bookLevels(book);
-    const topLevel = bookLevels[0];
-    if (topLevel === undefined) {
-      throw new Error(`No Bulk order book levels for ${this.params.market}`);
+    const parsedBook = parseBookSnapshot(book, this.params.nlevels);
+    if (!parsedBook.ok) {
+      throw new Error(`No valid Bulk order book snapshot for ${this.params.market}`);
     }
-    const bestBid = topLevel.bidPrice;
-    const bestAsk = topLevel.askPrice;
-    const bookUpdatedAt = nsToMs(book.timestamp);
-    const tickerUpdatedAt = nsToMs(ticker.timestamp);
+    const receivedAt = Date.now();
+    const bookExchangeTimestamp =
+      typeof book.timestamp === "number" ? timestampToMs(book.timestamp) : undefined;
+    const tickerExchangeTimestamp =
+      typeof ticker.timestamp === "number" ? timestampToMs(ticker.timestamp) : undefined;
     return {
       market: this.params.market,
-      bestBid,
-      bestAsk,
-      microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
-      vampPrice: calculateDepthVampPrice(bookLevels),
-      orderBookLevels: bookLevels,
+      bestBid: parsedBook.bestBid,
+      bestAsk: parsedBook.bestAsk,
+      microPrice: parsedBook.microPrice,
+      vampPrice: parsedBook.vampPrice,
+      orderBookLevels: parsedBook.orderBookLevels,
       markPrice:
-        ticker.markPrice ?? ticker.fairBookPx ?? ticker.lastPrice ?? (bestBid + bestAsk) / 2,
-      timestamp: book.timestamp === undefined ? tickerUpdatedAt : bookUpdatedAt,
-      bookUpdatedAt,
-      tickerUpdatedAt,
+        ticker.markPrice ??
+        ticker.fairBookPx ??
+        ticker.lastPrice ??
+        (parsedBook.bestBid + parsedBook.bestAsk) / 2,
+      timestamp: receivedAt,
+      bookUpdatedAt: receivedAt,
+      tickerUpdatedAt: receivedAt,
+      bookReceivedAt: receivedAt,
+      tickerReceivedAt: receivedAt,
+      bookExchangeTimestamp,
+      tickerExchangeTimestamp,
       candleUpdatedAt: null,
       accountUpdatedAt: marginState.accountUpdatedAt,
       positionUpdatedAt: marginState.positionUpdatedAt,
@@ -285,20 +440,32 @@ export class BulkMarketFeed implements IMarketFeed {
     if (this.snapshot === null) {
       return;
     }
-    const data = payloadOf(message, ["ticker"]);
+    const receivedAt = Date.now();
+    const previousMarkPrice = this.snapshot.markPrice;
+    this.lastWsTickerReceivedAtMs = receivedAt;
+    const data = tickerOf(message);
+    if (data === null) {
+      return;
+    }
     const markPrice = Number(data.markPrice ?? data.fairBookPx ?? data.lastPrice);
     if (!Number.isFinite(markPrice)) {
       return;
     }
+    const exchangeTimestamp =
+      typeof data.timestamp === "number" ? timestampToMs(data.timestamp) : undefined;
     this.snapshot = {
       ...quoteSnapshot(this.snapshot),
       markPrice,
-      timestamp: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
-      tickerUpdatedAt: nsToMs(typeof data.timestamp === "number" ? data.timestamp : undefined),
+      timestamp: receivedAt,
+      tickerUpdatedAt: receivedAt,
+      tickerReceivedAt: receivedAt,
+      tickerExchangeTimestamp: exchangeTimestamp,
     };
-    logger.debug(
-      `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
-    );
+    if (previousMarkPrice !== markPrice) {
+      logger.debug(
+        `[adapter] BulkMarketFeed | TICKER_UPDATED | market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
+      );
+    }
     this.publish(this.snapshot);
   }
 
@@ -306,27 +473,40 @@ export class BulkMarketFeed implements IMarketFeed {
     if (this.snapshot === null) {
       return;
     }
-    const data = payloadOf(message, ["l2Snapshot", "l2snapshot", "book"]) as BulkBook;
-    const bookLevels = this.tryBookLevels(data);
-    const topLevel = bookLevels[0];
-    if (topLevel === undefined) {
+    const receivedAt = Date.now();
+    const previousBestBid = this.snapshot.bestBid;
+    const previousBestAsk = this.snapshot.bestAsk;
+    this.lastWsBookReceivedAtMs = receivedAt;
+    const data = bookOf(message);
+    if (data === null) {
       return;
     }
-    const bestBid = topLevel.bidPrice;
-    const bestAsk = topLevel.askPrice;
+    const parsedBook = parseBookSnapshot(data, this.params.nlevels);
+    if (!parsedBook.ok) {
+      logger.warn(
+        `[adapter] BulkMarketFeed | BOOK_SNAPSHOT_INVALID | market=${this.params.market} reason=${parsedBook.reason} bestBid=${parsedBook.bestBid ?? "null"} bestAsk=${parsedBook.bestAsk ?? "null"}`,
+      );
+      return;
+    }
+    const exchangeTimestamp =
+      typeof data.timestamp === "number" ? timestampToMs(data.timestamp) : undefined;
     this.snapshot = {
       ...quoteSnapshot(this.snapshot),
-      bestBid,
-      bestAsk,
-      microPrice: microPrice(bestBid, bestAsk, topLevel.bidSize, topLevel.askSize),
-      vampPrice: calculateDepthVampPrice(bookLevels),
-      orderBookLevels: bookLevels,
-      timestamp: nsToMs(data.timestamp),
-      bookUpdatedAt: nsToMs(data.timestamp),
+      bestBid: parsedBook.bestBid,
+      bestAsk: parsedBook.bestAsk,
+      microPrice: parsedBook.microPrice,
+      vampPrice: parsedBook.vampPrice,
+      orderBookLevels: parsedBook.orderBookLevels,
+      timestamp: receivedAt,
+      bookUpdatedAt: receivedAt,
+      bookReceivedAt: receivedAt,
+      bookExchangeTimestamp: exchangeTimestamp,
     };
-    logger.debug(
-      `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
-    );
+    if (previousBestBid !== parsedBook.bestBid || previousBestAsk !== parsedBook.bestAsk) {
+      logger.debug(
+        `[adapter] BulkMarketFeed | BOOK_UPDATED | market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
+      );
+    }
     this.publish(this.snapshot);
   }
 
@@ -360,7 +540,7 @@ export class BulkMarketFeed implements IMarketFeed {
     ) {
       return;
     }
-    const ts = nsToMs(timestamp);
+    const ts = timestampToMs(timestamp);
     if (this.lastCandleTs !== null && ts < this.lastCandleTs) {
       return;
     }
@@ -378,7 +558,7 @@ export class BulkMarketFeed implements IMarketFeed {
       volume,
     };
     logger.info(
-      `bulk_market_feed.candle_received market=${this.snapshot.market} ts=${this.snapshot.timestamp} open=${open} high=${high} low=${low} close=${close} volume=${volume}`,
+      `[adapter] BulkMarketFeed | CANDLE_RECEIVED | market=${this.snapshot.market} ts=${this.snapshot.timestamp} open=${open} high=${high} low=${low} close=${close} volume=${volume}`,
     );
     this.publish(this.snapshot);
   }
@@ -396,7 +576,7 @@ export class BulkMarketFeed implements IMarketFeed {
       void this.refreshAccountState()
         .catch((error) => {
           logger.warn(
-            `bulk_market_feed.account_poll_failed market=${this.params.market} error=${String(error)}`,
+            `[adapter] BulkMarketFeed | ACCOUNT_POLL_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
           );
         })
         .finally(() => {
@@ -405,7 +585,7 @@ export class BulkMarketFeed implements IMarketFeed {
     }, intervalMs);
     this.accountPollTimer.unref();
     logger.info(
-      `bulk_market_feed.account_polling_started market=${this.params.market} intervalMs=${intervalMs}`,
+      `[adapter] BulkMarketFeed | ACCOUNT_POLLING_STARTED | market=${this.params.market} intervalMs=${intervalMs}`,
     );
   }
 
@@ -417,11 +597,68 @@ export class BulkMarketFeed implements IMarketFeed {
     this.accountPollTimer = null;
   }
 
+  private startMarketWsWatchdog(): void {
+    if (this.marketWsWatchdogTimer !== null) {
+      return;
+    }
+    const intervalMs = DEFAULT_MARKET_WS_WATCHDOG_INTERVAL_MS;
+    this.marketWsWatchdogTimer = setInterval(() => {
+      if (this.snapshot === null || this.wsReconnectInFlight) {
+        return;
+      }
+      const staleReason = this.marketWsStaleReason(Date.now());
+      if (staleReason === null) {
+        return;
+      }
+      logger.info(
+        `[adapter] BulkMarketFeed | MARKET_WS_STALE_DETECTED | market=${this.params.market} reason=${staleReason} bookWsAgeMs=${ageMs(this.lastWsBookReceivedAtMs ?? this.wsSubscribedAtMs ?? undefined)} tickerWsAgeMs=${ageMs(this.lastWsTickerReceivedAtMs ?? this.wsSubscribedAtMs ?? undefined)}`,
+      );
+      void this.reconnectWs(staleReason).catch((error) => {
+        logger.warn(
+          `[adapter] BulkMarketFeed | WS_RECONNECT_FAILED | market=${this.params.market} reason=${staleReason} error=${stringifyError(error)}`,
+        );
+      });
+    }, intervalMs);
+    this.marketWsWatchdogTimer.unref();
+    logger.info(
+      `[adapter] BulkMarketFeed | MARKET_WS_WATCHDOG_STARTED | market=${this.params.market} intervalMs=${intervalMs} reconnectAfterMs=${this.marketWsReconnectAfterMs()}`,
+    );
+  }
+
+  private stopMarketWsWatchdog(): void {
+    if (this.marketWsWatchdogTimer === null) {
+      return;
+    }
+    clearInterval(this.marketWsWatchdogTimer);
+    this.marketWsWatchdogTimer = null;
+  }
+
+  private marketWsReconnectAfterMs(): number {
+    return this.params.marketWsReconnectAfterMs ?? DEFAULT_MARKET_WS_RECONNECT_AFTER_MS;
+  }
+
+  private marketWsStaleReason(nowMs: number): MarketWsStaleReason | null {
+    const subscribedAt = this.wsSubscribedAtMs;
+    if (subscribedAt === null) {
+      return null;
+    }
+    const staleAfterMs = this.marketWsReconnectAfterMs();
+    const lastBookMessageAt = this.lastWsBookReceivedAtMs ?? subscribedAt;
+    if (nowMs - lastBookMessageAt > staleAfterMs) {
+      return "book_ws_stale";
+    }
+    const lastTickerMessageAt = this.lastWsTickerReceivedAtMs ?? subscribedAt;
+    if (nowMs - lastTickerMessageAt > staleAfterMs) {
+      return "ticker_ws_stale";
+    }
+    return null;
+  }
+
   private async refreshAccountState(): Promise<void> {
     if (this.snapshot === null) {
       return;
     }
-    const marginState = await this.fetchMarginState();
+    const marginState = await this.fetchMarginState({ attempts: 1 });
     this.snapshot = {
       ...this.snapshot,
       accountUpdatedAt: marginState.accountUpdatedAt,
@@ -431,54 +668,12 @@ export class BulkMarketFeed implements IMarketFeed {
       availableMarginUsd: marginState.availableMarginUsd,
     };
     logger.debug(
-      `bulk_market_feed.account_updated market=${this.snapshot.market} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"} positionQty=${this.snapshot.positionQty ?? "null"} accountUpdatedAt=${this.snapshot.accountUpdatedAt ?? "null"}`,
+      `[adapter] BulkMarketFeed | ACCOUNT_UPDATED | market=${this.snapshot.market} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"} positionQty=${this.snapshot.positionQty ?? "null"} accountUpdatedAt=${this.snapshot.accountUpdatedAt ?? "null"}`,
     );
     this.publish(this.snapshot);
   }
 
-  private bookLevels(book: BulkBook): OrderBookLevel[] {
-    const levels = this.tryBookLevels(book);
-    if (levels.length === 0) {
-      throw new Error(`No Bulk order book levels for ${this.params.market}`);
-    }
-    return levels;
-  }
-
-  private tryBookLevels(book: BulkBook): OrderBookLevel[] {
-    const bids = book.levels?.[0] ?? [];
-    const asks = book.levels?.[1] ?? [];
-    const length = Math.min(bids.length, asks.length);
-    const levels: OrderBookLevel[] = [];
-    for (let index = 0; index < length; index += 1) {
-      const bid = bids[index];
-      const ask = asks[index];
-      if (bid === undefined || ask === undefined) {
-        continue;
-      }
-      const bidPrice = levelPrice(bid);
-      const askPrice = levelPrice(ask);
-      const bidSize = levelSize(bid);
-      const askSize = levelSize(ask);
-      if (
-        bidPrice === undefined ||
-        askPrice === undefined ||
-        !Number.isFinite(bidPrice) ||
-        !Number.isFinite(askPrice) ||
-        !Number.isFinite(bidSize) ||
-        !Number.isFinite(askSize) ||
-        bidPrice <= 0 ||
-        askPrice <= 0 ||
-        bidSize <= 0 ||
-        askSize <= 0
-      ) {
-        continue;
-      }
-      levels.push({ bidPrice, bidSize, askPrice, askSize });
-    }
-    return levels;
-  }
-
-  private async fetchMarginState(): Promise<BulkMarginState> {
+  private async fetchMarginState(options: { attempts?: number } = {}): Promise<BulkMarginState> {
     if (!this.params.accountId) {
       return {
         marginRatio: null,
@@ -491,12 +686,12 @@ export class BulkMarketFeed implements IMarketFeed {
     const account = await retryTransientBulk(
       async () => this.client.account.fullAccount(this.params.accountId ?? ""),
       {
-        attempts: this.params.accountRetryAttempts ?? 1,
+        attempts: options.attempts ?? this.params.accountRetryAttempts ?? 1,
         delayMs: this.params.accountRetryDelayMs ?? 1_000,
         sleep: this.params.sleep,
         onRetry: (error, attempt, attempts) => {
           logger.warn(
-            `bulk_market_feed.margin_transient_retry market=${this.params.market} attempt=${attempt}/${attempts} error=${String(error)}`,
+            `[adapter] BulkMarketFeed | MARGIN_TRANSIENT_RETRY | market=${this.params.market} attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
           );
         },
       },

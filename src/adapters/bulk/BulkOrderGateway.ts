@@ -10,7 +10,8 @@ import type {
   OrderRequest,
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
-import { logger } from "../../utils/logger.ts";
+import { stringifyError } from "../../utils/errors.ts";
+import { LOG_ORANGE, LOG_RESET, logger } from "../../utils/logger.ts";
 
 type BulkStatus = Record<string, Record<string, unknown> | undefined>;
 type BulkOrderResponse = {
@@ -100,6 +101,8 @@ interface BulkOrderGatewayParams {
   maxLeverage?: number;
   pollIntervalMs?: number;
   ignoreFillsBeforeMs?: number;
+  maxSeenFillIds?: number;
+  seenFillTtlMs?: number;
 }
 
 type BulkMarketRules = {
@@ -111,6 +114,10 @@ type BulkMarketRules = {
 };
 
 const openStatusKeys = new Set(["resting", "working"]);
+const DEFAULT_MAX_SEEN_FILL_IDS = 20_000;
+const DEFAULT_SEEN_FILL_TTL_MS = 24 * 60 * 60 * 1_000;
+const SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS = 100;
+const SEEN_FILL_FULL_PRUNE_INTERVAL_MS = 60_000;
 const filledStatusKeys = new Set(["filled"]);
 const cancelledStatusKeys = new Set([
   "cancelled",
@@ -186,7 +193,7 @@ function orderErrorStatus(error: unknown): number | null {
       return status;
     }
   }
-  const message = String(error);
+  const message = stringifyError(error);
   if (message.includes("HTTP error 422")) {
     return 422;
   }
@@ -230,7 +237,7 @@ function isTransientBulkPollingError(error: unknown): boolean {
     }
   }
 
-  const message = String(error);
+  const message = stringifyError(error);
   return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
 }
 
@@ -243,7 +250,10 @@ function isRejectedOrderResult(
 export class BulkOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
   private readonly orderListeners = new Set<OrderEventListener>();
-  private readonly seenFillIds = new Set<string>();
+  private readonly seenFillIds = new Map<string, number>();
+  private maxObservedFillTimestamp = 0;
+  private fillsSinceLastSeenFillPrune = 0;
+  private lastSeenFillPruneAtMs = 0;
   private rulesPromise: Promise<BulkMarketRules | null> | null = null;
   private pollInFlight: Promise<void> | null = null;
   private leverageChecked = false;
@@ -257,6 +267,7 @@ export class BulkOrderGateway implements IOrderGateway {
       this.fillTimer = setInterval(() => {
         void this.pollFillsFromTimer();
       }, params.pollIntervalMs);
+      this.fillTimer.unref();
     }
   }
 
@@ -266,7 +277,7 @@ export class BulkOrderGateway implements IOrderGateway {
     const type = normalizedOrder.price === undefined ? "market" : "limit";
     const submittedAt = Date.now();
     logger.info(
-      `bulk_order_gateway.place_submitted market=${normalizedOrder.market} type=${type} side=${normalizedOrder.side} qty=${normalizedOrder.qty} price=${normalizedOrder.price ?? "market"} tif=${normalizedOrder.timeInForce} reduceOnly=${normalizedOrder.reduceOnly}`,
+      `[adapter] BulkOrderGateway | PLACE_SUBMITTED | market=${normalizedOrder.market} type=${type} side=${normalizedOrder.side} qty=${normalizedOrder.qty} price=${normalizedOrder.price ?? "market"} tif=${normalizedOrder.timeInForce} reduceOnly=${normalizedOrder.reduceOnly}`,
     );
     await this.publishOrderEvent({
       action: "submit",
@@ -288,7 +299,7 @@ export class BulkOrderGateway implements IOrderGateway {
       const statusKey = status === null ? "http_error" : `http_${status}`;
       const reason = orderRejectionReason(error);
       logger.warn(
-        `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=${statusKey} reason=${reason}`,
+        `[adapter] BulkOrderGateway | PLACE_RESULT | market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=${statusKey} reason=${reason}`,
       );
       await this.publishOrderEvent({
         action: "reject",
@@ -324,7 +335,7 @@ export class BulkOrderGateway implements IOrderGateway {
     const status = placedStatusFrom(firstStatus);
     const key = statusKey(firstStatus) ?? "missing";
     const reason = rejectReasonFrom(firstStatus);
-    const resultMessage = `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=${status} statusKey=${key}`;
+    const resultMessage = `[adapter] BulkOrderGateway | PLACE_RESULT | market=${normalizedOrder.market} orderId=${orderId} status=${status} statusKey=${key}`;
     if (status === "rejected") {
       logger.warn(reason === undefined ? resultMessage : `${resultMessage} reason=${reason}`);
     } else {
@@ -457,13 +468,15 @@ export class BulkOrderGateway implements IOrderGateway {
     }
 
     logger.info(
-      `bulk_order_gateway.leverage_verified market=${this.params.market} leverage=${leverage} maxLeverage=${this.params.maxLeverage}`,
+      `[adapter] BulkOrderGateway | LEVERAGE_VERIFIED | market=${this.params.market} leverage=${leverage} maxLeverage=${this.params.maxLeverage}`,
     );
     this.leverageChecked = true;
   }
 
   async cancel(id: string): Promise<void> {
-    logger.info(`bulk_order_gateway.cancel_submitted market=${this.params.market} orderId=${id}`);
+    logger.info(
+      `[adapter] BulkOrderGateway | CANCEL_SUBMITTED | market=${this.params.market} orderId=${id}`,
+    );
     const submittedAt = Date.now();
     await this.client.trade.cancelOrder?.({ symbol: this.params.market, orderId: id });
     await this.publishOrderEvent({
@@ -475,7 +488,7 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async cancelAll(): Promise<void> {
-    logger.info(`bulk_order_gateway.cancel_all_submitted market=${this.params.market}`);
+    logger.info(`[adapter] BulkOrderGateway | CANCEL_ALL_SUBMITTED | market=${this.params.market}`);
     const submittedAt = Date.now();
     await this.client.trade.cancelAll?.({ symbols: [this.params.market] });
     await this.publishOrderEvent({
@@ -542,7 +555,7 @@ export class BulkOrderGateway implements IOrderGateway {
   private async waitForInFlightPoll(): Promise<void> {
     await this.pollInFlight?.catch((error) => {
       logger.warn(
-        `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${String(error)}`,
+        `[adapter] BulkOrderGateway | DISPOSE_POLL_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
       );
     });
   }
@@ -554,12 +567,12 @@ export class BulkOrderGateway implements IOrderGateway {
     await this.pollFillsSerialized().catch((error) => {
       if (isTransientBulkPollingError(error)) {
         logger.warn(
-          `bulk_order_gateway.fills_poll_transient_failed market=${this.params.market} error=${String(error)}`,
+          `[adapter] BulkOrderGateway | FILLS_POLL_TRANSIENT_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
         );
         return;
       }
       logger.error(
-        `bulk_order_gateway.fills_poll_failed market=${this.params.market} error=${String(error)}`,
+        `[adapter] BulkOrderGateway | FILLS_POLL_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
       );
     });
   }
@@ -583,22 +596,25 @@ export class BulkOrderGateway implements IOrderGateway {
   async pollFillsOnce(): Promise<void> {
     const fills = await this.client.account.fills(this.params.accountId);
     logger.debug(
-      `bulk_order_gateway.fills_polled market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
+      `[adapter] BulkOrderGateway | FILLS_POLLED | market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
     );
     for (const fill of fills) {
       const normalized = this.normalizeFill(fill);
       if (normalized === null || this.seenFillIds.has(normalized.id)) {
         continue;
       }
-      this.seenFillIds.add(normalized.id);
       if (
         this.params.ignoreFillsBeforeMs !== undefined &&
         normalized.filledAt < this.params.ignoreFillsBeforeMs
       ) {
         continue;
       }
+      if (this.isFillOutsideSeenWindow(normalized)) {
+        continue;
+      }
+      this.rememberFill(normalized);
       logger.info(
-        `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
+        `[adapter] BulkOrderGateway | ${LOG_ORANGE}FILL_RECEIVED${LOG_RESET} | market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
       );
       await this.publishOrderEvent({
         action: "fill",
@@ -615,6 +631,57 @@ export class BulkOrderGateway implements IOrderGateway {
         await listener(normalized);
       }
     }
+  }
+
+  private rememberFill(fill: Fill): void {
+    this.seenFillIds.set(fill.id, fill.filledAt);
+    this.maxObservedFillTimestamp = Math.max(this.maxObservedFillTimestamp, fill.filledAt);
+    this.fillsSinceLastSeenFillPrune += 1;
+    this.pruneSeenFillIds();
+  }
+
+  private isFillOutsideSeenWindow(fill: Fill): boolean {
+    const ttlMs = this.params.seenFillTtlMs ?? DEFAULT_SEEN_FILL_TTL_MS;
+    const minObservedAtMs = this.maxObservedFillTimestamp - ttlMs;
+    return this.maxObservedFillTimestamp > 0 && fill.filledAt < minObservedAtMs;
+  }
+
+  private pruneSeenFillIds(): void {
+    const ttlMs = this.params.seenFillTtlMs ?? DEFAULT_SEEN_FILL_TTL_MS;
+    if (this.shouldPruneSeenFillTtl()) {
+      const minObservedAtMs = this.maxObservedFillTimestamp - ttlMs;
+      for (const [id, filledAt] of this.seenFillIds) {
+        if (filledAt < minObservedAtMs) {
+          this.seenFillIds.delete(id);
+        }
+      }
+      this.fillsSinceLastSeenFillPrune = 0;
+      this.lastSeenFillPruneAtMs = this.maxObservedFillTimestamp;
+    }
+
+    const maxSize = this.params.maxSeenFillIds ?? DEFAULT_MAX_SEEN_FILL_IDS;
+    while (this.seenFillIds.size > maxSize) {
+      let oldestId: string | undefined;
+      let oldestFilledAt = Infinity;
+      for (const [id, filledAt] of this.seenFillIds) {
+        if (filledAt < oldestFilledAt) {
+          oldestId = id;
+          oldestFilledAt = filledAt;
+        }
+      }
+      if (oldestId === undefined) {
+        return;
+      }
+      this.seenFillIds.delete(oldestId);
+    }
+  }
+
+  private shouldPruneSeenFillTtl(): boolean {
+    return (
+      this.lastSeenFillPruneAtMs === 0 ||
+      this.fillsSinceLastSeenFillPrune >= SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS ||
+      this.maxObservedFillTimestamp - this.lastSeenFillPruneAtMs >= SEEN_FILL_FULL_PRUNE_INTERVAL_MS
+    );
   }
 
   private normalizeFill(fill: BulkFill): Fill | null {

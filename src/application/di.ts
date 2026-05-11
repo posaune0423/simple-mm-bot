@@ -1,6 +1,6 @@
 import { env } from "../env.ts";
 import { BulkClient } from "bulk-ts-sdk";
-import type { AppConfig } from "../config.ts";
+import type { LoadedAppConfig } from "../config.ts";
 import { BulkMarketFeed } from "../adapters/bulk/BulkMarketFeed.ts";
 import { BulkOhlcvFetcher } from "../adapters/bulk/BulkOhlcvFetcher.ts";
 import { BulkOrderGateway } from "../adapters/bulk/BulkOrderGateway.ts";
@@ -22,6 +22,7 @@ import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRe
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
 import { PostgresMetricsRepository } from "../infrastructure/db/postgres/repository/PostgresMetricsRepository.ts";
+import { resolveDatabaseUrl } from "../utils/databaseUrl.ts";
 import { createSqliteClient } from "../infrastructure/db/sqlite/client.ts";
 import { SqliteMetricsRepository } from "../infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
 import { SqliteOhlcvRepository } from "../infrastructure/db/sqlite/repository/SqliteOhlcvRepository.ts";
@@ -29,12 +30,14 @@ import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeAp
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
-import { MetricsRecorder } from "./MetricsRecorder.ts";
+import { MetricsBuffer, MetricsRecorder } from "./MetricsRecorder.ts";
 import type { OrderManagerOptions } from "./OrderManager.ts";
 import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
+import { BufferedRecordOhlcvUseCase } from "./usecases/BufferedRecordOhlcvUseCase.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.ts";
+import { SyncPositionUseCase } from "./usecases/SyncPositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
@@ -52,14 +55,15 @@ interface ResolvedAdapters {
 }
 
 export class DIContainer {
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: LoadedAppConfig) {}
 
   async buildBot(): Promise<Bot> {
     const repositories = this.createRepositories();
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
-    const metrics = this.buildMetricsRecorder(repositories.metricsRepository);
+    const metricsBuffer = this.buildMetricsBuffer();
+    const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
 
     return new Bot(
       {
@@ -79,14 +83,18 @@ export class DIContainer {
           positionRepository,
           bulkLiveStartupRetryOptions(this.config),
         ),
+        syncPosition: new SyncPositionUseCase(gateway, positionRepository),
         updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
-        recordOhlcv: new RecordOhlcvUseCase(repositories.ohlcvRepository),
+        recordOhlcv: new BufferedRecordOhlcvUseCase(
+          new RecordOhlcvUseCase(repositories.ohlcvRepository),
+          metricsBuffer,
+        ),
         reduceInventory: new ReduceInventoryUseCase(
           gateway,
           positionRepository,
           feed,
           this.config.risk.maxPositionQty,
-          this.marketName(),
+          this.config.market,
           {
             reduceTriggerQty: this.config.risk.reduceTriggerQty,
             reduceTargetQty: this.config.risk.reduceTargetQty,
@@ -98,7 +106,7 @@ export class DIContainer {
           gateway,
           positionRepository,
           feed,
-          this.marketName(),
+          this.config.market,
         ),
       },
       feed,
@@ -138,16 +146,16 @@ export class DIContainer {
   }
 
   private createRepositories(): Repositories {
-    const databaseUrl = Bun.env.DATABASE_URL ?? env.DATABASE_URL;
-    if (databaseUrl) {
-      const client = createPostgresClient(databaseUrl);
+    const database = resolveDatabaseUrl(Bun.env.DATABASE_URL ?? env.DATABASE_URL);
+    if (database.kind === "postgres") {
+      const client = createPostgresClient(database.url);
       return {
         ohlcvRepository: new PostgresOhlcvRepository(client.db),
         metricsRepository: new PostgresMetricsRepository(client.db),
       };
     }
 
-    const client = createSqliteClient(Bun.env.DB_PATH ?? env.DB_PATH);
+    const client = createSqliteClient(database.path);
     const metricsRepository = new SqliteMetricsRepository(client.db);
     return {
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
@@ -156,16 +164,30 @@ export class DIContainer {
     };
   }
 
-  private buildMetricsRecorder(repository: IMetricsRepository): MetricsRecorder {
-    return new MetricsRecorder(repository, {
-      mode: this.config.mode,
-      venue: this.config.venue,
-      capitalMode: resolveCapitalMode(this.config),
-      market: this.marketName(),
-      strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
-      configJson: redactConfig(this.config),
-      ...getGitMetadata(),
-    });
+  private buildMetricsRecorder(
+    repository: IMetricsRepository,
+    buffer: MetricsBuffer,
+  ): MetricsRecorder {
+    return new MetricsRecorder(
+      repository,
+      {
+        mode: this.config.mode,
+        venue: this.config.venue,
+        capitalMode: resolveCapitalMode(this.config),
+        market: this.config.market,
+        strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
+        configJson: redactConfig(this.config),
+        ...getGitMetadata(),
+      },
+      buffer,
+    );
+  }
+
+  private buildMetricsBuffer(): MetricsBuffer {
+    if (this.config.mode === "backtest") {
+      return new MetricsBuffer({ normalCapacity: 100_000, criticalCapacity: 100_000 });
+    }
+    return new MetricsBuffer();
   }
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
@@ -194,7 +216,7 @@ export class DIContainer {
       httpUrl: connections.hyperliquid.httpUrl,
     });
     const feed = new HyperliquidMarketFeed(infoApi, subsApi, {
-      market: connections.hyperliquid.market,
+      market: this.config.market,
       accountAddress: connections.hyperliquid.accountAddress,
     });
 
@@ -208,7 +230,7 @@ export class DIContainer {
                 httpUrl: connections.hyperliquid.httpUrl,
                 privateKey: this.requireSecretKey(connections.hyperliquid.secretKey),
               }),
-              { market: connections.hyperliquid.market },
+              { market: this.config.market },
             )
           : new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
     };
@@ -244,9 +266,10 @@ export class DIContainer {
     }
 
     const feed = new BulkMarketFeed(client, {
-      market: bulk.market,
+      market: config.market,
       nlevels: bulk.nlevels,
       accountId,
+      marketWsReconnectAfterMs: bulk.marketWsReconnectAfterMs,
       ...bulkLiveStartupRetryOptions(config),
     });
 
@@ -264,7 +287,7 @@ export class DIContainer {
     return {
       feed,
       gateway: new BulkOrderGateway(client, {
-        market: bulk.market,
+        market: config.market,
         accountId,
         maxLeverage: bulk.maxLeverage,
         pollIntervalMs: 1000,
@@ -280,12 +303,6 @@ export class DIContainer {
     return secretKey;
   }
 
-  private marketName(): string {
-    return this.config.venue === "bulk"
-      ? this.config.connections.bulk.market
-      : this.config.connections.hyperliquid.market;
-  }
-
   private orderManagerOptions(): Partial<OrderManagerOptions> {
     const options: Partial<OrderManagerOptions> = {};
     if (this.config.bot.maxRestingMs !== undefined) {
@@ -295,7 +312,7 @@ export class DIContainer {
   }
 }
 
-export function resolveCapitalMode(config: AppConfig): CapitalMode {
+export function resolveCapitalMode(config: LoadedAppConfig): CapitalMode {
   if (config.mode === "paper") {
     return "paper";
   }
@@ -308,7 +325,7 @@ export function resolveCapitalMode(config: AppConfig): CapitalMode {
   return "real";
 }
 
-function bulkLiveStartupRetryOptions(config: AppConfig): {
+function bulkLiveStartupRetryOptions(config: LoadedAppConfig): {
   retryAttempts?: number;
   retryDelayMs?: number;
   accountRetryAttempts?: number;
@@ -325,7 +342,7 @@ function bulkLiveStartupRetryOptions(config: AppConfig): {
   };
 }
 
-function redactConfig(config: AppConfig): unknown {
+function redactConfig(config: LoadedAppConfig): unknown {
   if (config.venue === "bulk") {
     return {
       ...config,

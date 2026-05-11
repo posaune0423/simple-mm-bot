@@ -9,12 +9,12 @@
 
 - Runtime: Bun
 - Language: TypeScript
-- Validation: Zod
+- Validation: Valibot
+- linter / formatter: vite plus
 - ORM / Migration: Drizzle ORM
-- Local DB: SQLite (`bun:sqlite`)
-- Production DB: PostgreSQL (`postgres.js`)
+- DB: SQLite (`bun:sqlite`) / PostgreSQL (`postgres.js`)
 - Venue SDK: `bulk-ts-sdk`
-- Deploy: Docker on Railway
+- Deploy: Hetzner VPS
 
 Bulk Trade には公式 TypeScript SDK がないため、Bulk API wrapper として `bulk-ts-sdk` を使用する。
 bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と `bulk-ts-sdk` の境界に閉じ込める。
@@ -116,8 +116,8 @@ Bullet の DI path は持たない。
 
 #### DB 解決
 
-- `DATABASE_URL` あり -> PostgreSQL repository 群
-- `DATABASE_URL` なし -> SQLite repository 群
+- `DATABASE_URL=file:<path>` -> SQLite repository 群
+- `DATABASE_URL=postgres://...` / `postgresql://...` -> PostgreSQL repository 群
 
 #### Quote Order Reconcile
 
@@ -193,9 +193,10 @@ Bulk の現行 exchange info は `GTC` と `IOC` を扱う前提のため、Bulk
 
 ### DB 切り替え
 
-- default は SQLite
+- default は SQLite (`DATABASE_URL=file:data/mm.db`)
 - production 推奨は PostgreSQL
-- 切り替え条件は `DATABASE_URL` の有無に一本化する
+- 切り替え条件は `DATABASE_URL` の scheme に一本化する
+- `file:<path>` は SQLite、`postgres://` / `postgresql://` は PostgreSQL
 
 ### Metrics tables
 
@@ -234,8 +235,7 @@ Runtime env default は `src/env.ts` に閉じる。Drizzle schema / migration p
 
 - `MODE`
 - `CONFIG_PATH`
-- `DATABASE_URL`
-- `DB_PATH` (default: `data/mm.db`)
+- `DATABASE_URL` (default: `file:data/mm.db`)
 - `LOG_LEVEL`
 - `BULK_PRIVATE_KEY`
 - Hyperliquid env vars are kept only for legacy compatibility paths
@@ -278,4 +278,4 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 - Docker base image は `oven/bun:latest`
 - Bun で依存解決する
 - entrypoint は Bun runtime で bot を起動する
-- Railway では env var で mode、DB、`BULK_PRIVATE_KEY` を注入する
+- Hetzner VPS では `.env` または systemd/Docker Compose の environment で mode、DB、`BULK_PRIVATE_KEY` を注入する
