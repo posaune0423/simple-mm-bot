@@ -278,4 +278,4 @@ This keeps `LOG_LEVEL=INFO` useful for normal paper/live operation while allowin
 - Docker base image は `oven/bun:latest`
 - Bun で依存解決する
 - entrypoint は Bun runtime で bot を起動する
-- Railway では env var で mode、DB、`BULK_PRIVATE_KEY` を注入する
+- Hetzner VPS では `.env` または systemd/Docker Compose の environment で mode、DB、`BULK_PRIVATE_KEY` を注入する

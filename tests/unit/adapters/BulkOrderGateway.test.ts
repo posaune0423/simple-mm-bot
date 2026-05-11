@@ -1227,10 +1227,14 @@ describe("BulkOrderGateway", () => {
         ignoreFillsBeforeMs: oldTimestamp + 1,
       },
     );
+    const fills: unknown[] = [];
+    gateway.subscribeFills((fill) => {
+      fills.push(fill);
+    });
 
     await gateway.pollFillsOnce();
 
-    expect((gateway as unknown as { seenFillIds: { size: number } }).seenFillIds.size).toBe(0);
+    expect(fills).toEqual([]);
   });
 
   test("bounds the seen fill id cache during long-running polling", async () => {

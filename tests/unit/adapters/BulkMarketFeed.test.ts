@@ -981,12 +981,14 @@ describe("BulkMarketFeed", () => {
     }, 5);
     frameTimer.unref();
 
-    await Bun.sleep(80);
-    expect(closeCalls).toBe(0);
-    expect(subscribeCalls).toBe(3);
-
-    clearInterval(frameTimer);
-    await feed.disconnect();
+    try {
+      await Bun.sleep(80);
+      expect(closeCalls).toBe(0);
+      expect(subscribeCalls).toBe(3);
+    } finally {
+      clearInterval(frameTimer);
+      await feed.disconnect();
+    }
 
     expect(closeCalls).toBe(1);
     expect(unsubscribeCalls).toBe(3);

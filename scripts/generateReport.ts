@@ -39,7 +39,18 @@ function selectPeriods(key: string): PeriodWindow[] {
 }
 
 function runGenerateReport(argv: string[]): ResultAsync<string, AppError> {
-  const options = parseOptions(argv);
+  let options: RunOptions;
+  try {
+    options = parseOptions(argv);
+  } catch (error) {
+    return ResultAsync.fromPromise(Promise.reject(error), (cause) =>
+      createAppError(
+        "report.invalid_database_url",
+        "report:generate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
+        cause,
+      ),
+    );
+  }
   logger.info(
     `Starting report generation: mode=${options.mode}, venue=${options.venue ?? "all"}, periods=${options.periods.map((p) => p.key).join(",")}, output=${options.outputDir}`,
   );

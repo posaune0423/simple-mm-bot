@@ -7,6 +7,7 @@ import {
   formatUnknownError,
   getErrorName,
   isAppError,
+  stringifyError,
 } from "../../../src/utils/errors.ts";
 
 describe("errors", () => {
@@ -15,6 +16,9 @@ describe("errors", () => {
     expect(isAppError({ code: "runtime.failed", message: "Runtime failed" })).toBe(true);
     expect(isAppError({ code: "runtime.failed" })).toBe(false);
     expect(isAppError(new Error("Runtime failed"))).toBe(false);
+    const systemError = new Error("No such file") as Error & { code: string };
+    systemError.code = "ENOENT";
+    expect(isAppError(systemError)).toBe(false);
     expect(isAppError(null)).toBe(false);
   });
 
@@ -35,6 +39,11 @@ describe("errors", () => {
     expect(formatUnknownError(namedError)).toBe("BulkHttpError: HTTP error 408");
     expect(formatUnknownError("plain failure")).toBe("plain failure");
     expect(formatUnknownError({ reason: "bad input" })).toBe('{"reason":"bad input"}');
+  });
+
+  test("stringifies non-json values with a string fallback", () => {
+    expect(stringifyError(undefined)).toBe("undefined");
+    expect(stringifyError(Symbol("bad"))).toBe("Symbol(bad)");
   });
 
   test("describes unknown errors for notification callers", () => {

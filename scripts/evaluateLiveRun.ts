@@ -790,7 +790,18 @@ function percentile(values: number[], percentile: number): number | null {
 
 function evaluate(argv: string[]): ResultAsync<string, AppError> {
   const options = parseFlagOptions(argv);
-  const dbPath = options.db ?? resolveSqliteDatabasePath(Bun.env.DATABASE_URL);
+  let dbPath: string;
+  try {
+    dbPath = options.db ?? resolveSqliteDatabasePath(Bun.env.DATABASE_URL);
+  } catch (error) {
+    return ResultAsync.fromPromise(Promise.reject(error), (cause) =>
+      createAppError(
+        "metrics.invalid_database_url",
+        "metrics:evaluate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
+        cause,
+      ),
+    );
+  }
   const runId = options["run-id"] ?? latestRunId(dbPath);
   const outputDir = options["output-dir"] ?? join(METRICS_RESULTS_DIR, runId ?? "unknown");
 

@@ -18,7 +18,11 @@ export function createAppError(code: string, message: string, cause?: unknown): 
 }
 
 export function isAppError(error: unknown): error is AppError {
-  return typeof error === "object" && error !== null && "code" in error && "message" in error;
+  if (typeof error !== "object" || error === null || error instanceof Error) {
+    return false;
+  }
+  const candidate = error as { code?: unknown; message?: unknown };
+  return typeof candidate.code === "string" && typeof candidate.message === "string";
 }
 
 export function stringifyError(error: unknown): string {
@@ -29,6 +33,9 @@ export function stringifyError(error: unknown): string {
 
   if (typeof error === "string") {
     return error;
+  }
+  if (error === undefined || typeof error === "symbol" || typeof error === "function") {
+    return String(error);
   }
 
   try {
