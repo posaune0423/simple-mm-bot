@@ -391,6 +391,7 @@ export class BulkMarketFeed implements IMarketFeed {
       return;
     }
     const receivedAt = Date.now();
+    const previousMarkPrice = this.snapshot.markPrice;
     this.lastWsTickerReceivedAtMs = receivedAt;
     const data = payloadOf(message, ["ticker"]);
     const markPrice = Number(data.markPrice ?? data.fairBookPx ?? data.lastPrice);
@@ -407,9 +408,11 @@ export class BulkMarketFeed implements IMarketFeed {
       tickerReceivedAt: receivedAt,
       tickerExchangeTimestamp: exchangeTimestamp,
     };
-    logger.debug(
-      `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
-    );
+    if (previousMarkPrice !== markPrice) {
+      logger.debug(
+        `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
+      );
+    }
     this.publish(this.snapshot);
   }
 
