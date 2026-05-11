@@ -145,6 +145,43 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("does not overwrite a tracked order intent from cancel events", async () => {
+    const events: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {
+          async cancelOrder() {
+            return {
+              status: "ok",
+              response: {
+                data: { statuses: [{ cancelled: { oid: "reduce-1" } }] },
+              },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+    gateway.subscribeOrderEvents((event) => {
+      events.push(event);
+    });
+
+    await gateway.cancel("reduce-1");
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        action: "cancel",
+        orderId: "reduce-1",
+      }),
+    ]);
+    expect(events).toEqual([expect.not.objectContaining({ intent: "quote" })]);
+  });
+
   test("aligns Bulk limit orders to exchange price and size increments before submission", async () => {
     const calls: unknown[] = [];
     const gateway = new BulkOrderGateway(

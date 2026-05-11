@@ -486,7 +486,7 @@ export function loadEvaluationResult(dbPath: string, runId: string): EvaluationR
 
 function loadBucketEvidence(db: Database, runId: string): BucketEvidence {
   return {
-    sideIntent: bucketRows(db, runId, "f.side || ':' || COALESCE(o.intent, 'unlinked')"),
+    sideIntent: bucketRows(db, runId, "f.side || ':' || COALESCE(q.intent, o.intent, 'unlinked')"),
     quoteLevel: bucketRows(
       db,
       runId,
@@ -545,6 +545,12 @@ function bucketRows(db: Database, runId: string, bucketExpression: string): Buck
                 LIMIT 1
               )
             )
+          LEFT JOIN quote_decisions q
+            ON q.run_id = f.run_id
+           AND q.market = f.market
+           AND q.quote_cycle_id = o.quote_cycle_id
+           AND q.side = o.side
+           AND q.level = o.quote_level
           LEFT JOIN v_fill_markouts m ON m.fill_id = f.id
           WHERE f.run_id = ?
         ),

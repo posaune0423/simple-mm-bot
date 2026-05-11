@@ -811,6 +811,93 @@ describe("RefreshQuotesUseCase", () => {
     expect(calls).toEqual(["place:buy", "place:sell"]);
   });
 
+  test("replaces otherwise unchanged quotes after the configured max resting time", async () => {
+    let now = 1_000;
+    const calls: string[] = [];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        return {
+          market: "BTC-USD",
+          bestBid: 99_990,
+          bestAsk: 100_010,
+          microPrice: 100_000,
+          markPrice: 100_000,
+          timestamp: now,
+          marginRatio: 0.2,
+        };
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        calls.push(`place:${order.side}`);
+        return {
+          id: `${order.side}-${calls.length}`,
+          request: order,
+          status: "open" as const,
+        };
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {
+        calls.push("cancelAll");
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_970,
+          ask: 100_030,
+          bidSize: 0.01,
+          askSize: 0.01,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+    const useCase = new RefreshQuotesUseCase(
+      marketFeed,
+      orderGateway,
+      positions,
+      quoteEngine,
+      undefined,
+      undefined,
+      undefined,
+      { orderManager: { maxRestingMs: 1, nowMs: () => now } },
+    );
+
+    await useCase.execute();
+    now += 2;
+    await useCase.execute();
+
+    expect(calls).toEqual([
+      "place:buy",
+      "place:sell",
+      "cancel:buy-1",
+      "cancel:sell-2",
+      "place:buy",
+      "place:sell",
+    ]);
+  });
+
   test("does not fail the bot when every quote placement is rejected", async () => {
     const logs = captureWarnLogs();
     const placedStatuses = ["rejected", "rejected", "open", "open"] as const;

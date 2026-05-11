@@ -2,7 +2,7 @@ import type { OrderSide, OrderTimeInForce } from "../domain/entities/Quote.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../domain/ports/IOrderGateway.ts";
 import { logger } from "../utils/logger.ts";
 
-interface OrderManagerOptions {
+export interface OrderManagerOptions {
   priceReplaceThresholdBps: number;
   sizeReplaceThresholdRatio: number;
   maxRestingMs: number;

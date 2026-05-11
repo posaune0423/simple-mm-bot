@@ -30,6 +30,7 @@ import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
 import { MetricsRecorder } from "./MetricsRecorder.ts";
+import type { OrderManagerOptions } from "./OrderManager.ts";
 import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
@@ -70,6 +71,7 @@ export class DIContainer {
           metrics,
           repositories.quoteQualityRepository,
           this.config.quoteEngine.qualityGate,
+          { orderManager: this.orderManagerOptions() },
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         initializePosition: new InitializePositionUseCase(
@@ -282,6 +284,14 @@ export class DIContainer {
     return this.config.venue === "bulk"
       ? this.config.connections.bulk.market
       : this.config.connections.hyperliquid.market;
+  }
+
+  private orderManagerOptions(): Partial<OrderManagerOptions> {
+    const options: Partial<OrderManagerOptions> = {};
+    if (this.config.bot.maxRestingMs !== undefined) {
+      options.maxRestingMs = this.config.bot.maxRestingMs;
+    }
+    return options;
   }
 }
 

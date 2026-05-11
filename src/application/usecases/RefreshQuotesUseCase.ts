@@ -11,7 +11,11 @@ import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { IQuoteQualityRepository } from "../../domain/ports/IQuoteQualityRepository.ts";
 import type { MetricsRecorder } from "../MetricsRecorder.ts";
-import { OrderManager, type ManagedOrderRequest } from "../OrderManager.ts";
+import {
+  OrderManager,
+  type ManagedOrderRequest,
+  type OrderManagerOptions,
+} from "../OrderManager.ts";
 import { logger } from "../../utils/logger.ts";
 
 const NORMAL_PASSIVE_TOUCH_MARGIN_BPS = 0.25;
@@ -22,6 +26,10 @@ const MOMENTUM_GUARD_THRESHOLD_BPS = 0.05;
 const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
 const MOMENTUM_GUARD_MULTIPLIER = 1;
 const MAX_MOMENTUM_GUARD_BPS = 8;
+
+interface RefreshQuotesUseCaseOptions {
+  orderManager?: Partial<OrderManagerOptions>;
+}
 
 export class RefreshQuotesUseCase {
   private previousPlacementMid: number | null = null;
@@ -41,8 +49,9 @@ export class RefreshQuotesUseCase {
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
     },
+    options: RefreshQuotesUseCaseOptions = {},
   ) {
-    this.orderManager = new OrderManager(orderGateway);
+    this.orderManager = new OrderManager(orderGateway, options.orderManager);
     this.qualityGate = qualityGate;
     this.quoteControlPolicy = new QuoteControlPolicy(qualityGate);
   }

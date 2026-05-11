@@ -153,6 +153,29 @@ describe("evaluateLiveRun", () => {
       acceptedAt: 950,
       finalStatus: "filled",
     });
+    await repository.recordQuoteDecision({
+      id: "maker-quote-decision",
+      runId,
+      venue: "bulk",
+      market: "BTC-USD",
+      quoteCycleId: "cycle",
+      side: "buy",
+      level: 0,
+      intent: "reduce",
+      price: 100,
+      quantity: 1,
+      fairPrice: 100,
+      sigma: 0,
+      policy: "GTC",
+      positionQty: -0.5,
+      midPrice: 100,
+      microPrice: 100,
+      markPrice: 100,
+      spreadBps: 100,
+      stalenessMs: 0,
+      controlReasons: [],
+      createdAt: 900,
+    });
     await repository.recordSubmittedOrder({
       id: "taker-order",
       runId,
@@ -292,7 +315,7 @@ describe("evaluateLiveRun", () => {
           netPnl: 1,
         }),
         expect.objectContaining({
-          bucket: "buy:quote",
+          bucket: "buy:reduce",
           fillCount: 1,
           notionalUsd: 100,
           netPnl: 1,
