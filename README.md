@@ -125,7 +125,7 @@ Repository split:
 - `src/adapters/paper`: paper execution and historical feed helpers
 - `src/infrastructure`: metrics contracts plus SQLite/Postgres repositories
 - `scripts/lib`: external evaluation, Bulk YAML tuning, and issue planning helpers
-- `tests`: domain, scripts, application, adapter, infrastructure, and e2e smoke coverage
+- `tests`: unit, integration, and e2e test suites; see `docs/TEST.md`
 
 ## Configuration Notes
 
@@ -147,11 +147,10 @@ Path defaults and generation destinations are centralized in `src/runtimePaths.t
 
 The repository currently has:
 
-- unit tests for strategy, analytics, and quote engine behavior
-- application tests for bot orchestration, reporting, and Bulk DI resolution
-- adapter tests for Bulk market snapshots, order mapping, rejection handling, and fill normalization
-- infrastructure tests for SQLite persistence
+- unit tests for strategy, analytics, quote engine behavior, application use cases, adapter mapping, reporting, scripts, config, and package contracts
+- integration tests for SQLite/Postgres persistence, report queries, Bulk DI resolution, and fixture-backed quote-cycle latency telemetry
 - e2e smoke tests for Bulk backtest and Bulk paper sessions
+- coverage output via `bun run test:coverage` under `docs/coverage/`
 
 ## Why This Layout
 

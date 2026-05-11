@@ -72,13 +72,17 @@ simple-mm-bot/
 │   ├── config.backtest.yml
 │   └── config.example.yml
 ├── tests/
-│   ├── adapters/
-│   ├── application/
-│   ├── domain/
-│   ├── scripts/
-│   ├── e2e/
-│   ├── infrastructure/
-│   └── reporting/
+│   ├── unit/
+│   │   ├── adapters/
+│   │   ├── application/
+│   │   ├── domain/
+│   │   ├── reporting/
+│   │   └── scripts/
+│   ├── integration/
+│   │   ├── application/
+│   │   ├── infrastructure/
+│   │   └── latency/
+│   └── e2e/
 ├── scripts/
 │   ├── backtestPaperLoop.ts
 │   ├── evaluateLiveRun.ts
@@ -306,20 +310,26 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 
 ## テスト構成
 
-- `tests/domain/`
+- `tests/unit/domain/`
   - strategy、quote engine、analytics の pure unit test
-- `tests/scripts/`
+- `tests/unit/scripts/`
   - metrics evaluation、Bulk config tuning、design issue planning の unit test
-- `tests/application/`
-  - DI、bot loop、use case の orchestration test
-- `tests/adapters/`
+- `tests/unit/application/`
+  - bot loop、use case の orchestration test
+- `tests/unit/adapters/`
   - Bulk adapter と venue payload normalization の unit test
-- `tests/infrastructure/`
-  - SQLite/Postgres repository integration test、report query test
-- `tests/reporting/`
+- `tests/unit/reporting/`
   - metrics、Markdown report、SVG chart rendering の unit test
+- `tests/integration/application/`
+  - DI composition test
+- `tests/integration/infrastructure/`
+  - SQLite/Postgres repository integration test、report query test
+- `tests/integration/latency/`
+  - fixture-backed quote cycle latency test
 - `tests/e2e/`
   - public feed を使う smoke test
+
+詳細は `docs/TEST.md` を参照する。coverage は `bun run test:coverage` で `docs/coverage/` に出力する。
 
 Bulk main path を変更した場合は、少なくとも `bun run lint` と `bun run test` を実行する。
 public feed 依存の確認が必要な場合だけ `bun run test:e2e:paper` を追加する。

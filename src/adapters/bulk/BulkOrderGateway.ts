@@ -606,6 +606,9 @@ export class BulkOrderGateway implements IOrderGateway {
       ) {
         continue;
       }
+      if (this.isFillOutsideSeenWindow(normalized)) {
+        continue;
+      }
       this.rememberFill(normalized);
       logger.info(
         `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
@@ -631,12 +634,13 @@ export class BulkOrderGateway implements IOrderGateway {
     this.seenFillIds.set(fill.id, fill.filledAt);
     this.maxObservedFillTimestamp = Math.max(this.maxObservedFillTimestamp, fill.filledAt);
     this.fillsSinceLastSeenFillPrune += 1;
+    this.pruneSeenFillIds();
+  }
+
+  private isFillOutsideSeenWindow(fill: Fill): boolean {
     const ttlMs = this.params.seenFillTtlMs ?? DEFAULT_SEEN_FILL_TTL_MS;
     const minObservedAtMs = this.maxObservedFillTimestamp - ttlMs;
-    if (fill.filledAt < minObservedAtMs) {
-      this.seenFillIds.delete(fill.id);
-    }
-    this.pruneSeenFillIds();
+    return this.maxObservedFillTimestamp > 0 && fill.filledAt < minObservedAtMs;
   }
 
   private pruneSeenFillIds(): void {

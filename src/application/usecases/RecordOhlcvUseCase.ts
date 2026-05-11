@@ -39,9 +39,6 @@ export class RecordOhlcvUseCase {
     }
 
     if (snapshot.volume === undefined) {
-      logger.debug(
-        `record_ohlcv.skipped market=${snapshot.market} reason=top_of_book_snapshot ts=${snapshot.timestamp}`,
-      );
       return;
     }
 

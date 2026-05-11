@@ -259,8 +259,6 @@ export class DIContainer {
       market: bulk.market,
       nlevels: bulk.nlevels,
       accountId,
-      marketRestRefreshAfterMs: bulk.marketRestRefreshAfterMs,
-      marketStaleRefreshIntervalMs: bulk.marketStaleRefreshIntervalMs,
       marketWsReconnectAfterMs: bulk.marketWsReconnectAfterMs,
       ...bulkLiveStartupRetryOptions(config),
     });

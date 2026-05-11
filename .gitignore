@@ -13,5 +13,9 @@ dist/
 .prod.vars
 .env.keys
 coverage/
+!docs/coverage/
+!docs/coverage/summary.md
+!docs/coverage/lcov.info
+docs/coverage/*.tmp
 artifacts/
 data/

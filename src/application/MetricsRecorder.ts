@@ -170,6 +170,7 @@ interface MetricsFlushLoopOptions {
 export class MetricsFlushLoop {
   private timer: ReturnType<typeof setInterval> | undefined;
   private flushing = false;
+  private activeFlush: Promise<void> | undefined;
   private inFlightCount = 0;
   private readonly batchSize: number;
   private readonly drainTimeoutMs: number;
@@ -197,6 +198,11 @@ export class MetricsFlushLoop {
     if (this.flushing) {
       return;
     }
+    this.activeFlush = this.runFlushOnce();
+    await this.activeFlush;
+  }
+
+  private async runFlushOnce(): Promise<void> {
     this.flushing = true;
     try {
       const batch = this.buffer.drainBatch(this.batchSize);
@@ -213,6 +219,7 @@ export class MetricsFlushLoop {
       await this.emitDropSummary();
     } finally {
       this.flushing = false;
+      this.activeFlush = undefined;
     }
   }
 
@@ -220,12 +227,14 @@ export class MetricsFlushLoop {
     this.stopTimer();
     const startedAt = Date.now();
     while (this.hasPendingWork() && Date.now() - startedAt < timeoutMs) {
-      const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
-      if (this.flushing) {
-        await Bun.sleep(Math.min(10, remainingMs));
+      if (this.activeFlush !== undefined) {
+        await this.activeFlush;
         continue;
       }
-      await Promise.race([this.flushOnce(), Bun.sleep(remainingMs)]);
+      await this.flushOnce();
+    }
+    if (this.activeFlush !== undefined) {
+      await this.activeFlush;
     }
     await this.emitDropSummary();
     const pending = this.buffer.pendingCount() + this.inFlightCount;
@@ -889,6 +898,10 @@ function snapshotPayload(snapshot: MarketSnapshot): Record<string, unknown> {
     timestamp: snapshot.timestamp,
     bookUpdatedAt: snapshot.bookUpdatedAt,
     tickerUpdatedAt: snapshot.tickerUpdatedAt,
+    bookReceivedAt: snapshot.bookReceivedAt,
+    tickerReceivedAt: snapshot.tickerReceivedAt,
+    bookExchangeTimestamp: snapshot.bookExchangeTimestamp,
+    tickerExchangeTimestamp: snapshot.tickerExchangeTimestamp,
     candleUpdatedAt: snapshot.candleUpdatedAt,
     accountUpdatedAt: snapshot.accountUpdatedAt,
     positionUpdatedAt: snapshot.positionUpdatedAt,
