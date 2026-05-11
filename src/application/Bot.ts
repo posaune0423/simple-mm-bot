@@ -1,5 +1,5 @@
 import type { Fill } from "../domain/entities/Fill.ts";
-import type { Position } from "../domain/entities/Position.ts";
+import { isFlatPositionQty, type Position } from "../domain/entities/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../utils/errors.ts";
@@ -55,8 +55,7 @@ export class Bot {
   ) {}
 
   async start(maxTicks?: number): Promise<void> {
-    this.running = true;
-    this.stopRequested = false;
+    this.resetRunState();
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(
@@ -98,6 +97,17 @@ export class Bot {
     }
   }
 
+  private resetRunState(): void {
+    this.running = true;
+    this.quotedCount = 0;
+    this.stopRequested = false;
+    this.emergencyStopRequested = false;
+    this.pauseQuoteCancelCompleted = false;
+    this.lastPositionSyncAtMs = 0;
+    this.eventTasks = Promise.resolve();
+    this.unsubscribers.splice(0);
+  }
+
   stop(): void {
     this.stopRequested = true;
     this.running = false;
@@ -126,7 +136,9 @@ export class Bot {
         );
         this.enqueueEventTask(async () => {
           await this.metrics?.recordFill(fill);
-          await this.useCases.updatePositionOnFill.execute(fill);
+          if (!this.usesAuthoritativePosition()) {
+            await this.useCases.updatePositionOnFill.execute(fill);
+          }
         });
       }),
     );
@@ -253,9 +265,9 @@ export class Bot {
     this.lastPositionSyncAtMs = nowMs;
     try {
       const result = await this.useCases.syncPosition.execute();
-      if (result.synced && result.deltaQty !== 0) {
+      if (result.synced && !isFlatPositionQty(result.deltaQty)) {
         await this.metrics?.recordRuntimeHealth(
-          "warn",
+          "info",
           "position_sync_corrected",
           "Live position was reconciled from exchange account state",
           {
@@ -273,6 +285,10 @@ export class Bot {
         stringifyError(error),
       );
     }
+  }
+
+  private usesAuthoritativePosition(): boolean {
+    return this.orderGateway.getPosition !== undefined;
   }
 
   private async advanceMarketFeed(tick: number): Promise<TickResult> {
@@ -305,13 +321,17 @@ export class Bot {
     await this.orderGateway
       .cancelAll()
       .catch((err) =>
-        logger.error(`[application] Bot | CLEANUP_CANCEL_ALL_FAILED | error=${String(err)}`),
+        logger.error(
+          `[application] Bot | CLEANUP_CANCEL_ALL_FAILED | error=${stringifyError(err)}`,
+        ),
       );
     await this.syncCleanupFills("after_cancel_all");
     if (this.shouldClosePositionOnCleanup()) {
       await this.useCases.closePosition.execute().catch((err) => {
         closePositionError = err;
-        logger.error(`[application] Bot | CLEANUP_CLOSE_POSITION_FAILED | error=${String(err)}`);
+        logger.error(
+          `[application] Bot | CLEANUP_CLOSE_POSITION_FAILED | error=${stringifyError(err)}`,
+        );
       });
       await this.syncCleanupFills("after_close_position");
     }
