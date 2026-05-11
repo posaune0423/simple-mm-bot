@@ -82,7 +82,9 @@ describe("Postgres metrics migration", () => {
     expect(migration0002).not.toContain("AVG(abs_position) AS avg_abs_position");
     expect(migration0004).not.toContain("ir.avg_abs_position");
     expect(migration0005).toContain("DROP VIEW IF EXISTS v_run_performance");
-    expect(migration0005).toContain("CREATE OR REPLACE VIEW v_inventory_risk");
+    expect(migration0005).toContain("DROP VIEW IF EXISTS v_inventory_risk");
+    expect(migration0005).toContain("CREATE VIEW v_inventory_risk");
+    expect(migration0005).not.toContain("CREATE OR REPLACE VIEW v_inventory_risk");
     expect(migration0005).toContain("AVG(abs_position) AS avg_abs_position");
     expect(migration0005).toContain("ir.avg_abs_position");
   });

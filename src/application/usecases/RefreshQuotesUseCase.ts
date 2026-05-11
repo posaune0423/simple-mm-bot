@@ -68,7 +68,13 @@ export class RefreshQuotesUseCase {
     if (this.metrics === undefined || typeof this.metrics.recordRuntimeHealth !== "function") {
       return;
     }
-    await this.metrics.recordRuntimeHealth(level, code, message, rawSummary);
+    try {
+      await this.metrics.recordRuntimeHealth(level, code, message, rawSummary);
+    } catch (error) {
+      logger.warn(
+        `refresh_quotes.runtime_health_record_failed code=${code} error=${String(error)}`,
+      );
+    }
   }
 
   async execute(): Promise<void> {

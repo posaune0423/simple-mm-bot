@@ -1,6 +1,8 @@
 DROP VIEW IF EXISTS v_run_performance;
 --> statement-breakpoint
-CREATE OR REPLACE VIEW v_inventory_risk AS
+DROP VIEW IF EXISTS v_inventory_risk;
+--> statement-breakpoint
+CREATE VIEW v_inventory_risk AS
   WITH curve AS (
     SELECT
       run_id,

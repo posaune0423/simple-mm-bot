@@ -178,6 +178,84 @@ describe("RefreshQuotesUseCase", () => {
     );
   });
 
+  test("does not abort quote refresh when runtime health telemetry persistence fails", async () => {
+    const logs = captureWarnLogs();
+    const now = Date.now();
+    const snapshots = Array.from({ length: 6 }, () => freshSnapshot(now));
+    const placed: string[] = [];
+    const marketFeed = {
+      async connect() {},
+      async disconnect() {},
+      async getSnapshot() {
+        const snapshot = snapshots.shift();
+        if (snapshot === undefined) {
+          throw new Error("unexpected extra snapshot");
+        }
+        return snapshot;
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const orderGateway = {
+      async place(order: OrderRequest) {
+        placed.push(order.side);
+        return { id: `${order.side}-1`, request: order, status: "open" as const };
+      },
+      async cancel() {},
+      async cancelAll() {},
+      subscribeFills() {
+        return () => {};
+      },
+    };
+    const positions = {
+      async get() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async update() {
+        return { qty: 0, avgEntry: 0, unrealizedPnl: 0 };
+      },
+      async set() {},
+    };
+    const quoteEngine = {
+      compute() {
+        return {
+          bid: 99_970,
+          ask: 100_030,
+          bidSize: 0.01,
+          askSize: 0.01,
+          policy: "GTC" as const,
+          fairPrice: 100_000,
+          sigma: 0,
+        };
+      },
+    } as unknown as QuoteEngine;
+    const metrics = {
+      async recordQuote() {},
+      async recordMarketSnapshot() {},
+      async recordRuntimeHealth() {
+        throw new Error("metrics unavailable");
+      },
+    } as unknown as MetricsRecorder;
+
+    try {
+      await new RefreshQuotesUseCase(
+        marketFeed,
+        orderGateway,
+        positions,
+        quoteEngine,
+        metrics,
+      ).execute();
+    } finally {
+      logs.restore();
+    }
+
+    expect(placed).toEqual(["buy", "sell"]);
+    expect(logs.messages.some((message) => message.includes("runtime_health_record_failed"))).toBe(
+      true,
+    );
+  });
+
   test("captures slow quality gate, quote persistence, and reconcile latency in freshness telemetry", async () => {
     const now = Date.now();
     const snapshots = Array.from({ length: 6 }, () => freshSnapshot(now));

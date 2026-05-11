@@ -173,13 +173,13 @@ describe("BulkOrderGateway", () => {
 
     await gateway.cancel("reduce-1");
 
-    expect(events).toEqual([
-      expect.objectContaining({
-        action: "cancel",
-        orderId: "reduce-1",
-      }),
-    ]);
-    expect(events).toEqual([expect.not.objectContaining({ intent: "quote" })]);
+    expect(events).toHaveLength(1);
+    const cancelEvent = events[0] as Record<string, unknown>;
+    expect(cancelEvent).toMatchObject({
+      action: "cancel",
+      orderId: "reduce-1",
+    });
+    expect(cancelEvent).not.toHaveProperty("intent");
   });
 
   test("aligns Bulk limit orders to exchange price and size increments before submission", async () => {
