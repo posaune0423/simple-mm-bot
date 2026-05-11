@@ -30,14 +30,14 @@ export class InitializePositionUseCase {
         sleep: this.options.sleep,
         onRetry: (error, attempt, attempts) => {
           logger.warn(
-            `initialize_position.transient_retry attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
+            `[application] InitializePosition | TRANSIENT_RETRY | attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
           );
         },
       },
     );
     await this.positionRepository.set(position);
     logger.info(
-      `initialize_position.seeded qty=${position.qty} avgEntry=${position.avgEntry} unrealizedPnl=${position.unrealizedPnl}`,
+      `[application] InitializePosition | SEEDED | qty=${position.qty} avgEntry=${position.avgEntry} unrealizedPnl=${position.unrealizedPnl}`,
     );
   }
 }

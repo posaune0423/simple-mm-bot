@@ -264,7 +264,7 @@ export class BulkMarketFeed implements IMarketFeed {
 
   async connect(): Promise<void> {
     logger.info(
-      `bulk_market_feed.connect market=${this.params.market} nlevels=${this.params.nlevels ?? "default"}`,
+      `[adapter] BulkMarketFeed | CONNECT | market=${this.params.market} nlevels=${this.params.nlevels ?? "default"}`,
     );
     this.connected = true;
     try {
@@ -272,7 +272,7 @@ export class BulkMarketFeed implements IMarketFeed {
       await this.subscribeWs();
       this.startAccountPolling();
       this.startMarketWsWatchdog();
-      logger.info(`bulk_market_feed.connected market=${this.params.market}`);
+      logger.info(`[adapter] BulkMarketFeed | CONNECTED | market=${this.params.market}`);
     } catch (error) {
       this.connected = false;
       throw error;
@@ -280,7 +280,7 @@ export class BulkMarketFeed implements IMarketFeed {
   }
 
   async disconnect(): Promise<void> {
-    logger.info(`bulk_market_feed.disconnect market=${this.params.market}`);
+    logger.info(`[adapter] BulkMarketFeed | DISCONNECT | market=${this.params.market}`);
     this.connected = false;
     this.stopAccountPolling();
     this.stopMarketWsWatchdog();
@@ -290,12 +290,12 @@ export class BulkMarketFeed implements IMarketFeed {
     for (const result of results) {
       if (result.status === "rejected") {
         logger.warn(
-          `BulkMarketFeed.disconnect unsubscribe failed: ${stringifyError(result.reason)}`,
+          `[adapter] BulkMarketFeed | DISCONNECT_UNSUBSCRIBE_FAILED | error=${stringifyError(result.reason)}`,
         );
       }
     }
     await this.client.ws.close();
-    logger.info(`bulk_market_feed.disconnected market=${this.params.market}`);
+    logger.info(`[adapter] BulkMarketFeed | DISCONNECTED | market=${this.params.market}`);
   }
 
   async getSnapshot(): Promise<MarketSnapshot> {
@@ -323,7 +323,7 @@ export class BulkMarketFeed implements IMarketFeed {
     ]);
     this.snapshot = this.snapshotFrom(ticker, book, marginState);
     logger.info(
-      `bulk_market_feed.snapshot_seeded market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"}`,
+      `[adapter] BulkMarketFeed | SNAPSHOT_SEEDED | market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} markPrice=${this.snapshot.markPrice} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"}`,
     );
     this.publish(this.snapshot);
   }
@@ -357,7 +357,7 @@ export class BulkMarketFeed implements IMarketFeed {
       async () => candle.unsubscribe(),
     );
     logger.info(
-      `bulk_market_feed.ws_subscribed market=${this.params.market} topics=ticker,l2Snapshot,candle`,
+      `[adapter] BulkMarketFeed | WS_SUBSCRIBED | market=${this.params.market} topics=ticker,l2Snapshot,candle`,
     );
   }
 
@@ -369,7 +369,7 @@ export class BulkMarketFeed implements IMarketFeed {
     const startedAt = Date.now();
     try {
       logger.warn(
-        `bulk_market_feed.ws_reconnect_started market=${this.params.market} reason=${reason}`,
+        `[adapter] BulkMarketFeed | WS_RECONNECT_STARTED | market=${this.params.market} reason=${reason}`,
       );
       const results = await Promise.allSettled(
         this.unsubscribers.splice(0).map(async (unsubscribe) => unsubscribe()),
@@ -377,7 +377,7 @@ export class BulkMarketFeed implements IMarketFeed {
       for (const result of results) {
         if (result.status === "rejected") {
           logger.warn(
-            `BulkMarketFeed.reconnect unsubscribe failed: ${stringifyError(result.reason)}`,
+            `[adapter] BulkMarketFeed | RECONNECT_UNSUBSCRIBE_FAILED | error=${stringifyError(result.reason)}`,
           );
         }
       }
@@ -387,7 +387,7 @@ export class BulkMarketFeed implements IMarketFeed {
       }
       await this.subscribeWs();
       logger.warn(
-        `bulk_market_feed.ws_reconnect_complete market=${this.params.market} reason=${reason} latencyMs=${Date.now() - startedAt}`,
+        `[adapter] BulkMarketFeed | WS_RECONNECT_COMPLETE | market=${this.params.market} reason=${reason} latencyMs=${Date.now() - startedAt}`,
       );
     } finally {
       this.wsReconnectInFlight = false;
@@ -463,7 +463,7 @@ export class BulkMarketFeed implements IMarketFeed {
     };
     if (previousMarkPrice !== markPrice) {
       logger.debug(
-        `bulk_market_feed.ticker_updated market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
+        `[adapter] BulkMarketFeed | TICKER_UPDATED | market=${this.snapshot.market} markPrice=${this.snapshot.markPrice} timestamp=${this.snapshot.timestamp}`,
       );
     }
     this.publish(this.snapshot);
@@ -484,7 +484,7 @@ export class BulkMarketFeed implements IMarketFeed {
     const parsedBook = parseBookSnapshot(data, this.params.nlevels);
     if (!parsedBook.ok) {
       logger.warn(
-        `bulk_market_feed.book_snapshot_invalid market=${this.params.market} reason=${parsedBook.reason} bestBid=${parsedBook.bestBid ?? "null"} bestAsk=${parsedBook.bestAsk ?? "null"}`,
+        `[adapter] BulkMarketFeed | BOOK_SNAPSHOT_INVALID | market=${this.params.market} reason=${parsedBook.reason} bestBid=${parsedBook.bestBid ?? "null"} bestAsk=${parsedBook.bestAsk ?? "null"}`,
       );
       return;
     }
@@ -504,7 +504,7 @@ export class BulkMarketFeed implements IMarketFeed {
     };
     if (previousBestBid !== parsedBook.bestBid || previousBestAsk !== parsedBook.bestAsk) {
       logger.debug(
-        `bulk_market_feed.book_updated market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
+        `[adapter] BulkMarketFeed | BOOK_UPDATED | market=${this.snapshot.market} bestBid=${this.snapshot.bestBid} bestAsk=${this.snapshot.bestAsk} microPrice=${this.snapshot.microPrice} timestamp=${this.snapshot.timestamp}`,
       );
     }
     this.publish(this.snapshot);
@@ -558,7 +558,7 @@ export class BulkMarketFeed implements IMarketFeed {
       volume,
     };
     logger.info(
-      `bulk_market_feed.candle_received market=${this.snapshot.market} ts=${this.snapshot.timestamp} open=${open} high=${high} low=${low} close=${close} volume=${volume}`,
+      `[adapter] BulkMarketFeed | CANDLE_RECEIVED | market=${this.snapshot.market} ts=${this.snapshot.timestamp} open=${open} high=${high} low=${low} close=${close} volume=${volume}`,
     );
     this.publish(this.snapshot);
   }
@@ -576,7 +576,7 @@ export class BulkMarketFeed implements IMarketFeed {
       void this.refreshAccountState()
         .catch((error) => {
           logger.warn(
-            `bulk_market_feed.account_poll_failed market=${this.params.market} error=${stringifyError(error)}`,
+            `[adapter] BulkMarketFeed | ACCOUNT_POLL_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
           );
         })
         .finally(() => {
@@ -585,7 +585,7 @@ export class BulkMarketFeed implements IMarketFeed {
     }, intervalMs);
     this.accountPollTimer.unref();
     logger.info(
-      `bulk_market_feed.account_polling_started market=${this.params.market} intervalMs=${intervalMs}`,
+      `[adapter] BulkMarketFeed | ACCOUNT_POLLING_STARTED | market=${this.params.market} intervalMs=${intervalMs}`,
     );
   }
 
@@ -611,17 +611,17 @@ export class BulkMarketFeed implements IMarketFeed {
         return;
       }
       logger.info(
-        `bulk_market_feed.market_ws_stale_detected market=${this.params.market} reason=${staleReason} bookWsAgeMs=${ageMs(this.lastWsBookReceivedAtMs ?? this.wsSubscribedAtMs ?? undefined)} tickerWsAgeMs=${ageMs(this.lastWsTickerReceivedAtMs ?? this.wsSubscribedAtMs ?? undefined)}`,
+        `[adapter] BulkMarketFeed | MARKET_WS_STALE_DETECTED | market=${this.params.market} reason=${staleReason} bookWsAgeMs=${ageMs(this.lastWsBookReceivedAtMs ?? this.wsSubscribedAtMs ?? undefined)} tickerWsAgeMs=${ageMs(this.lastWsTickerReceivedAtMs ?? this.wsSubscribedAtMs ?? undefined)}`,
       );
       void this.reconnectWs(staleReason).catch((error) => {
         logger.warn(
-          `bulk_market_feed.ws_reconnect_failed market=${this.params.market} reason=${staleReason} error=${stringifyError(error)}`,
+          `[adapter] BulkMarketFeed | WS_RECONNECT_FAILED | market=${this.params.market} reason=${staleReason} error=${stringifyError(error)}`,
         );
       });
     }, intervalMs);
     this.marketWsWatchdogTimer.unref();
     logger.info(
-      `bulk_market_feed.market_ws_watchdog_started market=${this.params.market} intervalMs=${intervalMs} reconnectAfterMs=${this.marketWsReconnectAfterMs()}`,
+      `[adapter] BulkMarketFeed | MARKET_WS_WATCHDOG_STARTED | market=${this.params.market} intervalMs=${intervalMs} reconnectAfterMs=${this.marketWsReconnectAfterMs()}`,
     );
   }
 
@@ -668,7 +668,7 @@ export class BulkMarketFeed implements IMarketFeed {
       availableMarginUsd: marginState.availableMarginUsd,
     };
     logger.debug(
-      `bulk_market_feed.account_updated market=${this.snapshot.market} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"} positionQty=${this.snapshot.positionQty ?? "null"} accountUpdatedAt=${this.snapshot.accountUpdatedAt ?? "null"}`,
+      `[adapter] BulkMarketFeed | ACCOUNT_UPDATED | market=${this.snapshot.market} marginRatio=${this.snapshot.marginRatio} availableMarginUsd=${this.snapshot.availableMarginUsd ?? "null"} positionQty=${this.snapshot.positionQty ?? "null"} accountUpdatedAt=${this.snapshot.accountUpdatedAt ?? "null"}`,
     );
     this.publish(this.snapshot);
   }
@@ -691,7 +691,7 @@ export class BulkMarketFeed implements IMarketFeed {
         sleep: this.params.sleep,
         onRetry: (error, attempt, attempts) => {
           logger.warn(
-            `bulk_market_feed.margin_transient_retry market=${this.params.market} attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
+            `[adapter] BulkMarketFeed | MARGIN_TRANSIENT_RETRY | market=${this.params.market} attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
           );
         },
       },

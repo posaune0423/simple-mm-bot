@@ -380,7 +380,7 @@ describe("RefreshQuotesUseCase", () => {
     }
 
     expect(placed).toEqual(["buy", "sell"]);
-    expect(logs.messages.some((message) => message.includes("runtime_health_record_failed"))).toBe(
+    expect(logs.messages.some((message) => message.includes("RUNTIME_HEALTH_RECORD_FAILED"))).toBe(
       true,
     );
   });
@@ -1272,7 +1272,7 @@ describe("RefreshQuotesUseCase", () => {
 
     expect(placed).toEqual(["buy", "sell", "buy", "sell"]);
     expect(logs.messages).toContain(
-      "refresh_quotes.no_active_orders market=BTC-USD targetCount=2 rejectedOrSkipped=true",
+      "[application] RefreshQuotes | NO_ACTIVE_ORDERS | market=BTC-USD targetCount=2 rejectedOrSkipped=true",
     );
   });
 
@@ -1422,11 +1422,11 @@ describe("RefreshQuotesUseCase", () => {
 
       expect(
         logs.messages.some((message) =>
-          message.startsWith("refresh_quotes.quote_created market=BTC-USD"),
+          message.startsWith("[application] RefreshQuotes | QUOTE_CREATED | market=BTC-USD"),
         ),
       ).toBe(true);
       expect(logs.messages).toContain(
-        "refresh_quotes.orders_submitted market=BTC-USD bidOrderId=buy-1 bidStatus=open askOrderId=sell-1 askStatus=open",
+        "[application] RefreshQuotes | ORDERS_SUBMITTED | market=BTC-USD bidOrderId=buy-1 bidStatus=open askOrderId=sell-1 askStatus=open",
       );
     } finally {
       logs.restore();

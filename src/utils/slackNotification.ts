@@ -109,6 +109,6 @@ export async function notifyFatalErrorToSlack(
   try {
     await postSlackWebhook(webhookUrl, buildFatalErrorSlackMessage(error, context));
   } catch (notifyError) {
-    logger.warn(`slack_notification_failed: ${stringifyError(notifyError)}`);
+    logger.warn(`[util] SlackNotification | NOTIFY_FAILED | error=${stringifyError(notifyError)}`);
   }
 }

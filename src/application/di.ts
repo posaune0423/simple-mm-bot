@@ -37,6 +37,7 @@ import { BufferedRecordOhlcvUseCase } from "./usecases/BufferedRecordOhlcvUseCas
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
 import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.ts";
+import { SyncPositionUseCase } from "./usecases/SyncPositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
@@ -82,6 +83,7 @@ export class DIContainer {
           positionRepository,
           bulkLiveStartupRetryOptions(this.config),
         ),
+        syncPosition: new SyncPositionUseCase(gateway, positionRepository),
         updatePositionOnFill: new UpdatePositionOnFillUseCase(positionRepository),
         recordOhlcv: new BufferedRecordOhlcvUseCase(
           new RecordOhlcvUseCase(repositories.ohlcvRepository),

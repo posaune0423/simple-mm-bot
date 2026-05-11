@@ -10,7 +10,7 @@ import type {
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../../utils/errors.ts";
-import { logger } from "../../utils/logger.ts";
+import { LOG_ORANGE, LOG_RESET, logger } from "../../utils/logger.ts";
 
 export class HyperliquidOrderGateway implements IOrderGateway {
   private readonly listeners = new Set<FillListener>();
@@ -36,7 +36,7 @@ export class HyperliquidOrderGateway implements IOrderGateway {
     const price = order.price ?? (await this.computeAggressivePrice(order));
     const tif = order.timeInForce === "ALO" ? "Alo" : order.timeInForce === "GTC" ? "Gtc" : "Ioc";
     logger.info(
-      `hyperliquid_order_gateway.place_submitted market=${order.market} side=${order.side} qty=${order.qty} price=${price} tif=${tif} reduceOnly=${order.reduceOnly}`,
+      `[adapter] HyperliquidOrderGateway | PLACE_SUBMITTED | market=${order.market} side=${order.side} qty=${order.qty} price=${price} tif=${tif} reduceOnly=${order.reduceOnly}`,
     );
 
     await this.exchange.placeOrders([
@@ -52,7 +52,7 @@ export class HyperliquidOrderGateway implements IOrderGateway {
 
     const id = order.clientOrderId ?? randomUUID();
     logger.info(
-      `hyperliquid_order_gateway.place_result market=${order.market} orderId=${id} status=open`,
+      `[adapter] HyperliquidOrderGateway | PLACE_RESULT | market=${order.market} orderId=${id} status=open`,
     );
     return {
       id,
@@ -63,13 +63,15 @@ export class HyperliquidOrderGateway implements IOrderGateway {
 
   async cancel(id: string): Promise<void> {
     logger.info(
-      `hyperliquid_order_gateway.cancel_submitted market=${this.params.market} orderId=${id}`,
+      `[adapter] HyperliquidOrderGateway | CANCEL_SUBMITTED | market=${this.params.market} orderId=${id}`,
     );
     await this.cancelByPredicate((order) => String(order.oid) === id);
   }
 
   async cancelAll(): Promise<void> {
-    logger.info(`hyperliquid_order_gateway.cancel_all_submitted market=${this.params.market}`);
+    logger.info(
+      `[adapter] HyperliquidOrderGateway | CANCEL_ALL_SUBMITTED | market=${this.params.market}`,
+    );
     await this.cancelByPredicate(() => true);
   }
 
@@ -99,11 +101,13 @@ export class HyperliquidOrderGateway implements IOrderGateway {
   private startFillPolling(): void {
     this.fillTimer = setInterval(() => {
       void this.pollFills().catch((error) => {
-        logger.warn(`hyperliquid_order_gateway.poll_fills_failed error=${stringifyError(error)}`);
+        logger.warn(
+          `[adapter] HyperliquidOrderGateway | POLL_FILLS_FAILED | error=${stringifyError(error)}`,
+        );
       });
     }, this.params.pollIntervalMs ?? 1000);
     logger.info(
-      `hyperliquid_order_gateway.fill_polling_started account=${this.accountAddress} intervalMs=${this.params.pollIntervalMs ?? 1000}`,
+      `[adapter] HyperliquidOrderGateway | FILL_POLLING_STARTED | account=${this.accountAddress} intervalMs=${this.params.pollIntervalMs ?? 1000}`,
     );
   }
 
@@ -111,7 +115,7 @@ export class HyperliquidOrderGateway implements IOrderGateway {
     try {
       const fills = await this.info.getUserFills(this.accountAddress);
       logger.debug(
-        `hyperliquid_order_gateway.fills_polled account=${this.accountAddress} count=${fills.length}`,
+        `[adapter] HyperliquidOrderGateway | FILLS_POLLED | account=${this.accountAddress} count=${fills.length}`,
       );
       for (const fill of fills) {
         if (this.seenFillIds.has(fill.hash)) {
@@ -131,7 +135,7 @@ export class HyperliquidOrderGateway implements IOrderGateway {
           markPriceAtFill: fill.price,
         };
         logger.info(
-          `hyperliquid_order_gateway.fill_received market=${normalized.market} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
+          `[adapter] HyperliquidOrderGateway | ${LOG_ORANGE}FILL_RECEIVED${LOG_RESET} | market=${normalized.market} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
         );
         for (const listener of this.listeners) {
           void listener(normalized);
@@ -139,7 +143,9 @@ export class HyperliquidOrderGateway implements IOrderGateway {
       }
     } catch (error) {
       // Next interval will retry.
-      logger.warn(`hyperliquid_order_gateway.poll_fills_failed error=${stringifyError(error)}`);
+      logger.warn(
+        `[adapter] HyperliquidOrderGateway | POLL_FILLS_FAILED | error=${stringifyError(error)}`,
+      );
     }
   }
 
@@ -156,7 +162,9 @@ export class HyperliquidOrderGateway implements IOrderGateway {
     const openOrders = await this.info.getOpenOrders(this.accountAddress);
     const toCancel = openOrders.filter(predicate);
     if (toCancel.length === 0) {
-      logger.debug(`hyperliquid_order_gateway.cancel_noop account=${this.accountAddress}`);
+      logger.debug(
+        `[adapter] HyperliquidOrderGateway | CANCEL_NOOP | account=${this.accountAddress}`,
+      );
       return;
     }
 
@@ -170,6 +178,6 @@ export class HyperliquidOrderGateway implements IOrderGateway {
     });
 
     await this.exchange.cancelOrders(cancels);
-    logger.info(`hyperliquid_order_gateway.cancel_result count=${cancels.length}`);
+    logger.info(`[adapter] HyperliquidOrderGateway | CANCEL_RESULT | count=${cancels.length}`);
   }
 }

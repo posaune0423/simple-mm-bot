@@ -83,7 +83,7 @@ export class ReduceInventoryUseCase {
       })
     ) {
       logger.warn(
-        `reduce_inventory.favorable_reduce_deferred market=${this.market} side=${side} qty=${qty} trendBps=${trendBps.toFixed(4)} positionQty=${position.qty} reduceTriggerQty=${reduceTriggerQty} maxPositionQty=${this.maxPositionQty}`,
+        `[application] ReduceInventory | FAVORABLE_REDUCE_DEFERRED | market=${this.market} side=${side} qty=${qty} trendBps=${trendBps.toFixed(4)} positionQty=${position.qty} reduceTriggerQty=${reduceTriggerQty} maxPositionQty=${this.maxPositionQty}`,
       );
       this.rememberReduceSnapshot(snapshot);
       return false;
@@ -111,7 +111,7 @@ export class ReduceInventoryUseCase {
     const fallbackPrice = aggressiveReducePrice(snapshot.bestBid, snapshot.bestAsk, side);
     if (marketPlaced !== null) {
       logger.warn(
-        `reduce_inventory.market_reduce_not_filled market=${this.market} side=${side} qty=${qty} status=${marketPlaced.status} fallbackPrice=${fallbackPrice}`,
+        `[application] ReduceInventory | MARKET_REDUCE_NOT_FILLED | market=${this.market} side=${side} qty=${qty} status=${marketPlaced.status} fallbackPrice=${fallbackPrice}`,
       );
     }
     const fallbackOrderRequest = {
@@ -132,7 +132,7 @@ export class ReduceInventoryUseCase {
   private async refreshLivePosition(fallback: Position): Promise<Position> {
     await this.orderGateway.syncFills?.().catch((error) => {
       logger.warn(
-        `reduce_inventory.sync_fills_failed market=${this.market} error=${stringifyError(error)}`,
+        `[application] ReduceInventory | SYNC_FILLS_FAILED | market=${this.market} error=${stringifyError(error)}`,
       );
     });
     if (!this.orderGateway.getPosition) {
@@ -146,7 +146,7 @@ export class ReduceInventoryUseCase {
       },
       (error) => {
         logger.warn(
-          `reduce_inventory.live_position_failed market=${this.market} error=${stringifyError(error)}`,
+          `[application] ReduceInventory | LIVE_POSITION_FAILED | market=${this.market} error=${stringifyError(error)}`,
         );
         return fallback;
       },
@@ -162,7 +162,7 @@ export class ReduceInventoryUseCase {
         this.recordReduceFailure("submit_error", stringifyError(error));
       } else {
         logger.warn(
-          `reduce_inventory.market_reduce_submit_failed market=${this.market} side=${orderRequest.side} qty=${orderRequest.qty} error=${stringifyError(error)}`,
+          `[application] ReduceInventory | MARKET_REDUCE_SUBMIT_FAILED | market=${this.market} side=${orderRequest.side} qty=${orderRequest.qty} error=${stringifyError(error)}`,
         );
       }
       return null;
@@ -196,7 +196,7 @@ export class ReduceInventoryUseCase {
     reduceTargetQty: number,
   ): void {
     logger.info(
-      `reduce_inventory.order_submitted market=${this.market} side=${side} qty=${qty} price=${price} reduceTriggerQty=${reduceTriggerQty} reduceTargetQty=${reduceTargetQty} maxPositionQty=${this.maxPositionQty}`,
+      `[application] ReduceInventory | ORDER_SUBMITTED | market=${this.market} side=${side} qty=${qty} price=${price} reduceTriggerQty=${reduceTriggerQty} reduceTargetQty=${reduceTargetQty} maxPositionQty=${this.maxPositionQty}`,
     );
   }
 
@@ -204,7 +204,7 @@ export class ReduceInventoryUseCase {
     this.consecutiveReduceFailures += 1;
     const maxFailures = this.options.maxConsecutiveReduceFailures ?? 3;
     logger.warn(
-      `reduce_inventory.order_failed market=${this.market} status=${status} detail=${detail} consecutiveFailures=${this.consecutiveReduceFailures} maxFailures=${maxFailures}`,
+      `[application] ReduceInventory | ORDER_FAILED | market=${this.market} status=${status} detail=${detail} consecutiveFailures=${this.consecutiveReduceFailures} maxFailures=${maxFailures}`,
     );
     if (this.consecutiveReduceFailures >= maxFailures) {
       throw new Error(

@@ -7,9 +7,11 @@ export class UpdatePositionOnFillUseCase {
 
   async execute(fill: Fill): Promise<void> {
     logger.debug(
-      `fill_position_update.received venue=${fill.venue} market=${fill.market} fillId=${fill.id} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
+      `[application] UpdatePositionOnFill | FILL_POSITION_UPDATE_RECEIVED | venue=${fill.venue} market=${fill.market} fillId=${fill.id} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
     );
     await this.positionRepository.update(fill);
-    logger.debug(`fill_position_update.completed fillId=${fill.id}`);
+    logger.debug(
+      `[application] UpdatePositionOnFill | FILL_POSITION_UPDATE_COMPLETED | fillId=${fill.id}`,
+    );
   }
 }

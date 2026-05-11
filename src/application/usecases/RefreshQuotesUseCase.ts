@@ -75,7 +75,7 @@ export class RefreshQuotesUseCase {
       await this.metrics.recordRuntimeHealth(level, code, message, rawSummary);
     } catch (error) {
       logger.warn(
-        `refresh_quotes.runtime_health_record_failed code=${code} error=${stringifyError(error)}`,
+        `[application] RefreshQuotes | RUNTIME_HEALTH_RECORD_FAILED | code=${code} error=${stringifyError(error)}`,
       );
     }
   }
@@ -120,7 +120,7 @@ export class RefreshQuotesUseCase {
     const levels = quoteLevels(quote);
     const quoteComputeMs = Date.now() - quoteComputeStartedAt;
     logger.info(
-      `refresh_quotes.quote_created market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} bidIntent=${levels[0]?.bidIntent ?? "unknown"} askIntent=${levels[0]?.askIntent ?? "unknown"} bidReasons=${formatReasonTags(levels[0]?.bidControlReasons)} askReasons=${formatReasonTags(levels[0]?.askControlReasons)} levelCount=${levels.length} policy=${quote.policy} positionQty=${position.qty}`,
+      `[application] RefreshQuotes | QUOTE_CREATED | market=${snapshot.market} bid=${quote.bid} ask=${quote.ask} bidSize=${quote.bidSize} askSize=${quote.askSize} bidIntent=${levels[0]?.bidIntent ?? "unknown"} askIntent=${levels[0]?.askIntent ?? "unknown"} bidReasons=${formatReasonTags(levels[0]?.bidControlReasons)} askReasons=${formatReasonTags(levels[0]?.askControlReasons)} levelCount=${levels.length} policy=${quote.policy} positionQty=${position.qty}`,
     );
     await this.recordRuntimeHealth(
       "info",
@@ -237,7 +237,7 @@ export class RefreshQuotesUseCase {
     );
     if (activeOrders.length === 0) {
       logger.info(
-        `refresh_quotes.no_active_orders market=${snapshot.market} targetCount=${targetOrders.length} rejectedOrSkipped=true`,
+        `[application] RefreshQuotes | NO_ACTIVE_ORDERS | market=${snapshot.market} targetCount=${targetOrders.length} rejectedOrSkipped=true`,
       );
       await this.recordRuntimeHealth(
         "info",
@@ -250,7 +250,7 @@ export class RefreshQuotesUseCase {
     const bidOrder = activeOrders.find((entry) => entry.side === "buy")?.order;
     const askOrder = activeOrders.find((entry) => entry.side === "sell")?.order;
     logger.info(
-      `refresh_quotes.orders_submitted market=${snapshot.market} bidOrderId=${bidOrder?.id ?? "none"} bidStatus=${bidOrder?.status ?? "skipped"} askOrderId=${askOrder?.id ?? "none"} askStatus=${askOrder?.status ?? "skipped"}`,
+      `[application] RefreshQuotes | ORDERS_SUBMITTED | market=${snapshot.market} bidOrderId=${bidOrder?.id ?? "none"} bidStatus=${bidOrder?.status ?? "skipped"} askOrderId=${askOrder?.id ?? "none"} askStatus=${askOrder?.status ?? "skipped"}`,
     );
   }
 
@@ -272,7 +272,7 @@ export class RefreshQuotesUseCase {
     const skipReason = quoteSkipReason(order, touchSnapshot);
     if (skipReason !== null) {
       const healthLevel = quoteSkipHealthLevel(skipReason);
-      const logMessage = `refresh_quotes.quote_side_skipped market=${order.market} side=${order.side} intent=${order.intent} reason=${skipReason} trendBps=${trendBps.toFixed(4)} touchStalenessMs=${touchStalenessMs(touchSnapshot)}`;
+      const logMessage = `[application] RefreshQuotes | QUOTE_SIDE_SKIPPED | market=${order.market} side=${order.side} intent=${order.intent} reason=${skipReason} trendBps=${trendBps.toFixed(4)} touchStalenessMs=${touchStalenessMs(touchSnapshot)}`;
       if (healthLevel === "warn") {
         logger.warn(logMessage);
       } else {

@@ -17,7 +17,7 @@ export function registerShutdownHandlers(bot: StoppableBot, processLike: SignalP
         return;
       }
       stopRequested = true;
-      logger.info(`received ${signal}, stopping bot`);
+      logger.info(`[util] Shutdown | SIGNAL_RECEIVED | signal=${signal}`);
       bot.stop();
       processLike.exitCode = 0;
     });

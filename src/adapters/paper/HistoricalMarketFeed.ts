@@ -28,7 +28,7 @@ export class HistoricalMarketFeed implements IMarketFeed {
 
   async connect(): Promise<void> {
     logger.info(
-      `historical_market_feed.connect market=${this.params.market} timeframe=${this.params.timeframe} from=${this.params.from} to=${this.params.to}`,
+      `[adapter] HistoricalMarketFeed | CONNECT | market=${this.params.market} timeframe=${this.params.timeframe} from=${this.params.from} to=${this.params.to}`,
     );
     this.records = await this.ohlcvRepository.findByRange(
       this.params.market,
@@ -53,13 +53,13 @@ export class HistoricalMarketFeed implements IMarketFeed {
     this.records.sort((left, right) => left.ts - right.ts);
     this.index = 0;
     logger.info(
-      `historical_market_feed.loaded market=${this.params.market} timeframe=${this.params.timeframe} candles=${this.records.length}`,
+      `[adapter] HistoricalMarketFeed | LOADED | market=${this.params.market} timeframe=${this.params.timeframe} candles=${this.records.length}`,
     );
     this.publishCurrent();
   }
 
   async disconnect(): Promise<void> {
-    logger.info(`historical_market_feed.disconnected market=${this.params.market}`);
+    logger.info(`[adapter] HistoricalMarketFeed | DISCONNECTED | market=${this.params.market}`);
   }
 
   async getSnapshot(): Promise<MarketSnapshot> {
@@ -93,13 +93,13 @@ export class HistoricalMarketFeed implements IMarketFeed {
   async advance(): Promise<boolean> {
     if (this.index >= this.records.length - 1) {
       logger.info(
-        `historical_market_feed.exhausted market=${this.params.market} candles=${this.records.length}`,
+        `[adapter] HistoricalMarketFeed | EXHAUSTED | market=${this.params.market} candles=${this.records.length}`,
       );
       return false;
     }
     this.index += 1;
     logger.debug(
-      `historical_market_feed.advanced market=${this.params.market} index=${this.index}`,
+      `[adapter] HistoricalMarketFeed | ADVANCED | market=${this.params.market} index=${this.index}`,
     );
     this.publishCurrent();
     return true;

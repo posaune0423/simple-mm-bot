@@ -132,7 +132,7 @@ export class MetricsBuffer {
     if (this.criticalQueue.length >= this.criticalCapacity) {
       this.criticalBacklogExceeded += 1;
       logger.error(
-        `metrics.critical_backlog_exceeded type=${operation.type} criticalPending=${this.criticalQueue.length} normalPending=${this.normalQueue.length}`,
+        `[application] MetricsBuffer | CRITICAL_BACKLOG_EXCEEDED | type=${operation.type} criticalPending=${this.criticalQueue.length} normalPending=${this.normalQueue.length}`,
       );
       if (this.normalQueue.length > 0) {
         this.dropOldestNormal();
@@ -212,7 +212,9 @@ export class MetricsFlushLoop {
         try {
           await operation.run();
         } catch (error) {
-          logger.warn(`metrics.flush_failed type=${operation.type} error=${stringifyError(error)}`);
+          logger.warn(
+            `[application] MetricsFlushLoop | FLUSH_FAILED | type=${operation.type} error=${stringifyError(error)}`,
+          );
         } finally {
           this.inFlightCount -= 1;
         }
@@ -241,7 +243,7 @@ export class MetricsFlushLoop {
     const pending = this.buffer.pendingCount() + this.inFlightCount;
     if (pending > 0) {
       logger.warn(
-        `metrics.drain_timeout timeoutMs=${timeoutMs} pending=${pending} criticalPending=${this.buffer.criticalPendingCount()}`,
+        `[application] MetricsFlushLoop | DRAIN_TIMEOUT | timeoutMs=${timeoutMs} pending=${pending} criticalPending=${this.buffer.criticalPendingCount()}`,
       );
     }
   }
@@ -265,10 +267,12 @@ export class MetricsFlushLoop {
       return;
     }
     logger.warn(
-      `metrics.buffer_dropped dropped=${JSON.stringify(summary.dropped)} criticalBacklogExceeded=${summary.criticalBacklogExceeded}`,
+      `[application] MetricsFlushLoop | BUFFER_DROPPED | dropped=${JSON.stringify(summary.dropped)} criticalBacklogExceeded=${summary.criticalBacklogExceeded}`,
     );
     await this.options.onDropSummary?.(summary).catch((error) => {
-      logger.warn(`metrics.drop_summary_record_failed error=${stringifyError(error)}`);
+      logger.warn(
+        `[application] MetricsFlushLoop | DROP_SUMMARY_RECORD_FAILED | error=${stringifyError(error)}`,
+      );
     });
   }
 }

@@ -492,17 +492,19 @@ describe("BulkOrderGateway", () => {
       await gateway.pollFillsOnce();
 
       expect(logs.messages).toContain(
-        "bulk_order_gateway.place_submitted market=BTC-USD type=limit side=buy qty=0.1 price=100 tif=GTC reduceOnly=false",
+        "[adapter] BulkOrderGateway | PLACE_SUBMITTED | market=BTC-USD type=limit side=buy qty=0.1 price=100 tif=GTC reduceOnly=false",
       );
       expect(logs.messages).toContain(
-        "bulk_order_gateway.place_result market=BTC-USD orderId=limit-1 status=open statusKey=resting",
+        "[adapter] BulkOrderGateway | PLACE_RESULT | market=BTC-USD orderId=limit-1 status=open statusKey=resting",
       );
       expect(logs.messages).toContain(
-        "bulk_order_gateway.cancel_submitted market=BTC-USD orderId=limit-1",
+        "[adapter] BulkOrderGateway | CANCEL_SUBMITTED | market=BTC-USD orderId=limit-1",
       );
-      expect(logs.messages).toContain("bulk_order_gateway.cancel_all_submitted market=BTC-USD");
       expect(logs.messages).toContain(
-        "bulk_order_gateway.fill_received market=BTC-USD orderId=limit-1 side=sell qty=0.1 price=100",
+        "[adapter] BulkOrderGateway | CANCEL_ALL_SUBMITTED | market=BTC-USD",
+      );
+      expect(logs.messages).toContain(
+        "[adapter] BulkOrderGateway | FILL_RECEIVED | market=BTC-USD orderId=limit-1 side=sell qty=0.1 price=100",
       );
     } finally {
       logs.restore();
@@ -1033,7 +1035,7 @@ describe("BulkOrderGateway", () => {
 
     expect(calls).toBeGreaterThan(0);
     expect(
-      logs.warnMessages.some((message) => message.includes("fills_poll_transient_failed")),
+      logs.warnMessages.some((message) => message.includes("FILLS_POLL_TRANSIENT_FAILED")),
     ).toBe(true);
     expect(logs.errorMessages).toEqual([]);
   });

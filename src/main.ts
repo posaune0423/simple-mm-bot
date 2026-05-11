@@ -13,7 +13,9 @@ try {
   const mode: AppMode = env.MODE ?? config.mode;
   config.mode = mode;
 
-  logger.info(`starting mode=${config.mode} venue=${config.venue} market=${config.market}`);
+  logger.info(
+    `[util] Main | STARTING | mode=${config.mode} venue=${config.venue} market=${config.market}`,
+  );
 
   const bot = await new DIContainer(config).buildBot();
 
@@ -25,6 +27,6 @@ try {
   await bot.start();
 } catch (error) {
   await notifyFatalErrorToSlack(error);
-  logger.error(formatUnknownError(error));
+  logger.error(`[util] Main | FATAL | ${formatUnknownError(error)}`);
   process.exitCode = 1;
 }

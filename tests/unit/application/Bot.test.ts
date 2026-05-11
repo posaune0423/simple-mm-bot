@@ -748,6 +748,75 @@ describe("Bot", () => {
     expect(calls).toEqual(["connect", "syncFills", "subscribeFills", "syncFills", "syncFills"]);
   });
 
+  test("syncs live position before quote refresh so manual account changes do not linger", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        syncPosition: {
+          execute: async () => {
+            calls.push("syncPosition");
+            return {
+              synced: true,
+              previous: { qty: 0.25, avgEntry: 80_000, unrealizedPnl: 0 },
+              current: { qty: 0, avgEntry: 0, unrealizedPnl: 0 },
+              deltaQty: -0.25,
+            };
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            calls.push("reduce");
+            return false;
+          },
+        },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only", positionSyncIntervalMs: 0 },
+    );
+
+    await bot.start(1);
+
+    expect(calls).toEqual(["syncPosition", "reduce", "refresh"]);
+  });
+
   test("continues startup when the initial Bulk fill sync times out", async () => {
     const logs = captureLogs();
     const calls: string[] = [];
@@ -829,7 +898,7 @@ describe("Bot", () => {
       "disconnect",
     ]);
     expect(logs.messages).toContain(
-      "bot.initial_sync_transient_error error=BulkHttpError: HTTP error 408",
+      "[application] Bot | INITIAL_SYNC_TRANSIENT_ERROR | error=BulkHttpError: HTTP error 408",
     );
   });
 
@@ -1022,7 +1091,7 @@ describe("Bot", () => {
 
     expect(calls).toEqual(["connect", "refresh", "refresh", "cancelAll", "disconnect"]);
     expect(logs.messages).toContain(
-      "bot.tick_transient_error tick=1 error=BulkHttpError: HTTP error 408",
+      "[application] Bot | TICK_TRANSIENT_ERROR | tick=1 error=BulkHttpError: HTTP error 408",
     );
   });
 
@@ -1211,8 +1280,10 @@ describe("Bot", () => {
       "unsubscribe",
       "dispose",
     ]);
-    expect(logs.messages).toContain("bot.cleanup_failed quotedCount=2 closePositionFailed=true");
-    expect(logs.messages).not.toContain("bot.cleanup_complete quotedCount=2");
+    expect(logs.messages).toContain(
+      "[application] Bot | CLEANUP_FAILED | quotedCount=2 closePositionFailed=true",
+    );
+    expect(logs.messages).not.toContain("[application] Bot | CLEANUP_COMPLETE | quotedCount=2");
   });
 
   test("preserves the startup failure when close-position cleanup also fails", async () => {
@@ -1556,7 +1627,9 @@ describe("Bot", () => {
       expect(result).toBe("completed");
       expect(quoteCount).toBe(2);
       expect(
-        logs.messages.some((message) => message.startsWith("bot.event_tasks_drain_timeout")),
+        logs.messages.some((message) =>
+          message.startsWith("[application] Bot | EVENT_TASKS_DRAIN_TIMEOUT |"),
+        ),
       ).toBe(true);
     } finally {
       logs.restore();
@@ -1609,11 +1682,11 @@ describe("Bot", () => {
     try {
       await bot.start(1);
 
-      expect(logs.messages).toContain("bot.start intervalMs=1 maxTicks=1");
-      expect(logs.messages).toContain("bot.market_feed_connected");
-      expect(logs.messages).toContain("bot.tick tick=1 riskState=OK");
-      expect(logs.messages).toContain("bot.stopping reason=max_ticks tick=1");
-      expect(logs.messages).toContain("bot.cleanup_complete quotedCount=2");
+      expect(logs.messages).toContain("[application] Bot | START | intervalMs=1 maxTicks=1");
+      expect(logs.messages).toContain("[application] Bot | MARKET_FEED_CONNECTED |");
+      expect(logs.messages).toContain("[application] Bot | TICK | tick=1 riskState=OK");
+      expect(logs.messages).toContain("[application] Bot | STOPPING | reason=max_ticks tick=1");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_COMPLETE | quotedCount=2");
     } finally {
       logs.restore();
     }

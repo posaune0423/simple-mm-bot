@@ -42,7 +42,7 @@ export class GuardRiskUseCase {
     const freshnessReason = staleMarketReason(snapshot, this.thresholds);
     if (freshnessReason !== null) {
       logger.warn(
-        `guard_risk.pause_quoting market=${snapshot.market} reason=${freshnessReason} bookAgeMs=${bookAgeMs(snapshot)} tickerAgeMs=${tickerAgeMs(snapshot)} accountAgeMs=${accountAgeMs(snapshot)} positionAgeMs=${positionAgeMs(snapshot)}`,
+        `[application] GuardRisk | PAUSE_QUOTING | market=${snapshot.market} reason=${freshnessReason} bookAgeMs=${bookAgeMs(snapshot)} tickerAgeMs=${tickerAgeMs(snapshot)} accountAgeMs=${accountAgeMs(snapshot)} positionAgeMs=${positionAgeMs(snapshot)}`,
       );
       return { ...diagnostics, state: "PAUSE_QUOTING", reason: freshnessReason };
     }
@@ -50,22 +50,24 @@ export class GuardRiskUseCase {
     const marginRatio = snapshot.marginRatio;
 
     if (marginRatio === null) {
-      logger.debug(`guard_risk.ok market=${snapshot.market} marginRatio=null`);
+      logger.debug(`[application] GuardRisk | OK | market=${snapshot.market} marginRatio=null`);
       return { ...diagnostics, state: "OK" };
     }
     if (marginRatio < this.thresholds.mmrBuffer) {
       logger.warn(
-        `guard_risk.emergency_stop market=${snapshot.market} marginRatio=${marginRatio} mmrBuffer=${this.thresholds.mmrBuffer}`,
+        `[application] GuardRisk | EMERGENCY_STOP | market=${snapshot.market} marginRatio=${marginRatio} mmrBuffer=${this.thresholds.mmrBuffer}`,
       );
       return { ...diagnostics, state: "EMERGENCY_STOP", reason: "margin_below_mmr" };
     }
     if (marginRatio < this.thresholds.imrBuffer) {
       logger.warn(
-        `guard_risk.pause_quoting market=${snapshot.market} marginRatio=${marginRatio} imrBuffer=${this.thresholds.imrBuffer}`,
+        `[application] GuardRisk | PAUSE_QUOTING | market=${snapshot.market} marginRatio=${marginRatio} imrBuffer=${this.thresholds.imrBuffer}`,
       );
       return { ...diagnostics, state: "PAUSE_QUOTING", reason: "margin_below_imr" };
     }
-    logger.debug(`guard_risk.ok market=${snapshot.market} marginRatio=${marginRatio}`);
+    logger.debug(
+      `[application] GuardRisk | OK | market=${snapshot.market} marginRatio=${marginRatio}`,
+    );
     return { ...diagnostics, state: "OK" };
   }
 }

@@ -1,8 +1,9 @@
 import type { Fill } from "../domain/entities/Fill.ts";
+import type { Position } from "../domain/entities/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../utils/errors.ts";
-import { logger } from "../utils/logger.ts";
+import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
 import { isTransientBulkError } from "../utils/transientBulk.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";
 import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
@@ -10,6 +11,7 @@ import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
 interface UseCases {
   guardRisk: { execute(): Promise<RiskState | RiskDecision> };
   initializePosition?: { execute(): Promise<void> };
+  syncPosition?: { execute(): Promise<PositionSyncResult> };
   refreshQuotes: { execute(): Promise<void> };
   updatePositionOnFill: { execute(fill: Fill): Promise<void> };
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
@@ -23,6 +25,14 @@ type ShutdownClosePositionPolicy = "always" | "emergency_only";
 interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
   eventTaskDrainTimeoutMs?: number;
+  positionSyncIntervalMs?: number;
+}
+
+interface PositionSyncResult {
+  synced: boolean;
+  previous: Position;
+  current: Position;
+  deltaQty: number;
 }
 
 export class Bot {
@@ -32,6 +42,7 @@ export class Bot {
   private emergencyStopRequested = false;
   private eventTasks: Promise<void> = Promise.resolve();
   private pauseQuoteCancelCompleted = false;
+  private lastPositionSyncAtMs = 0;
   private readonly unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -48,7 +59,9 @@ export class Bot {
     this.stopRequested = false;
     let runError: unknown;
     let closePositionError: unknown;
-    logger.info(`bot.start intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`);
+    logger.info(
+      `[application] Bot | START | intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`,
+    );
 
     try {
       await this.metrics?.start(Date.now());
@@ -56,7 +69,9 @@ export class Bot {
       await this.runLoop(maxTicks);
     } catch (err) {
       if (this.wasStopRequested()) {
-        logger.warn(`bot.run_error_ignored_after_stop error=${stringifyError(err)}`);
+        logger.warn(
+          `[application] Bot | RUN_ERROR_IGNORED_AFTER_STOP | error=${stringifyError(err)}`,
+        );
       } else {
         runError = err;
         await this.metrics?.recordRuntimeHealth("error", "runtime_error", stringifyError(err));
@@ -98,7 +113,7 @@ export class Bot {
 
   private async connectAndSubscribe(): Promise<void> {
     await this.marketFeed.connect();
-    logger.info("bot.market_feed_connected");
+    logger.info("[application] Bot | MARKET_FEED_CONNECTED |");
     await this.syncInitialFills();
     await this.useCases.initializePosition?.execute();
     this.unsubscribers.push(
@@ -107,7 +122,7 @@ export class Bot {
       }),
       this.orderGateway.subscribeFills((fill) => {
         logger.info(
-          `bot.fill_received market=${fill.market} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
+          `[application] Bot | ${LOG_ORANGE}FILL_RECEIVED${LOG_RESET} | market=${fill.market} side=${fill.side} qty=${fill.qty} price=${fill.price}`,
         );
         this.enqueueEventTask(async () => {
           await this.metrics?.recordFill(fill);
@@ -124,8 +139,8 @@ export class Bot {
         }),
       );
     }
-    logger.info("bot.market_snapshot_subscription_active");
-    logger.info("bot.fill_subscription_active");
+    logger.info("[application] Bot | MARKET_SNAPSHOT_SUBSCRIPTION_ACTIVE |");
+    logger.info("[application] Bot | FILL_SUBSCRIPTION_ACTIVE |");
     await this.recordOhlcv(await this.marketFeed.getSnapshot());
   }
 
@@ -138,7 +153,9 @@ export class Bot {
       if (!isTransientBulkError(error)) {
         throw error;
       }
-      logger.warn(`bot.initial_sync_transient_error error=${stringifyError(error)}`);
+      logger.warn(
+        `[application] Bot | INITIAL_SYNC_TRANSIENT_ERROR | error=${stringifyError(error)}`,
+      );
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "initial_sync_transient_error",
@@ -170,7 +187,9 @@ export class Bot {
       if (!isTransientBulkError(error)) {
         throw error;
       }
-      logger.warn(`bot.tick_transient_error tick=${tick} error=${stringifyError(error)}`);
+      logger.warn(
+        `[application] Bot | TICK_TRANSIENT_ERROR | tick=${tick} error=${stringifyError(error)}`,
+      );
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "transient_tick_error",
@@ -186,7 +205,7 @@ export class Bot {
   private async runTick(tick: number): Promise<TickResult> {
     const riskDecision = await this.useCases.guardRisk.execute();
     const riskState = riskStateOf(riskDecision);
-    logger.debug(`bot.tick tick=${tick} riskState=${riskState}`);
+    logger.debug(`[application] Bot | TICK | tick=${tick} riskState=${riskState}`);
 
     if (riskState === "EMERGENCY_STOP") {
       await this.metrics?.recordRuntimeHealth(
@@ -195,7 +214,7 @@ export class Bot {
         "Risk gate requested emergency stop",
         riskRuntimeSummary(tick, riskDecision),
       );
-      logger.warn(`bot.stopping reason=emergency_stop tick=${tick}`);
+      logger.warn(`[application] Bot | STOPPING | reason=emergency_stop tick=${tick}`);
       this.emergencyStopRequested = true;
       return "stop";
     }
@@ -212,12 +231,48 @@ export class Bot {
     }
 
     await this.drainEventTasks();
+    await this.syncPositionIfDue();
     const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
     if (riskState === "OK" && !didReduceInventory) {
       await this.useCases.refreshQuotes.execute();
       this.quotedCount += 2;
     }
     return this.advanceMarketFeed(tick);
+  }
+
+  private async syncPositionIfDue(): Promise<void> {
+    if (this.useCases.syncPosition === undefined) {
+      return;
+    }
+    const nowMs = Date.now();
+    const intervalMs = this.options.positionSyncIntervalMs ?? 2_000;
+    if (this.lastPositionSyncAtMs !== 0 && nowMs - this.lastPositionSyncAtMs < intervalMs) {
+      return;
+    }
+
+    this.lastPositionSyncAtMs = nowMs;
+    try {
+      const result = await this.useCases.syncPosition.execute();
+      if (result.synced && result.deltaQty !== 0) {
+        await this.metrics?.recordRuntimeHealth(
+          "warn",
+          "position_sync_corrected",
+          "Live position was reconciled from exchange account state",
+          {
+            previousQty: result.previous.qty,
+            currentQty: result.current.qty,
+            deltaQty: result.deltaQty,
+          },
+        );
+      }
+    } catch (error) {
+      logger.warn(`[application] Bot | POSITION_SYNC_FAILED | error=${stringifyError(error)}`);
+      await this.metrics?.recordRuntimeHealth(
+        "warn",
+        "position_sync_failed",
+        stringifyError(error),
+      );
+    }
   }
 
   private async advanceMarketFeed(tick: number): Promise<TickResult> {
@@ -229,7 +284,7 @@ export class Bot {
       return "continue";
     }
 
-    logger.info(`bot.stopping reason=market_feed_exhausted tick=${tick}`);
+    logger.info(`[application] Bot | STOPPING | reason=market_feed_exhausted tick=${tick}`);
     return "stop";
   }
 
@@ -238,23 +293,25 @@ export class Bot {
       return false;
     }
 
-    logger.info(`bot.stopping reason=max_ticks tick=${ticks}`);
+    logger.info(`[application] Bot | STOPPING | reason=max_ticks tick=${ticks}`);
     return true;
   }
 
   private async cleanup(): Promise<unknown> {
     let closePositionError: unknown;
     this.running = false;
-    logger.info("bot.cleanup_started");
+    logger.info("[application] Bot | CLEANUP_STARTED |");
     await this.orderGateway.stopBackgroundSync?.();
     await this.orderGateway
       .cancelAll()
-      .catch((err) => logger.error(`bot.cleanup.cancel_all_failed: ${err}`));
+      .catch((err) =>
+        logger.error(`[application] Bot | CLEANUP_CANCEL_ALL_FAILED | error=${String(err)}`),
+      );
     await this.syncCleanupFills("after_cancel_all");
     if (this.shouldClosePositionOnCleanup()) {
       await this.useCases.closePosition.execute().catch((err) => {
         closePositionError = err;
-        logger.error(`bot.cleanup.close_position_failed: ${err}`);
+        logger.error(`[application] Bot | CLEANUP_CLOSE_POSITION_FAILED | error=${String(err)}`);
       });
       await this.syncCleanupFills("after_close_position");
     }
@@ -265,9 +322,11 @@ export class Bot {
     await this.drainEventTasks();
     await this.orderGateway.dispose?.();
     if (closePositionError === undefined) {
-      logger.info(`bot.cleanup_complete quotedCount=${this.quotedCount}`);
+      logger.info(`[application] Bot | CLEANUP_COMPLETE | quotedCount=${this.quotedCount}`);
     } else {
-      logger.error(`bot.cleanup_failed quotedCount=${this.quotedCount} closePositionFailed=true`);
+      logger.error(
+        `[application] Bot | CLEANUP_FAILED | quotedCount=${this.quotedCount} closePositionFailed=true`,
+      );
     }
     return closePositionError;
   }
@@ -290,7 +349,9 @@ export class Bot {
       await this.orderGateway.cancelAll();
       this.pauseQuoteCancelCompleted = true;
       const latencyMs = Date.now() - startedAt;
-      logger.warn(`bot.pause_quote_cancel_all tick=${tick} latencyMs=${latencyMs}`);
+      logger.warn(
+        `[application] Bot | PAUSE_QUOTE_CANCEL_ALL | tick=${tick} latencyMs=${latencyMs}`,
+      );
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "pause_quote_cancel_all",
@@ -299,7 +360,9 @@ export class Bot {
       );
     } catch (error) {
       const latencyMs = Date.now() - startedAt;
-      logger.error(`bot.pause_quote_cancel_all_failed tick=${tick} error=${stringifyError(error)}`);
+      logger.error(
+        `[application] Bot | PAUSE_QUOTE_CANCEL_ALL_FAILED | tick=${tick} error=${stringifyError(error)}`,
+      );
       await this.metrics?.recordRuntimeHealth(
         "error",
         "pause_quote_cancel_all",
@@ -311,7 +374,9 @@ export class Bot {
 
   private async syncCleanupFills(phase: string): Promise<void> {
     await this.orderGateway.syncFills?.().catch(async (error) => {
-      logger.warn(`bot.cleanup.sync_fills_failed phase=${phase} error=${stringifyError(error)}`);
+      logger.warn(
+        `[application] Bot | CLEANUP_SYNC_FILLS_FAILED | phase=${phase} error=${stringifyError(error)}`,
+      );
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "cleanup_sync_fills_failed",
@@ -327,7 +392,7 @@ export class Bot {
     await this.metrics?.recordMarketSnapshot(snapshot);
     await this.useCases.recordOhlcv.execute(snapshot).catch((err) => {
       logger.warn(
-        `bot.market_snapshot_record_failed market=${snapshot.market} ts=${snapshot.timestamp} error=${stringifyError(err)}`,
+        `[application] Bot | MARKET_SNAPSHOT_RECORD_FAILED | market=${snapshot.market} ts=${snapshot.timestamp} error=${stringifyError(err)}`,
       );
       void this.metrics?.recordRuntimeHealth(
         "warn",
@@ -357,7 +422,7 @@ export class Bot {
     }
 
     const timeoutMs = this.eventTaskDrainTimeoutMs();
-    logger.warn(`bot.event_tasks_drain_timeout timeoutMs=${timeoutMs}`);
+    logger.warn(`[application] Bot | EVENT_TASKS_DRAIN_TIMEOUT | timeoutMs=${timeoutMs}`);
     await this.metrics?.recordRuntimeHealth(
       "warn",
       "event_tasks_drain_timeout",
@@ -365,7 +430,9 @@ export class Bot {
       { timeoutMs },
     );
     void pendingTasks.catch((error) => {
-      logger.warn(`bot.event_tasks_detached_failed error=${stringifyError(error)}`);
+      logger.warn(
+        `[application] Bot | EVENT_TASKS_DETACHED_FAILED | error=${stringifyError(error)}`,
+      );
     });
     if (this.eventTasks === pendingTasks) {
       this.eventTasks = Promise.resolve();

@@ -11,7 +11,7 @@ import type {
   PlacedOrder,
 } from "../../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../../utils/errors.ts";
-import { logger } from "../../utils/logger.ts";
+import { LOG_ORANGE, LOG_RESET, logger } from "../../utils/logger.ts";
 
 type BulkStatus = Record<string, Record<string, unknown> | undefined>;
 type BulkOrderResponse = {
@@ -277,7 +277,7 @@ export class BulkOrderGateway implements IOrderGateway {
     const type = normalizedOrder.price === undefined ? "market" : "limit";
     const submittedAt = Date.now();
     logger.info(
-      `bulk_order_gateway.place_submitted market=${normalizedOrder.market} type=${type} side=${normalizedOrder.side} qty=${normalizedOrder.qty} price=${normalizedOrder.price ?? "market"} tif=${normalizedOrder.timeInForce} reduceOnly=${normalizedOrder.reduceOnly}`,
+      `[adapter] BulkOrderGateway | PLACE_SUBMITTED | market=${normalizedOrder.market} type=${type} side=${normalizedOrder.side} qty=${normalizedOrder.qty} price=${normalizedOrder.price ?? "market"} tif=${normalizedOrder.timeInForce} reduceOnly=${normalizedOrder.reduceOnly}`,
     );
     await this.publishOrderEvent({
       action: "submit",
@@ -299,7 +299,7 @@ export class BulkOrderGateway implements IOrderGateway {
       const statusKey = status === null ? "http_error" : `http_${status}`;
       const reason = orderRejectionReason(error);
       logger.warn(
-        `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=${statusKey} reason=${reason}`,
+        `[adapter] BulkOrderGateway | PLACE_RESULT | market=${normalizedOrder.market} orderId=${orderId} status=rejected statusKey=${statusKey} reason=${reason}`,
       );
       await this.publishOrderEvent({
         action: "reject",
@@ -335,7 +335,7 @@ export class BulkOrderGateway implements IOrderGateway {
     const status = placedStatusFrom(firstStatus);
     const key = statusKey(firstStatus) ?? "missing";
     const reason = rejectReasonFrom(firstStatus);
-    const resultMessage = `bulk_order_gateway.place_result market=${normalizedOrder.market} orderId=${orderId} status=${status} statusKey=${key}`;
+    const resultMessage = `[adapter] BulkOrderGateway | PLACE_RESULT | market=${normalizedOrder.market} orderId=${orderId} status=${status} statusKey=${key}`;
     if (status === "rejected") {
       logger.warn(reason === undefined ? resultMessage : `${resultMessage} reason=${reason}`);
     } else {
@@ -468,13 +468,15 @@ export class BulkOrderGateway implements IOrderGateway {
     }
 
     logger.info(
-      `bulk_order_gateway.leverage_verified market=${this.params.market} leverage=${leverage} maxLeverage=${this.params.maxLeverage}`,
+      `[adapter] BulkOrderGateway | LEVERAGE_VERIFIED | market=${this.params.market} leverage=${leverage} maxLeverage=${this.params.maxLeverage}`,
     );
     this.leverageChecked = true;
   }
 
   async cancel(id: string): Promise<void> {
-    logger.info(`bulk_order_gateway.cancel_submitted market=${this.params.market} orderId=${id}`);
+    logger.info(
+      `[adapter] BulkOrderGateway | CANCEL_SUBMITTED | market=${this.params.market} orderId=${id}`,
+    );
     const submittedAt = Date.now();
     await this.client.trade.cancelOrder?.({ symbol: this.params.market, orderId: id });
     await this.publishOrderEvent({
@@ -486,7 +488,7 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async cancelAll(): Promise<void> {
-    logger.info(`bulk_order_gateway.cancel_all_submitted market=${this.params.market}`);
+    logger.info(`[adapter] BulkOrderGateway | CANCEL_ALL_SUBMITTED | market=${this.params.market}`);
     const submittedAt = Date.now();
     await this.client.trade.cancelAll?.({ symbols: [this.params.market] });
     await this.publishOrderEvent({
@@ -553,7 +555,7 @@ export class BulkOrderGateway implements IOrderGateway {
   private async waitForInFlightPoll(): Promise<void> {
     await this.pollInFlight?.catch((error) => {
       logger.warn(
-        `bulk_order_gateway.dispose_poll_failed market=${this.params.market} error=${stringifyError(error)}`,
+        `[adapter] BulkOrderGateway | DISPOSE_POLL_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
       );
     });
   }
@@ -565,12 +567,12 @@ export class BulkOrderGateway implements IOrderGateway {
     await this.pollFillsSerialized().catch((error) => {
       if (isTransientBulkPollingError(error)) {
         logger.warn(
-          `bulk_order_gateway.fills_poll_transient_failed market=${this.params.market} error=${stringifyError(error)}`,
+          `[adapter] BulkOrderGateway | FILLS_POLL_TRANSIENT_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
         );
         return;
       }
       logger.error(
-        `bulk_order_gateway.fills_poll_failed market=${this.params.market} error=${stringifyError(error)}`,
+        `[adapter] BulkOrderGateway | FILLS_POLL_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
       );
     });
   }
@@ -594,7 +596,7 @@ export class BulkOrderGateway implements IOrderGateway {
   async pollFillsOnce(): Promise<void> {
     const fills = await this.client.account.fills(this.params.accountId);
     logger.debug(
-      `bulk_order_gateway.fills_polled market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
+      `[adapter] BulkOrderGateway | FILLS_POLLED | market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
     );
     for (const fill of fills) {
       const normalized = this.normalizeFill(fill);
@@ -612,7 +614,7 @@ export class BulkOrderGateway implements IOrderGateway {
       }
       this.rememberFill(normalized);
       logger.info(
-        `bulk_order_gateway.fill_received market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
+        `[adapter] BulkOrderGateway | ${LOG_ORANGE}FILL_RECEIVED${LOG_RESET} | market=${normalized.market} orderId=${normalized.quoteId} side=${normalized.side} qty=${normalized.qty} price=${normalized.price}`,
       );
       await this.publishOrderEvent({
         action: "fill",

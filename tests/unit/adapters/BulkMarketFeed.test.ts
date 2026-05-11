@@ -173,12 +173,14 @@ describe("BulkMarketFeed", () => {
 
       await feed.connect();
 
-      expect(logs.messages).toContain("bulk_market_feed.connect market=BTC-USD nlevels=20");
       expect(logs.messages).toContain(
-        "bulk_market_feed.snapshot_seeded market=BTC-USD bestBid=99 bestAsk=101 markPrice=101 marginRatio=null availableMarginUsd=null",
+        "[adapter] BulkMarketFeed | CONNECT | market=BTC-USD nlevels=20",
       );
       expect(logs.messages).toContain(
-        "bulk_market_feed.ws_subscribed market=BTC-USD topics=ticker,l2Snapshot,candle",
+        "[adapter] BulkMarketFeed | SNAPSHOT_SEEDED | market=BTC-USD bestBid=99 bestAsk=101 markPrice=101 marginRatio=null availableMarginUsd=null",
+      );
+      expect(logs.messages).toContain(
+        "[adapter] BulkMarketFeed | WS_SUBSCRIBED | market=BTC-USD topics=ticker,l2Snapshot,candle",
       );
     } finally {
       logs.restore();
@@ -662,7 +664,7 @@ describe("BulkMarketFeed", () => {
       expect(snapshot.bestBid).toBe(99);
       expect(snapshot.bestAsk).toBe(101);
       expect(logs.messages).toContain(
-        "bulk_market_feed.book_snapshot_invalid market=ETH-USD reason=crossed_book bestBid=103 bestAsk=101",
+        "[adapter] BulkMarketFeed | BOOK_SNAPSHOT_INVALID | market=ETH-USD reason=crossed_book bestBid=103 bestAsk=101",
       );
     } finally {
       logs.restore();

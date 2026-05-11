@@ -233,7 +233,7 @@ describe("ReduceInventoryUseCase", () => {
       ).executeIfNeeded();
 
       expect(logs.messages).toContain(
-        "reduce_inventory.order_submitted market=BTC-USD side=sell qty=0.6000000000000001 price=market reduceTriggerQty=0.5 reduceTargetQty=0.2 maxPositionQty=0.5",
+        "[application] ReduceInventory | ORDER_SUBMITTED | market=BTC-USD side=sell qty=0.6000000000000001 price=market reduceTriggerQty=0.5 reduceTargetQty=0.2 maxPositionQty=0.5",
       );
     } finally {
       logs.restore();

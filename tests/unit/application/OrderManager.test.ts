@@ -28,6 +28,19 @@ function quoteOrder(overrides: Partial<ManagedOrderRequest> = {}): ManagedOrderR
   };
 }
 
+function reduceOrder(overrides: Partial<ManagedOrderRequest> = {}): ManagedOrderRequest {
+  return quoteOrder({
+    key: "ask",
+    side: "sell",
+    price: 101,
+    qty: 0.1,
+    reduceOnly: true,
+    clientOrderId: "reduce-1",
+    intent: "reduce",
+    ...overrides,
+  });
+}
+
 describe("OrderManager", () => {
   test("places replacement orders only after the previous order cancellation completes", async () => {
     let cancelFinished = false;
@@ -165,6 +178,40 @@ describe("OrderManager", () => {
     await manager.reconcile([quoteOrder({ clientOrderId: "quote-3" })]);
 
     expect(calls).toEqual(["place:quote-1", "place:quote-3"]);
+  });
+
+  test("does not delay open quotes when only reduce orders disappear from the exchange", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel() {},
+      async cancelAll() {},
+      async getOpenOrders() {
+        return [];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const manager = new OrderManager(gateway, {
+      exchangeDropQuoteCooldownMs: 1_500,
+    });
+    await manager.reconcile([reduceOrder({ clientOrderId: "reduce-1" })]);
+    await manager.reconcile([
+      reduceOrder({ clientOrderId: "reduce-2" }),
+      quoteOrder({ clientOrderId: "quote-1" }),
+    ]);
+
+    expect(calls).toEqual(["place:reduce-1", "place:reduce-2", "place:quote-1"]);
+    expect(manager.state().quoteCooldownRemainingMs).toBe(0);
   });
 
   test("exposes tracked order and quote cooldown state for runtime diagnostics", async () => {
