@@ -160,6 +160,11 @@ describe("domain value objects", () => {
     expect(PositionSnapshot.exposureIntentForOrderSide(long, "sell")).toBe("reduce_exposure");
     expect(PositionSnapshot.exposureIntentForOrderSide(short, "buy")).toBe("reduce_exposure");
     expect(PositionSnapshot.exposureIntentForOrderSide(flat, "buy")).toBe("increase_exposure");
+    expect(
+      PositionSnapshot.maxReduceQuantity(
+        PositionSnapshot.unsafe({ ...flat, signedQuantity: 1e-13 }),
+      ),
+    ).toBe(0);
   });
 
   it("validates order intent as submit-before-venue intent", () => {
@@ -180,6 +185,13 @@ describe("domain value objects", () => {
     });
 
     expect(valid.isOk()).toBe(true);
+    const trimmed = OrderIntent.create({
+      ...valid._unsafeUnwrap(),
+      key: " bid:0 ",
+      clientOrderId: " cycle-1:bid:0 ",
+    })._unsafeUnwrap();
+    expect(trimmed.key).toBe("bid:0");
+    expect(trimmed.clientOrderId).toBe("cycle-1:bid:0");
     expect(
       OrderIntent.create({
         key: "ask:0",

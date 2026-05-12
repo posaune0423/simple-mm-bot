@@ -24,13 +24,15 @@ export type OrderIntent = Readonly<{
 
 export const OrderIntent = {
   create(input: OrderIntent): Result<OrderIntent, DomainError> {
-    if (input.key.trim().length === 0) {
+    const key = input.key.trim();
+    const clientOrderId = input.clientOrderId.trim();
+    if (key.length === 0) {
       return err({
         type: "invalid_order_intent",
         reason: "order intent key must be non-empty",
       });
     }
-    if (input.clientOrderId.trim().length === 0) {
+    if (clientOrderId.length === 0) {
       return err({
         type: "invalid_order_intent",
         reason: "clientOrderId must be non-empty",
@@ -58,6 +60,8 @@ export const OrderIntent = {
     return ok(
       Object.freeze({
         ...input,
+        key,
+        clientOrderId,
         reasonTags: Object.freeze([...input.reasonTags]),
       }),
     );

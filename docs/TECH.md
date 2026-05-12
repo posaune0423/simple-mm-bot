@@ -80,7 +80,7 @@ bot の 1 tick は以下の責務順で動作する。
 ### Strategy / Quote Model / Quote Engine
 
 `AvellanedaStoikovQuoteModel` は pricing model であり、bot behavior strategy ではない。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
-`SimplePmmStrategy` は quote quality を見て side spec を作り、`QuoteEngine` に quote 計算を委譲する。
+`SimplePmmStrategy` は side markout feedback を見て side spec を作り、`QuoteEngine` に quote 計算を委譲する。
 `QuoteEngine` は fair price、volatility、quote model output、quote sizing、budget/notional cap、exposure intent を統合して新 `Quote` value object を生成する。
 time-in-force、post-only、reduce-only、client order id は quote ではなく `OrderIntentBuilder` / `OrderIntent` 側で扱う。
 `QuoteEngine` は `QuoteModel` interface のみへ依存し、具体 quote model を import しない。

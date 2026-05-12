@@ -257,14 +257,21 @@ export class QuoteRefreshService {
     if (!this.markoutFeedbackGate.enabled || this.markoutFeedbackRepository === undefined) {
       return [];
     }
-    return this.markoutFeedbackRepository.getRecentSideMarkoutFeedback({
-      market: snapshot.market,
-      lookbackFills: this.markoutFeedbackGate.lookbackFills ?? 100,
-      ...(this.markoutFeedbackGate.maxFillAgeMs === undefined
-        ? {}
-        : { minFilledAt: Date.now() - this.markoutFeedbackGate.maxFillAgeMs }),
-      horizonsSec: [...this.markoutFeedbackGate.horizonsSec],
-    });
+    try {
+      return await this.markoutFeedbackRepository.getRecentSideMarkoutFeedback({
+        market: snapshot.market,
+        lookbackFills: this.markoutFeedbackGate.lookbackFills ?? 100,
+        ...(this.markoutFeedbackGate.maxFillAgeMs === undefined
+          ? {}
+          : { minFilledAt: Date.now() - this.markoutFeedbackGate.maxFillAgeMs }),
+        horizonsSec: [...this.markoutFeedbackGate.horizonsSec],
+      });
+    } catch (error) {
+      logger.warn(
+        `[application] QuoteRefresh | MARKOUT_FEEDBACK_READ_FAILED | market=${snapshot.market} error=${stringifyError(error)}`,
+      );
+      return [];
+    }
   }
 
   private async collectPlacementContext(

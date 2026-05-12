@@ -214,6 +214,11 @@ export class Bot {
   }
 
   private async runLoop(maxTicks?: number, signal?: AbortSignal): Promise<void> {
+    if (maxTicks !== undefined && maxTicks <= 0) {
+      logger.info("[application] Bot | STOPPING | reason=max_ticks tick=0");
+      return;
+    }
+
     let ticks = 0;
 
     while (this.isRunning()) {

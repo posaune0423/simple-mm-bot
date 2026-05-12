@@ -258,17 +258,17 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
         SELECT
           side,
           CASE
-            WHEN mid_5s IS NULL THEN NULL
+            WHEN mid_5s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_5s - price) / price) * 10000
             ELSE ((price - mid_5s) / price) * 10000
           END AS markout_5s_bps,
           CASE
-            WHEN mid_30s IS NULL THEN NULL
+            WHEN mid_30s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_30s - price) / price) * 10000
             ELSE ((price - mid_30s) / price) * 10000
           END AS markout_30s_bps,
           CASE
-            WHEN mid_300s IS NULL THEN NULL
+            WHEN mid_300s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_300s - price) / price) * 10000
             ELSE ((price - mid_300s) / price) * 10000
           END AS markout_300s_bps
@@ -282,10 +282,16 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
       if (sideRows.length === 0) {
         return [];
       }
+      const horizons = query.horizonsSec.map((horizonSec) =>
+        aggregateHorizon(sideRows, horizonSec),
+      );
+      if (horizons.every((horizon) => horizon.sampleCount === 0)) {
+        return [];
+      }
       return [
         {
           side,
-          horizons: query.horizonsSec.map((horizonSec) => aggregateHorizon(sideRows, horizonSec)),
+          horizons,
         },
       ];
     });

@@ -348,12 +348,14 @@ export class QuoteEngine {
 
     const bidIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "buy");
     const askIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "sell");
+    const bidIncreaseAllowed = isIncreaseAllowed(input.sideSpecs.bid, bidIntent);
+    const askIncreaseAllowed = isIncreaseAllowed(input.sideSpecs.ask, askIntent);
     const totalBidOpenQty = levels.reduce(
-      (sum, level) => sum + (bidIntent === "increase_exposure" ? level.bidSize : 0),
+      (sum, level) => sum + (bidIncreaseAllowed ? level.bidSize : 0),
       0,
     );
     const totalAskOpenQty = levels.reduce(
-      (sum, level) => sum + (askIntent === "increase_exposure" ? level.askSize : 0),
+      (sum, level) => sum + (askIncreaseAllowed ? level.askSize : 0),
       0,
     );
     const bidSideScale =
@@ -368,14 +370,8 @@ export class QuoteEngine {
 
     return levels.map((level) => ({
       ...level,
-      bidSize:
-        bidIntent === "increase_exposure"
-          ? level.bidSize * bidSideScale * combinedScale
-          : level.bidSize,
-      askSize:
-        askIntent === "increase_exposure"
-          ? level.askSize * askSideScale * combinedScale
-          : level.askSize,
+      bidSize: bidIncreaseAllowed ? level.bidSize * bidSideScale * combinedScale : level.bidSize,
+      askSize: askIncreaseAllowed ? level.askSize * askSideScale * combinedScale : level.askSize,
     }));
   }
 
@@ -385,6 +381,10 @@ export class QuoteEngine {
     }
     return Math.min(this.config.positionSize, this.config.budgetUsd / fairPrice);
   }
+}
+
+function isIncreaseAllowed(spec: QuoteSideSpec, intent: ExposureIntent): boolean {
+  return intent === "increase_exposure" && spec.enabled && !spec.disableIncreaseExposure;
 }
 
 function collectReasonTags(legs: readonly { reasonTags: readonly string[] }[]): string[] {

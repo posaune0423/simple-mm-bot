@@ -217,6 +217,69 @@ describe("Bot", () => {
     await bot.start(1);
   });
 
+  test("does not execute a tick when maxTicks is non-positive", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: {
+          execute: async () => {
+            calls.push("guard");
+            return "OK" as const;
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: {
+          executeIfNeeded: async () => {
+            calls.push("reduce");
+            return false;
+          },
+        },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "ETH",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("should not place");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      { closePositionPolicy: "emergency_only" },
+    );
+
+    await bot.start(0);
+
+    expect(calls).toEqual([]);
+  });
+
   test("stops immediately on emergency risk state", async () => {
     const calls: string[] = [];
     const bot = new Bot(

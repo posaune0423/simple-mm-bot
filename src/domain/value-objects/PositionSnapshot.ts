@@ -48,6 +48,7 @@ export const PositionSnapshot = {
   },
 
   maxReduceQuantity(position: PositionSnapshot): number {
-    return Math.abs(position.signedQuantity);
+    const quantity = Math.abs(position.signedQuantity);
+    return quantity < FLAT_EPSILON ? 0 : quantity;
   },
 };

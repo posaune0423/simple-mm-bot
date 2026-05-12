@@ -77,6 +77,35 @@ describe("QuoteEngine", () => {
     expect(quote.bids[0]?.exposureIntent).toBe("reduce_exposure");
     expect(Number(quote.bids[0]?.size)).toBe(0.25);
   });
+
+  test("excludes disabled increase sides from open-notional cap totals", () => {
+    const engine = new QuoteEngine(
+      fixedModel(),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 1,
+        timeHorizonSec: 1,
+        minSpreadBps: 2,
+        positionSize: 1,
+        maxLeverage: 1,
+      },
+    );
+
+    const quote = engine
+      .compute({
+        snapshot: { ...snapshot(), availableMarginUsd: 100 },
+        position: position(0),
+        sideSpecs: {
+          bid: { ...sideSpec(), enabled: false },
+          ask: sideSpec(),
+        },
+      })
+      ._unsafeUnwrap();
+
+    expect(quote.bids).toHaveLength(0);
+    expect(Number(quote.asks[0]?.size)).toBeCloseTo(0.95);
+  });
 });
 
 function createEngine(): QuoteEngine {
