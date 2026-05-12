@@ -284,7 +284,13 @@ describe("BulkMarketFeed", () => {
           accountCalls += 1;
           return {
             margin: { totalBalance: 1000, marginUsed: accountCalls === 1 ? 250 : 100 },
-            positions: [{ symbol: "BTC-USD", size: accountCalls === 1 ? 0.1 : -0.2 }],
+            positions: [
+              {
+                symbol: "BTC-USD",
+                size: accountCalls === 1 ? 0.1 : -0.2,
+                unrealizedPnl: accountCalls === 1 ? 3.5 : 12.25,
+              },
+            ],
           };
         },
       },
@@ -313,6 +319,7 @@ describe("BulkMarketFeed", () => {
     expect(polled.timestamp).toBe(initial.timestamp);
     expect(polled.marginRatio).toBe(0.9);
     expect(polled.positionQty).toBe(-0.2);
+    expect(polled.unrealizedPnl).toBe(12.25);
     expect(polled.accountUpdatedAt).toBeGreaterThanOrEqual(initial.accountUpdatedAt ?? 0);
     expect(polled.positionUpdatedAt).toBeGreaterThanOrEqual(initial.positionUpdatedAt ?? 0);
   });

@@ -101,6 +101,7 @@ simple-mm-bot/
 │   ├── TECH.md
 │   ├── STRUCTURE.md
 │   ├── storategy.md
+│   ├── research/
 │   ├── venue/
 │   │   └── bulk/
 │   │       └── README.md
@@ -238,6 +239,9 @@ Runtime default は `src/env.ts`、Drizzle schema / migration path は `drizzle.
   - `summary.json`、`report.json`、`run.md`、使用 config snapshot を `data/strategy-runs/<timestamp>-<label>/` に保存する。
 - `docs/reports/`
   - 人間が review / commit する performance dashboard。`report:generate` の default 出力であり、runtime state ではなく git 管理可能な report snapshot として扱う。
+- `docs/research/`
+  - on-demand 調査結果の置き場。特定 run / incident / market regime の分析を、data source、run id、再現可能な SQL / command、解釈、次 action と一緒に Markdown で残す。
+  - 自動生成 dashboard ではなく、人間が読んで意思決定する調査ノートとして扱う。数値だけでなく、phase 定義、bucket、制約、未観測データも明記する。
 
 ### `src/lib/reporting/`
 
@@ -285,6 +289,7 @@ secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
 `docs/venue/` には venue 固有の exchange rule、fee、risk、execution semantics を置く。
 `docs/venue/bulk/README.md` は Bulk Trade の maker / taker fee、commission、HFMM、STP、margin、liquidation ルールの参照資料として使う。
 `docs/storategy.md` は current strategy flow、quote formula、Bulk live parameters、inventory reduction policy の参照資料として使う。
+`docs/research/` は特定 run や market regime の ad hoc 調査結果を、再現可能な data source / SQL とともに保存する。
 runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.md` とこの文書に置く。
 
 ## DI Matrix

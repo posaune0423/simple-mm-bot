@@ -365,6 +365,8 @@ export class BufferedMetricsRecorder {
         market: snapshot.market,
         observedAt,
         marginRatio: snapshot.marginRatio,
+        positionQty: snapshot.positionQty ?? undefined,
+        unrealizedPnl: snapshot.unrealizedPnl ?? undefined,
         rawJson: { source: "market_snapshot" },
       };
       this.enqueue("account_state", "normal", async () => {
@@ -387,6 +389,7 @@ export class BufferedMetricsRecorder {
       observedAt: snapshot.timestamp,
       positionQty,
       marginRatio: snapshot.marginRatio,
+      unrealizedPnl: snapshot.unrealizedPnl ?? undefined,
       rawJson: {
         source: "quote",
         fairPrice: quote.fairPrice,
