@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   FairPriceCalculator,
   calculateDepthVampPrice,
-} from "../../../src/domain/FairPriceCalculator.ts";
+} from "../../../src/domain/services/FairPriceCalculator.ts";
 import type { MarketSnapshot } from "../../../src/domain/ports/IMarketFeed.ts";
 
 const snapshot = (overrides: Partial<MarketSnapshot> = {}): MarketSnapshot => ({

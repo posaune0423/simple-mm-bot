@@ -5,7 +5,7 @@ import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
 import { isTransientBulkError } from "../utils/transientBulk.ts";
-import type { MetricsRecorder } from "./MetricsRecorder.ts";
+import type { MetricsRecorder } from "./services/MetricsRecorder.ts";
 import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
 
 interface UseCases {
@@ -21,6 +21,11 @@ interface UseCases {
 
 type TickResult = "continue" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
+
+interface BotStartOptions {
+  maxTicks?: number;
+  signal?: AbortSignal;
+}
 
 interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
@@ -54,18 +59,22 @@ export class Bot {
     private readonly options: BotOptions = { closePositionPolicy: "always" },
   ) {}
 
-  async start(maxTicks?: number): Promise<void> {
+  async start(maxTicksOrOptions?: number | BotStartOptions): Promise<void> {
+    const startOptions = normalizeStartOptions(maxTicksOrOptions);
     this.resetRunState();
+    const removeAbortListener = this.watchStopSignal(startOptions.signal);
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(
-      `[application] Bot | START | intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`,
+      `[application] Bot | START | intervalMs=${this.intervalMs} maxTicks=${startOptions.maxTicks ?? "unbounded"}`,
     );
 
     try {
       await this.metrics?.start(Date.now());
-      await this.connectAndSubscribe();
-      await this.runLoop(maxTicks);
+      if (!this.wasStopRequested()) {
+        await this.connectAndSubscribe();
+        await this.runLoop(startOptions.maxTicks, startOptions.signal);
+      }
     } catch (err) {
       if (this.wasStopRequested()) {
         logger.warn(
@@ -76,6 +85,7 @@ export class Bot {
         await this.metrics?.recordRuntimeHealth("error", "runtime_error", stringifyError(err));
       }
     } finally {
+      removeAbortListener();
       closePositionError = await this.cleanup();
       const metricsWithDrain = this.metrics as
         | (MetricsRecorder & { drainAndStop?: () => Promise<void> })
@@ -108,9 +118,36 @@ export class Bot {
     this.unsubscribers.splice(0);
   }
 
-  stop(): void {
+  stop(reason = "requested"): void {
+    this.requestStop(reason);
+  }
+
+  private requestStop(reason = "requested"): boolean {
+    if (this.stopRequested) {
+      return false;
+    }
     this.stopRequested = true;
     this.running = false;
+    logger.info(`[application] Bot | STOP_REQUESTED | reason=${reason}`);
+    return true;
+  }
+
+  private watchStopSignal(signal?: AbortSignal): () => void {
+    if (signal === undefined) {
+      return () => {};
+    }
+
+    const requestStopFromSignal = () => {
+      this.requestStop(stopReasonFromSignal(signal));
+    };
+
+    if (signal.aborted) {
+      requestStopFromSignal();
+      return () => {};
+    }
+
+    signal.addEventListener("abort", requestStopFromSignal, { once: true });
+    return () => signal.removeEventListener("abort", requestStopFromSignal);
   }
 
   private isRunning(): boolean {
@@ -176,7 +213,7 @@ export class Bot {
     });
   }
 
-  private async runLoop(maxTicks?: number): Promise<void> {
+  private async runLoop(maxTicks?: number, signal?: AbortSignal): Promise<void> {
     let ticks = 0;
 
     while (this.isRunning()) {
@@ -188,7 +225,7 @@ export class Bot {
         break;
       }
 
-      await Bun.sleep(this.intervalMs);
+      await this.sleepUntilNextTick(signal);
     }
   }
 
@@ -462,6 +499,52 @@ export class Bot {
   private eventTaskDrainTimeoutMs(): number {
     return this.options.eventTaskDrainTimeoutMs ?? Math.max(1_000, this.intervalMs);
   }
+
+  private async sleepUntilNextTick(signal?: AbortSignal): Promise<void> {
+    if (signal === undefined) {
+      await Bun.sleep(this.intervalMs);
+      return;
+    }
+    if (signal.aborted) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, this.intervalMs);
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+}
+
+function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): BotStartOptions {
+  if (typeof maxTicksOrOptions === "number" || maxTicksOrOptions === undefined) {
+    return { maxTicks: maxTicksOrOptions };
+  }
+  return maxTicksOrOptions;
+}
+
+function stopReasonFromSignal(signal: AbortSignal): string {
+  const { reason } = signal;
+  if (typeof reason === "string") {
+    return reason;
+  }
+  if (reason instanceof Error) {
+    return reason.message;
+  }
+  if (reason === undefined) {
+    return "aborted";
+  }
+  return String(reason);
 }
 
 function riskStateOf(decision: RiskState | RiskDecision): RiskState {

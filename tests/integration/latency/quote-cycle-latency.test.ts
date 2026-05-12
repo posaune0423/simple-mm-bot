@@ -2,11 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { RefreshQuotesUseCase } from "../../../src/application/usecases/RefreshQuotesUseCase.ts";
-import { MetricsRecorder } from "../../../src/application/MetricsRecorder.ts";
-import { FairPriceCalculator } from "../../../src/domain/FairPriceCalculator.ts";
-import { QuoteEngine } from "../../../src/domain/QuoteEngine.ts";
-import { VolatilityEstimator } from "../../../src/domain/VolatilityEstimator.ts";
+import { MetricsRecorder } from "../../../src/application/services/MetricsRecorder.ts";
+import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
+import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
+import { QuoteRefreshService } from "../../../src/application/services/QuoteRefreshService.ts";
+import { AvellanedaStoikovQuoteModel } from "../../../src/domain/quote-models/AvellanedaStoikovQuoteModel.ts";
+import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalculator.ts";
+import { QuoteEngine } from "../../../src/domain/services/QuoteEngine.ts";
+import { VolatilityEstimator } from "../../../src/domain/services/VolatilityEstimator.ts";
+import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
 import type { Fill } from "../../../src/domain/entities/Fill.ts";
 import type { Position } from "../../../src/domain/entities/Position.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
@@ -17,7 +21,6 @@ import type {
   PlacedOrder,
 } from "../../../src/domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../../src/domain/ports/IPositionRepository.ts";
-import { AvellanedaStoikovStrategy } from "../../../src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts";
 import { createSqliteClient } from "../../../src/infrastructure/db/sqlite/client.ts";
 import { SqliteMetricsRepository } from "../../../src/infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
 
@@ -57,26 +60,26 @@ describe("quote-cycle latency", () => {
       configJson: { fixture: "quote-cycle-latency" },
       gitDirty: false,
     });
-    const useCase = new RefreshQuotesUseCase(
-      new FixtureMarketFeed(),
-      new FixtureOrderGateway(),
+    const marketFeed = new FixtureMarketFeed();
+    const orderGateway = new FixtureOrderGateway();
+    const orderReconciler = new ManagedOrderReconciler(orderGateway, {
+      exchangeDropQuoteCooldownMs: 0,
+      maxRestingMs: 0,
+    });
+    const service = new QuoteRefreshService(
+      marketFeed,
       new FixturePositionRepository(),
-      createQuoteEngine(),
+      new SimplePmmStrategy(createQuoteEngine()),
+      new OrderIntentBuilder(),
+      orderReconciler,
+      { defaultTimeInForce: "GTC", postOnly: false },
       metrics,
-      undefined,
-      undefined,
-      {
-        orderManager: {
-          exchangeDropQuoteCooldownMs: 0,
-          maxRestingMs: 0,
-        },
-      },
     );
 
     try {
       await metrics.start();
       for (let cycle = 0; cycle < warmupCycles + measuredCycles; cycle += 1) {
-        await useCase.execute();
+        await service.execute();
         await Bun.sleep(1);
       }
       await metrics.drainAndStop();
@@ -166,15 +169,13 @@ class FixturePositionRepository implements IPositionRepository {
 
 function createQuoteEngine(): QuoteEngine {
   return new QuoteEngine(
-    new AvellanedaStoikovStrategy({ gamma: 0, kappa: 0.02, kInv: 0.01 }),
+    new AvellanedaStoikovQuoteModel({ gamma: 0, kappa: 0.02, kInv: 0.01 }),
     new FairPriceCalculator(0.5),
     new VolatilityEstimator(0.2),
     {
       inventoryScale: 1,
       timeHorizonSec: 1,
       minSpreadBps: 2,
-      slideMarginThreshold: 0.05,
-      defaultTimeInForce: "GTC",
       positionSize: 0.001,
       budgetUsd: 100,
     },

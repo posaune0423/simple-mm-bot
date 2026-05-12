@@ -83,7 +83,7 @@ describe("package scripts", () => {
     expect(existsSync("scripts/lib/paths.ts")).toBe(true);
     expect(drizzleConfig).not.toContain("./src/constants.ts");
     expect(existsSync("scripts/lib/MetricsEvaluation.ts")).toBe(true);
-    expect(existsSync("src/application/MetricsRecorder.ts")).toBe(true);
+    expect(existsSync("src/application/services/MetricsRecorder.ts")).toBe(true);
     expect(existsSync("src/application/TelemetryRecorder.ts")).toBe(false);
     expect(existsSync("src/infrastructure/Telemetry.ts")).toBe(false);
     expect(existsSync("src/infrastructure/TelemetryRepository.ts")).toBe(false);

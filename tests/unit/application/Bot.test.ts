@@ -35,6 +35,144 @@ function captureLogs() {
 }
 
 describe("Bot", () => {
+  test("stop is idempotent and logs the first stop reason", () => {
+    const logs = captureLogs();
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        refreshQuotes: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {},
+        async disconnect() {},
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {},
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    try {
+      bot.stop("signal:SIGINT");
+      bot.stop("signal:SIGTERM");
+      expect(logs.messages).toContain("[application] Bot | STOP_REQUESTED | reason=signal:SIGINT");
+      expect(logs.messages).not.toContain(
+        "[application] Bot | STOP_REQUESTED | reason=signal:SIGTERM",
+      );
+    } finally {
+      logs.restore();
+    }
+  });
+
+  test("start keeps running until its abort signal requests graceful shutdown", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: {
+          execute: async () => {
+            calls.push("risk");
+            return "OK" as const;
+          },
+        },
+        refreshQuotes: {
+          execute: async () => {
+            calls.push("refresh");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      10_000,
+    );
+
+    const run = bot.start({ signal: controller.signal });
+
+    expect(
+      await Promise.race([
+        run.then(() => "completed" as const),
+        Bun.sleep(50).then(() => "pending" as const),
+      ]),
+    ).toBe("pending");
+
+    controller.abort("test_shutdown");
+
+    expect(
+      await Promise.race([
+        run.then(() => "completed" as const),
+        Bun.sleep(500).then(() => "timeout" as const),
+      ]),
+    ).toBe("completed");
+    expect(calls).toContain("cancelAll");
+    expect(calls).toContain("closePosition");
+    expect(calls).toContain("disconnect");
+  });
+
   test("does not build or persist a legacy report after a successful run", async () => {
     const bot = new Bot(
       {

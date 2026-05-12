@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { MarketContextBuilder } from "../../../src/domain/MarketContextBuilder.ts";
+import { MarketContextBuilder } from "../../../src/domain/services/MarketContextBuilder.ts";
 
 describe("MarketContextBuilder", () => {
   test("derives component ages, local spread, and external diff", () => {

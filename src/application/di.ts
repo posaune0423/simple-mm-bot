@@ -9,15 +9,15 @@ import { HyperliquidOhlcvFetcher } from "../adapters/hyperliquid/HyperliquidOhlc
 import { HyperliquidOrderGateway } from "../adapters/hyperliquid/HyperliquidOrderGateway.ts";
 import { HistoricalMarketFeed } from "../adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../adapters/paper/PaperOrderGateway.ts";
-import { FairPriceCalculator } from "../domain/FairPriceCalculator.ts";
-import { QuoteEngine } from "../domain/QuoteEngine.ts";
+import { FairPriceCalculator } from "../domain/services/FairPriceCalculator.ts";
+import { QuoteEngine } from "../domain/services/QuoteEngine.ts";
 import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
-import type { IQuoteQualityRepository } from "../domain/ports/IQuoteQualityRepository.ts";
+import type { IMarkoutFeedbackRepository } from "../domain/ports/IMarkoutFeedbackRepository.ts";
 import type { CapitalMode, IMetricsRepository } from "../domain/ports/IMetricsRepository.ts";
 import { getGitMetadata } from "../infrastructure/GitMetadata.ts";
-import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
+import { VolatilityEstimator } from "../domain/services/VolatilityEstimator.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
@@ -30,9 +30,15 @@ import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeAp
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
-import { MetricsBuffer, MetricsRecorder } from "./MetricsRecorder.ts";
-import type { OrderManagerOptions } from "./OrderManager.ts";
-import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
+import { MetricsBuffer, MetricsRecorder } from "./services/MetricsRecorder.ts";
+import {
+  ManagedOrderReconciler,
+  type ManagedOrderReconcilerOptions,
+} from "./services/ManagedOrderReconciler.ts";
+import { buildQuoteModel } from "./factories/QuoteModelFactory.ts";
+import { buildStrategy } from "./factories/StrategyFactory.ts";
+import { OrderIntentBuilder } from "./services/OrderIntentBuilder.ts";
+import { QuoteRefreshService } from "./services/QuoteRefreshService.ts";
 import { BufferedRecordOhlcvUseCase } from "./usecases/BufferedRecordOhlcvUseCase.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
@@ -40,13 +46,12 @@ import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.
 import { SyncPositionUseCase } from "./usecases/SyncPositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
-import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
 import { UpdatePositionOnFillUseCase } from "./usecases/UpdatePositionOnFillUseCase.ts";
 
 interface Repositories {
   ohlcvRepository: IOhlcvRepository;
   metricsRepository: IMetricsRepository;
-  quoteQualityRepository?: IQuoteQualityRepository;
+  markoutFeedbackRepository?: IMarkoutFeedbackRepository;
 }
 
 interface ResolvedAdapters {
@@ -62,20 +67,30 @@ export class DIContainer {
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
+    const strategy = buildStrategy({
+      kind: "simple_pmm",
+      quoteEngine,
+      markoutFeedbackGate: this.config.quoteEngine.qualityGate,
+    });
     const metricsBuffer = this.buildMetricsBuffer();
     const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
+    const orderReconciler = new ManagedOrderReconciler(gateway, this.orderReconcilerOptions());
 
     return new Bot(
       {
-        refreshQuotes: new RefreshQuotesUseCase(
+        refreshQuotes: new QuoteRefreshService(
           feed,
-          gateway,
           positionRepository,
-          quoteEngine,
+          strategy,
+          new OrderIntentBuilder(),
+          orderReconciler,
+          {
+            defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
+            postOnly: this.config.quoteEngine.defaultTimeInForce === "ALO",
+          },
           metrics,
-          repositories.quoteQualityRepository,
+          repositories.markoutFeedbackRepository,
           this.config.quoteEngine.qualityGate,
-          { orderManager: this.orderManagerOptions() },
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         initializePosition: new InitializePositionUseCase(
@@ -118,9 +133,9 @@ export class DIContainer {
   }
 
   private buildQuoteEngine(): QuoteEngine {
-    const strategy = buildQuotingStrategy(this.config.quoteEngine.strategy);
+    const quoteModel = buildQuoteModel(this.config.quoteEngine.strategy);
     return new QuoteEngine(
-      strategy,
+      quoteModel,
       new FairPriceCalculator(
         this.config.quoteEngine.markWeight,
         this.config.quoteEngine.bookPriceSource,
@@ -130,8 +145,6 @@ export class DIContainer {
         inventoryScale: this.config.quoteEngine.inventoryScale,
         timeHorizonSec: this.config.quoteEngine.timeHorizonSec,
         minSpreadBps: this.config.quoteEngine.minSpreadBps,
-        slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
-        defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
         budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
         bidSizeMultiplier: this.config.quoteEngine.sizing.bidSizeMultiplier,
@@ -160,7 +173,7 @@ export class DIContainer {
     return {
       ohlcvRepository: new SqliteOhlcvRepository(client.db),
       metricsRepository,
-      quoteQualityRepository: metricsRepository,
+      markoutFeedbackRepository: metricsRepository,
     };
   }
 
@@ -175,7 +188,7 @@ export class DIContainer {
         venue: this.config.venue,
         capitalMode: resolveCapitalMode(this.config),
         market: this.config.market,
-        strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
+        strategyName: buildQuoteModel(this.config.quoteEngine.strategy).name,
         configJson: redactConfig(this.config),
         ...getGitMetadata(),
       },
@@ -303,8 +316,8 @@ export class DIContainer {
     return secretKey;
   }
 
-  private orderManagerOptions(): Partial<OrderManagerOptions> {
-    const options: Partial<OrderManagerOptions> = {};
+  private orderReconcilerOptions(): Partial<ManagedOrderReconcilerOptions> {
+    const options: Partial<ManagedOrderReconcilerOptions> = {};
     if (this.config.bot.maxRestingMs !== undefined) {
       options.maxRestingMs = this.config.bot.maxRestingMs;
     }

@@ -2,8 +2,8 @@ import type { ResultAsync } from "neverthrow";
 import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
 
-import type { AvellanedaStoikovParams } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
-import type { BookPriceSource } from "./domain/FairPriceCalculator.ts";
+import type { AvellanedaStoikovParams } from "./domain/quote-models/AvellanedaStoikovParams.ts";
+import type { BookPriceSource } from "./domain/services/FairPriceCalculator.ts";
 import { env } from "./env.ts";
 import type { AppError } from "./utils/errors.ts";
 import { createAppError } from "./utils/errors.ts";
@@ -34,7 +34,7 @@ const quoteLevelSchema = v.object({
   halfSpreadBps: positiveNumberSchema,
   sizeUsd: positiveNumberSchema,
 });
-const quoteQualityGateSchema = v.optional(
+const markoutFeedbackGateSchema = v.optional(
   v.object({
     enabled: v.optional(v.boolean(), false),
     minAverageMarkoutBps: v.optional(v.number(), 0),
@@ -82,7 +82,7 @@ const commonConfigEntries = {
     defaultTimeInForce: v.optional(timeInForceSchema, "ALO"),
     sizing: quoteSizingSchema,
     levels: v.optional(v.pipe(v.array(quoteLevelSchema), v.minLength(1))),
-    qualityGate: quoteQualityGateSchema,
+    qualityGate: markoutFeedbackGateSchema,
     strategy: strategySchema,
   }),
   risk: v.object({

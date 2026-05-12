@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { VolatilityEstimator } from "../../../src/domain/VolatilityEstimator.ts";
+import { VolatilityEstimator } from "../../../src/domain/services/VolatilityEstimator.ts";
 
 describe("VolatilityEstimator", () => {
   test("ignores non-monotonic timestamps instead of treating them as a 1ms move", () => {

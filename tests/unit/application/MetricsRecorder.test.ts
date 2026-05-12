@@ -4,7 +4,7 @@ import {
   MetricsBuffer,
   MetricsFlushLoop,
   MetricsRecorder,
-} from "../../../src/application/MetricsRecorder.ts";
+} from "../../../src/application/services/MetricsRecorder.ts";
 import type { Fill } from "../../../src/domain/entities/Fill.ts";
 import type {
   AccountStateObservationFact,

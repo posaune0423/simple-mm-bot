@@ -39,10 +39,12 @@ metrics fact contract と agent/operator tool logic は core market making domai
 bot の 1 tick は以下の責務順で動作する。
 
 1. `GuardRiskUseCase` を実行する
-2. `OK` の場合のみ `RefreshQuotesUseCase` を実行する
-3. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
-4. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
-5. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
+2. event task を drain する
+3. 必要なら `SyncPositionUseCase` で venue position を同期する
+4. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
+5. risk が `OK` かつ reduce 未実行の場合だけ `QuoteRefreshService` を実行する
+6. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
+7. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
 
 この流れにより、mode や venue を知らない共通の bot ループを維持する。
 
@@ -75,11 +77,13 @@ bot の 1 tick は以下の責務順で動作する。
 - `IPositionRepository`
 - `IOhlcvRepository`
 
-### Strategy / Quote Engine
+### Strategy / Quote Model / Quote Engine
 
-Strategy は `quoteEngine.strategy.type: avellaneda-stoikov` を primary path にする。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
-`QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce`、任意の `qualityGate` controls を統合して最終 quote を生成する。
-`QuoteEngine` は `IQuotingStrategy` のみへ依存し、具体 strategy を import しない。
+`AvellanedaStoikovQuoteModel` は pricing model であり、bot behavior strategy ではない。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
+`SimplePmmStrategy` は quote quality を見て side spec を作り、`QuoteEngine` に quote 計算を委譲する。
+`QuoteEngine` は fair price、volatility、quote model output、quote sizing、budget/notional cap、exposure intent を統合して新 `Quote` value object を生成する。
+time-in-force、post-only、reduce-only、client order id は quote ではなく `OrderIntentBuilder` / `OrderIntent` 側で扱う。
+`QuoteEngine` は `QuoteModel` interface のみへ依存し、具体 quote model を import しない。
 
 主要パラメータ:
 
@@ -121,8 +125,8 @@ Bullet の DI path は持たない。
 
 #### Quote Order Reconcile
 
-`RefreshQuotesUseCase` は通常 tick で blanket `cancelAll()` を行わない。
-`OrderManager` が前回の quote order と今回の target order を比較し、価格/サイズ差分が閾値以上の order だけ cancel/replace する。
+`QuoteRefreshService` は通常 tick で blanket `cancelAll()` を行わない。
+`Strategy` が `Quote` を返し、`OrderIntentBuilder` が venue-neutral な `OrderIntent[]` へ変換し、`ManagedOrderReconciler` が前回 order と今回 intent を比較して価格/サイズ差分が閾値以上の order だけ cancel/replace する。
 `Bot` cleanup は open order cleanup のため `cancelAll()` を実行し、`shutdown.closePositionPolicy` が `emergency_only` の場合は通常停止で market close を行わず、emergency stop 時だけ close use case を実行する。
 
 ## Adapter 設計

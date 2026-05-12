@@ -437,7 +437,7 @@ describe("SqliteMetricsRepository", () => {
     expect(markout?.markout_300s_bps).toBe(1100);
   });
 
-  test("reads recent side quality from multi-horizon fill markouts", async () => {
+  test("reads recent side markout feedback from multi-horizon fill markouts", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
 
@@ -506,7 +506,7 @@ describe("SqliteMetricsRepository", () => {
       filledAt: 1_000,
     });
 
-    const quality = await repository.getRecentSideQuality({
+    const quality = await repository.getRecentSideMarkoutFeedback({
       market: "BTC-USD",
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
@@ -524,7 +524,7 @@ describe("SqliteMetricsRepository", () => {
     ]);
   });
 
-  test("reads side quality across recent runs instead of resetting on a new run", async () => {
+  test("reads side markout feedback across recent runs instead of resetting on a new run", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
 
@@ -637,7 +637,7 @@ describe("SqliteMetricsRepository", () => {
       status: "running",
     });
 
-    const quality = await repository.getRecentSideQuality({
+    const quality = await repository.getRecentSideMarkoutFeedback({
       market: "BTC-USD",
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
@@ -718,7 +718,7 @@ describe("SqliteMetricsRepository", () => {
       filledAt: 1_000,
     });
 
-    const quality = await repository.getRecentSideQuality({
+    const quality = await repository.getRecentSideMarkoutFeedback({
       market: "BTC-USD",
       lookbackFills: 100,
       minFilledAt: 2_000,

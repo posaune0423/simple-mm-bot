@@ -16,26 +16,41 @@ simple-mm-bot/
 │   ├── application/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
-│   │   ├── MetricsRecorder.ts
-│   │   ├── OrderManager.ts
-│   │   ├── QuotingStrategyFactory.ts
-│   │   ├── shutdown.ts
+│   │   ├── factories/
+│   │   │   ├── QuoteModelFactory.ts
+│   │   │   └── StrategyFactory.ts
+│   │   ├── services/
+│   │   │   ├── ManagedOrderReconciler.ts
+│   │   │   ├── MetricsRecorder.ts
+│   │   │   ├── OrderIntentBuilder.ts
+│   │   │   ├── OrderReconciler.ts
+│   │   │   └── QuoteRefreshService.ts
 │   │   └── usecases/
 │   │       ├── ClosePositionUseCase.ts
 │   │       ├── GuardRiskUseCase.ts
 │   │       ├── RecordOhlcvUseCase.ts
 │   │       ├── ReduceInventoryUseCase.ts
-│   │       ├── RefreshQuotesUseCase.ts
 │   │       └── UpdatePositionOnFillUseCase.ts
 │   ├── domain/
 │   │   ├── entities/
 │   │   ├── ports/
-│   │   ├── strategy/
-│   │   ├── FairPriceCalculator.ts
-│   │   ├── MarketContext.ts
-│   │   ├── MarketContextBuilder.ts
-│   │   ├── QuoteEngine.ts
-│   │   └── VolatilityEstimator.ts
+│   │   ├── quote-models/
+│   │   │   ├── AvellanedaStoikovQuoteModel.ts
+│   │   │   └── QuoteModel.ts
+│   │   ├── services/
+│   │   │   ├── FairPriceCalculator.ts
+│   │   │   ├── MarketContextBuilder.ts
+│   │   │   ├── QuoteEngine.ts
+│   │   │   └── VolatilityEstimator.ts
+│   │   ├── strategies/
+│   │   │   ├── SimplePmmStrategy.ts
+│   │   │   └── Strategy.ts
+│   │   └── value-objects/
+│   │       ├── OrderIntent.ts
+│   │       ├── Quote.ts
+│   │       ├── QuoteLeg.ts
+│   │       ├── SideMarkoutFeedback.ts
+│   │       └── StrategyDecision.ts
 │   ├── adapters/
 │   │   ├── bulk/
 │   │   │   ├── BulkMarketFeed.ts
@@ -98,9 +113,9 @@ simple-mm-bot/
 │   ├── ARCHITECTURE.md
 │   ├── EDGE_DISCOVERY_LOOP.md
 │   ├── PRD.md
+│   ├── STRATEGY.md
 │   ├── TECH.md
 │   ├── STRUCTURE.md
-│   ├── storategy.md
 │   ├── research/
 │   ├── venue/
 │   │   └── bulk/
@@ -124,9 +139,9 @@ simple-mm-bot/
 - env を直接読まない
 - adapter payload を entity に持ち込まない
 
-`QuoteEngine` は strategy、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
-`MarketContext` / `MarketContextBuilder` は component freshness、外部価格差、LOB/risk context など venue 非依存の market context を構築する純粋 domain code として置く。
-Strategy は `src/domain/strategy/*` に pure domain code として置き、`QuotingStrategyFactory` が config の `quoteEngine.strategy.type` から具象実装を組み立てる。
+`QuoteEngine` は quote model、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
+`MarketContextBuilder` は component freshness、外部価格差、LOB/risk context など venue 非依存の market context を構築する純粋 domain service。`MarketContext` 型は builder の出力型として同じ file に置き、`domain/market` のような曖昧な bucket は作らない。
+quote model は `src/domain/quote-models/*`、bot behavior strategy は `src/domain/strategies/*` に pure domain code として置く。`StrategyDecision` のような返り値ADTは `src/domain/value-objects/*` に置き、`strategies/` には `Strategy` contract と具象 strategy 実装だけを置く。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
 metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
@@ -142,9 +157,10 @@ bot runtime と use case orchestration を置く。
 - venue protocol や SQL を直接書かない
 
 `di.ts` が具体実装を知る唯一の application 境界。
-`OrderManager.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
+`QuoteRefreshService` は Strategy、OrderIntentBuilder、OrderReconciler を組み合わせる orchestration service。旧 `RefreshQuotesUseCase` の責務はここへ分解済み。
+`ManagedOrderReconciler.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
 
-`shutdown.ts` は runtime shutdown の共通処理を持つ。position close などの取引処理は use case 経由で実行し、signal handling から venue protocol を直接触らない。
+process signal handling は `main.ts` の boundary に置き、signal では `AbortController` を abort するだけにする。`Bot.start({ signal })` が stop request として受け取り、position close などの取引処理は `Bot` cleanup から use case 経由で実行する。signal handling から venue protocol を直接触らない。
 
 ### `src/adapters/`
 
@@ -197,7 +213,7 @@ DB など外部 storage の詳細を置く。
 - `telemetry_events`, `markouts`, `runtime_incidents` は作らず、分析結果は view で計算する
 - `quote_decisions` と `runtime_health_events` は edge 探索に必要な raw fact として保存し、bucket別EVは view で再集計する
 
-### `src/application/MetricsRecorder.ts`
+### `src/application/services/MetricsRecorder.ts`
 
 Bot runtime から run metadata、orderbook snapshot、submitted order、trade fill、account state observation を保存する。
 Bulk beta live は runtime mode は `live` のまま、metrics 上の `capitalMode` を `beta_mock` として明示する。
@@ -288,7 +304,7 @@ secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
 
 `docs/venue/` には venue 固有の exchange rule、fee、risk、execution semantics を置く。
 `docs/venue/bulk/README.md` は Bulk Trade の maker / taker fee、commission、HFMM、STP、margin、liquidation ルールの参照資料として使う。
-`docs/storategy.md` は current strategy flow、quote formula、Bulk live parameters、inventory reduction policy の参照資料として使う。
+`docs/STRATEGY.md` は current strategy flow、quote formula、Bulk live parameters、inventory reduction policy の参照資料として使う。
 `docs/research/` は特定 run や market regime の ad hoc 調査結果を、再現可能な data source / SQL とともに保存する。
 runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.md` とこの文書に置く。
 

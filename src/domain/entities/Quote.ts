@@ -1,6 +1,6 @@
 export type OrderSide = "buy" | "sell";
 export type OrderTimeInForce = "ALO" | "GTC" | "IOC";
-export type QuoteSideIntent = "open_quote" | "reduce_inventory" | "disabled";
+export type ExposureIntent = "increase_exposure" | "reduce_exposure" | "disabled";
 
 export interface QuoteLevel {
   level: number;
@@ -9,8 +9,8 @@ export interface QuoteLevel {
   ask: number;
   bidSize: number;
   askSize: number;
-  bidIntent?: QuoteSideIntent;
-  askIntent?: QuoteSideIntent;
+  bidIntent?: ExposureIntent;
+  askIntent?: ExposureIntent;
   bidControlReasons?: string[];
   askControlReasons?: string[];
 }
@@ -20,8 +20,8 @@ export interface Quote {
   ask: number;
   bidSize: number;
   askSize: number;
-  bidIntent?: QuoteSideIntent;
-  askIntent?: QuoteSideIntent;
+  bidIntent?: ExposureIntent;
+  askIntent?: ExposureIntent;
   bidSizeMultiplier?: number;
   askSizeMultiplier?: number;
   bidDistanceMultiplier?: number;

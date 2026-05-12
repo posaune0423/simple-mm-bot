@@ -1,10 +1,10 @@
 import { eq, sql } from "drizzle-orm";
 
 import type {
-  IQuoteQualityRepository,
-  QuoteQualityQuery,
-  QuoteSideQuality,
-} from "../../../../domain/ports/IQuoteQualityRepository.ts";
+  IMarkoutFeedbackRepository,
+  MarkoutFeedbackQuery,
+  SideMarkoutFeedback,
+} from "../../../../domain/ports/IMarkoutFeedbackRepository.ts";
 import type {
   AccountStateObservationFact,
   IMetricsRepository,
@@ -36,7 +36,7 @@ type MarkoutRow = {
   markout_300s_bps: number | null;
 };
 
-export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualityRepository {
+export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeedbackRepository {
   constructor(private readonly db: SqliteDb) {}
 
   async startRun(run: TradingRunFact): Promise<void> {
@@ -159,7 +159,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
     return row === undefined ? null : deserializeRun(row);
   }
 
-  async getRecentSideQuality(query: QuoteQualityQuery): Promise<QuoteSideQuality[]> {
+  async getRecentSideMarkoutFeedback(query: MarkoutFeedbackQuery): Promise<SideMarkoutFeedback[]> {
     const minFilledAt = query.minFilledAt ?? null;
     const rows = this.db.all<MarkoutRow>(
       sql`
