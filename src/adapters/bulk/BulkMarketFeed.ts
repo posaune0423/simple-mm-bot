@@ -236,10 +236,15 @@ function crossPositionQty(positions: BulkPositionEntry[] | undefined, market: st
 function crossPositionUnrealizedPnl(
   positions: BulkPositionEntry[] | undefined,
   market: string,
-): number {
-  return (
-    positions?.find((entry) => entry.symbol === market && entry.iso !== true)?.unrealizedPnl ?? 0
-  );
+): number | null {
+  const entry = positions?.find((e) => e.symbol === market && e.iso !== true);
+  if (entry === undefined) {
+    return null;
+  }
+  if (entry.unrealizedPnl === undefined) {
+    return null;
+  }
+  return entry.unrealizedPnl;
 }
 
 function candlesOf(message: unknown): BulkCandle[] {
