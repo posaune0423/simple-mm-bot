@@ -284,7 +284,13 @@ describe("BulkMarketFeed", () => {
           accountCalls += 1;
           return {
             margin: { totalBalance: 1000, marginUsed: accountCalls === 1 ? 250 : 100 },
-            positions: [{ symbol: "BTC-USD", size: accountCalls === 1 ? 0.1 : -0.2 }],
+            positions: [
+              {
+                symbol: "BTC-USD",
+                size: accountCalls === 1 ? 0.1 : -0.2,
+                unrealizedPnl: accountCalls === 1 ? 3.5 : 12.25,
+              },
+            ],
           };
         },
       },
@@ -313,8 +319,59 @@ describe("BulkMarketFeed", () => {
     expect(polled.timestamp).toBe(initial.timestamp);
     expect(polled.marginRatio).toBe(0.9);
     expect(polled.positionQty).toBe(-0.2);
+    expect(polled.unrealizedPnl).toBe(12.25);
     expect(polled.accountUpdatedAt).toBeGreaterThanOrEqual(initial.accountUpdatedAt ?? 0);
     expect(polled.positionUpdatedAt).toBeGreaterThanOrEqual(initial.positionUpdatedAt ?? 0);
+  });
+
+  test("poll leaves unrealizedPnl null when the venue omits it for an open position", async () => {
+    const handlers: Array<(message: unknown) => void> = [];
+    let accountCalls = 0;
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
+            timestamp: 1_700_000_000_000 * 1_000_000,
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          accountCalls += 1;
+          return {
+            margin: { totalBalance: 1000, marginUsed: accountCalls === 1 ? 250 : 100 },
+            positions: [{ symbol: "BTC-USD", size: accountCalls === 1 ? 0.1 : -0.2 }],
+          };
+        },
+      },
+      ws: {
+        async subscribe(_subscription: unknown, handler: (message: unknown) => void) {
+          handlers.push(handler);
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "BTC-USD",
+      accountId: "account",
+      accountPollIntervalMs: 1,
+    });
+
+    await feed.connect();
+    const initial = await feed.getSnapshot();
+    await waitFor(() => accountCalls >= 2);
+    const polled = await feed.getSnapshot();
+    await feed.disconnect();
+
+    expect(initial.positionQty).toBe(0.1);
+    expect(initial.unrealizedPnl).toBeNull();
+    expect(polled.positionQty).toBe(-0.2);
+    expect(polled.unrealizedPnl).toBeNull();
   });
 
   test("does not start overlapping account polls when the previous poll is still in flight", async () => {

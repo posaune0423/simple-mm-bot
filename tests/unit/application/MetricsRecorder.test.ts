@@ -376,6 +376,7 @@ describe("MetricsRecorder", () => {
       markPrice: 100,
       timestamp: 1000,
       marginRatio: 0.9,
+      unrealizedPnl: 12.25,
     });
     const fill: Fill = {
       id: "fill-1",
@@ -410,6 +411,7 @@ describe("MetricsRecorder", () => {
         market: "BTC-USD",
         observedAt: 1000,
         marginRatio: 0.9,
+        unrealizedPnl: 12.25,
       }),
     ]);
     expect(repository.fills).toEqual([
@@ -714,6 +716,7 @@ describe("MetricsRecorder", () => {
         markPrice: 100,
         timestamp: 1234,
         marginRatio: 0.8,
+        unrealizedPnl: 6.5,
       },
       -0.25,
       {
@@ -737,6 +740,7 @@ describe("MetricsRecorder", () => {
         observedAt: 1234,
         positionQty: -0.25,
         marginRatio: 0.8,
+        unrealizedPnl: 6.5,
         rawJson: expect.objectContaining({
           source: "quote",
           quotedSpreadBps: 100.50251256281408,

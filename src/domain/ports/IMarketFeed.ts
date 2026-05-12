@@ -24,6 +24,7 @@ export interface MarketSnapshot extends CandleLike {
   accountUpdatedAt?: number | null;
   positionUpdatedAt?: number | null;
   positionQty?: number | null;
+  unrealizedPnl?: number | null;
   volume?: number;
   marginRatio: number | null;
   availableMarginUsd?: number | null;

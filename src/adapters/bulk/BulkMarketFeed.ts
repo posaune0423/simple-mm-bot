@@ -20,6 +20,7 @@ import { retryTransientBulk } from "../../utils/transientBulk.ts";
 type BulkPositionEntry = {
   symbol?: string;
   size?: number;
+  unrealizedPnl?: number;
   iso?: boolean;
 };
 type BulkAccount = {
@@ -31,6 +32,7 @@ interface BulkMarginState {
   availableMarginUsd: number | null;
   accountUpdatedAt: number | null;
   positionQty: number | null;
+  unrealizedPnl: number | null;
   positionUpdatedAt: number | null;
 }
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
@@ -195,6 +197,7 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     accountUpdatedAt: snapshot.accountUpdatedAt,
     positionUpdatedAt: snapshot.positionUpdatedAt,
     positionQty: snapshot.positionQty,
+    unrealizedPnl: snapshot.unrealizedPnl,
     marginRatio: snapshot.marginRatio,
     availableMarginUsd: snapshot.availableMarginUsd,
   };
@@ -228,6 +231,20 @@ function bookOf(message: unknown): BulkBook | null {
 
 function crossPositionQty(positions: BulkPositionEntry[] | undefined, market: string): number {
   return positions?.find((entry) => entry.symbol === market && entry.iso !== true)?.size ?? 0;
+}
+
+function crossPositionUnrealizedPnl(
+  positions: BulkPositionEntry[] | undefined,
+  market: string,
+): number | null {
+  const entry = positions?.find((e) => e.symbol === market && e.iso !== true);
+  if (entry === undefined) {
+    return null;
+  }
+  if (entry.unrealizedPnl === undefined) {
+    return null;
+  }
+  return entry.unrealizedPnl;
 }
 
 function candlesOf(message: unknown): BulkCandle[] {
@@ -431,6 +448,7 @@ export class BulkMarketFeed implements IMarketFeed {
       accountUpdatedAt: marginState.accountUpdatedAt,
       positionUpdatedAt: marginState.positionUpdatedAt,
       positionQty: marginState.positionQty,
+      unrealizedPnl: marginState.unrealizedPnl,
       marginRatio: marginState.marginRatio,
       availableMarginUsd: marginState.availableMarginUsd,
     };
@@ -664,6 +682,7 @@ export class BulkMarketFeed implements IMarketFeed {
       accountUpdatedAt: marginState.accountUpdatedAt,
       positionUpdatedAt: marginState.positionUpdatedAt,
       positionQty: marginState.positionQty,
+      unrealizedPnl: marginState.unrealizedPnl,
       marginRatio: marginState.marginRatio,
       availableMarginUsd: marginState.availableMarginUsd,
     };
@@ -680,6 +699,7 @@ export class BulkMarketFeed implements IMarketFeed {
         availableMarginUsd: null,
         accountUpdatedAt: null,
         positionQty: null,
+        unrealizedPnl: null,
         positionUpdatedAt: null,
       };
     }
@@ -708,6 +728,7 @@ export class BulkMarketFeed implements IMarketFeed {
       availableMarginUsd,
       accountUpdatedAt: observedAt,
       positionQty: crossPositionQty(account.positions, this.params.market),
+      unrealizedPnl: crossPositionUnrealizedPnl(account.positions, this.params.market),
       positionUpdatedAt: observedAt,
     };
   }
