@@ -1,4 +1,5 @@
 import type { Result } from "neverthrow";
+import type { StrategyError } from "../errors/DomainError";
 import type { MarketSnapshot } from "../ports/IMarketFeed";
 import type { PositionSnapshot } from "../value-objects/PositionSnapshot";
 import type { Quote } from "../value-objects/Quote";
@@ -73,37 +74,6 @@ export type StrategyInput = Readonly<{
   markoutFeedback: readonly SideMarkoutFeedback[];
   nowMs: number;
 }>;
-
-export type StrategyError = StrategyQuoteFailedError | StrategyInputInvalidError;
-
-export abstract class StrategyErrorBase extends Error {
-  abstract readonly code: string;
-
-  protected constructor(
-    readonly strategy: string,
-    message: string,
-    options: { cause?: unknown } = {},
-  ) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
-    this.name = new.target.name;
-  }
-}
-
-export class StrategyQuoteFailedError extends StrategyErrorBase {
-  readonly code = "strategy.quote_failed";
-
-  constructor(strategy: string, message: string, options: { cause?: unknown } = {}) {
-    super(strategy, message, options);
-  }
-}
-
-export class StrategyInputInvalidError extends StrategyErrorBase {
-  readonly code = "strategy.input_invalid";
-
-  constructor(strategy: string, message: string, options: { cause?: unknown } = {}) {
-    super(strategy, message, options);
-  }
-}
 
 export interface Strategy {
   readonly name: string;

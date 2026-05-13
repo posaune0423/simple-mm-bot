@@ -82,6 +82,95 @@ export class InvalidOrderIntentError extends DomainError {
   }
 }
 
+type DomainErrorOptions = {
+  context?: DomainErrorContext;
+  cause?: unknown;
+};
+
+export abstract class QuoteModelError extends DomainError {
+  protected constructor(
+    readonly model: string,
+    message: string,
+    options: DomainErrorOptions = {},
+  ) {
+    super(message, {
+      cause: options.cause,
+      context: { ...options.context, model },
+    });
+  }
+}
+
+export class InvalidQuoteModelInputError extends QuoteModelError {
+  readonly code = "quote_model.invalid_input";
+
+  constructor(model: string, message: string, options: DomainErrorOptions = {}) {
+    super(model, message, options);
+  }
+}
+
+export class InvalidModelQuoteError extends QuoteModelError {
+  readonly code = "quote_model.invalid_model_quote";
+
+  constructor(model: string, message: string, options: DomainErrorOptions = {}) {
+    super(model, message, options);
+  }
+}
+
+export class InvalidQuoteEngineInputError extends DomainError {
+  readonly code = "quote_engine.invalid_input";
+
+  constructor(message: string, options: DomainErrorOptions = {}) {
+    super(message, options);
+  }
+}
+
+export class QuoteModelFailedError extends DomainError {
+  readonly code = "quote_engine.quote_model_failed";
+
+  constructor(
+    readonly model: string,
+    cause: QuoteModelError,
+  ) {
+    super(cause.message, {
+      cause,
+      context: { model },
+    });
+  }
+}
+
+export type QuoteEngineError = DomainError;
+
+export abstract class StrategyErrorBase extends DomainError {
+  protected constructor(
+    readonly strategy: string,
+    message: string,
+    options: DomainErrorOptions = {},
+  ) {
+    super(message, {
+      cause: options.cause,
+      context: { ...options.context, strategy },
+    });
+  }
+}
+
+export class StrategyQuoteFailedError extends StrategyErrorBase {
+  readonly code = "strategy.quote_failed";
+
+  constructor(strategy: string, message: string, options: DomainErrorOptions = {}) {
+    super(strategy, message, options);
+  }
+}
+
+export class StrategyInputInvalidError extends StrategyErrorBase {
+  readonly code = "strategy.input_invalid";
+
+  constructor(strategy: string, message: string, options: DomainErrorOptions = {}) {
+    super(strategy, message, options);
+  }
+}
+
+export type StrategyError = StrategyQuoteFailedError | StrategyInputInvalidError;
+
 export function isDomainError(error: unknown): error is DomainError {
   return error instanceof DomainError;
 }

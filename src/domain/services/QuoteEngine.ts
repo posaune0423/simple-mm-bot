@@ -1,7 +1,10 @@
 import { err, ok, type Result } from "neverthrow";
-import type { DomainError } from "../errors/DomainError.ts";
+import {
+  InvalidQuoteEngineInputError,
+  QuoteModelFailedError,
+  type QuoteEngineError,
+} from "../errors/DomainError.ts";
 import type { QuoteModel } from "../quote-models/QuoteModel.ts";
-import type { QuoteModelError } from "../quote-models/QuoteModel.ts";
 import type { MarketSnapshot } from "../ports/IMarketFeed.ts";
 import type { ExposureIntent, OrderSide, QuoteSide } from "../value-objects/QuoteLeg.ts";
 import { QuoteLeg } from "../value-objects/QuoteLeg.ts";
@@ -31,32 +34,6 @@ export type QuoteEngineInput = Readonly<{
   position: PositionSnapshot;
   sideSpecs: QuoteSideSpecs;
 }>;
-
-export type QuoteEngineError = DomainError | InvalidQuoteEngineInputError | QuoteModelFailedError;
-
-export class InvalidQuoteEngineInputError extends Error {
-  readonly code = "quote_engine.invalid_input";
-
-  constructor(
-    message: string,
-    readonly context: Readonly<Record<string, string | number | boolean | null>> = {},
-  ) {
-    super(message);
-    this.name = "InvalidQuoteEngineInputError";
-  }
-}
-
-export class QuoteModelFailedError extends Error {
-  readonly code = "quote_engine.quote_model_failed";
-
-  constructor(
-    readonly model: string,
-    cause: QuoteModelError,
-  ) {
-    super(cause.message, { cause });
-    this.name = "QuoteModelFailedError";
-  }
-}
 
 export type QuoteEngineConfig = Readonly<{
   inventoryScale: number;
@@ -111,7 +88,7 @@ export class QuoteEngine {
     if (!Number.isFinite(sigma) || sigma < 0) {
       return err(
         new InvalidQuoteEngineInputError(`sigma must be finite and non-negative: ${sigma}`, {
-          sigma,
+          context: { sigma },
         }),
       );
     }

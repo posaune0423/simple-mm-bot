@@ -1,15 +1,18 @@
 import { err, type Result } from "neverthrow";
-import type { AvellanedaStoikovParams } from "./AvellanedaStoikovParams";
-import { BasisPoints } from "../value-objects/BasisPoints";
-import { Price } from "../value-objects/Price";
 import {
   InvalidModelQuoteError,
   InvalidQuoteModelInputError,
-  ModelQuote,
-  type QuoteModel,
   type QuoteModelError,
-  type QuoteModelInput,
-} from "./QuoteModel";
+} from "../errors/DomainError";
+import { BasisPoints } from "../value-objects/BasisPoints";
+import { Price } from "../value-objects/Price";
+import { ModelQuote, type QuoteModel, type QuoteModelInput } from "./QuoteModel";
+
+export interface AvellanedaStoikovParams {
+  gamma: number;
+  kappa: number;
+  kInv: number;
+}
 
 export class AvellanedaStoikovQuoteModel implements QuoteModel {
   readonly name = "avellaneda-stoikov";

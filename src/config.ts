@@ -2,7 +2,7 @@ import type { ResultAsync } from "neverthrow";
 import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
 
-import type { AvellanedaStoikovParams } from "./domain/quote-models/AvellanedaStoikovParams.ts";
+import type { AvellanedaStoikovParams } from "./domain/quote-models/AvellanedaStoikovQuoteModel.ts";
 import type { BookPriceSource } from "./domain/services/FairPriceCalculator.ts";
 import { env } from "./env.ts";
 import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";

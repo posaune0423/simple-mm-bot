@@ -1,17 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildStrategy } from "../../../src/application/factories/StrategyFactory";
+import type { QuoteEngine } from "../../../src/domain/services/QuoteEngine";
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy";
 
 describe("buildStrategy", () => {
   test("builds the baseline SimplePmmStrategy", () => {
+    const quoteEngine: Pick<QuoteEngine, "compute"> = {
+      compute() {
+        throw new Error("not called");
+      },
+    };
+
     const strategy = buildStrategy({
       kind: "simple_pmm",
-      quoteEngine: {
-        compute() {
-          throw new Error("not called");
-        },
-      } as never,
+      quoteEngine,
       markoutFeedbackGate: {
         enabled: false,
         minAverageMarkoutBps: 0,

@@ -148,7 +148,7 @@ flowchart LR
 Validation 責務:
 
 - `src/env.ts` と `src/config.ts` だけが Valibot schema を持つ。
-- domain strategy parameter file は pure type のみ。`AvellanedaStoikovParams` の制約は config validation 側で検証する。
+- A-S 固有のparams型は `AvellanedaStoikovQuoteModel.ts` に colocate し、制約は config validation 側で検証する。
 - `@t3-oss/env-core` は Valibot schema で env を検証し、空文字は `undefined` として扱う。
 
 ---

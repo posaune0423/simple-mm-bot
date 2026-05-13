@@ -17,6 +17,7 @@ const removedLegacyFiles = [
   "src/domain/QuoteQuality.ts",
   "src/domain/strategy/IQuotingStrategy.ts",
   "src/domain/strategy/avellaneda-stoikov/AvellanedaStoikovStrategy.ts",
+  "src/domain/quote-models/AvellanedaStoikovParams.ts",
   "src/domain/decisions/StrategyDecision.ts",
   "src/domain/decisions/RiskDecision.ts",
   "src/application/OrderManager.ts",
@@ -120,6 +121,23 @@ describe("refactor architecture boundaries", () => {
     expect(result).toContain("export function combine");
     expect(result).toContain("export function sequence");
     expect(result).toContain("export function combineProperties");
+  });
+
+  test("domain calculation errors are centralized under domain errors", () => {
+    const domainError = readFileSync(join(root, "src/domain/errors/DomainError.ts"), "utf8");
+    expect(domainError).toContain("export abstract class QuoteModelError");
+    expect(domainError).toContain("export type QuoteEngineError");
+    expect(domainError).toContain("export abstract class StrategyErrorBase");
+
+    for (const file of [
+      "src/domain/quote-models/QuoteModel.ts",
+      "src/domain/services/QuoteEngine.ts",
+      "src/domain/strategies/Strategy.ts",
+    ]) {
+      const source = readFileSync(join(root, file), "utf8");
+      expect(source, file).not.toMatch(/class \w*Error\b/);
+      expect(source, file).toContain("../errors/DomainError");
+    }
   });
 
   test("error classes are defined at their owning layer boundaries", () => {

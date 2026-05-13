@@ -1,16 +1,14 @@
 import type { Result } from "neverthrow";
-import type {
-  QuoteEngine,
-  QuoteEngineError,
-  QuoteEngineInput,
-  QuoteSideSpecs,
-} from "../services/QuoteEngine";
+import {
+  StrategyQuoteFailedError,
+  type QuoteEngineError,
+  type StrategyError,
+} from "../errors/DomainError";
+import type { QuoteEngine, QuoteEngineInput, QuoteSideSpecs } from "../services/QuoteEngine";
 import {
   StrategyDecision,
-  StrategyQuoteFailedError,
   type SideMarkoutFeedback,
   type Strategy,
-  type StrategyError,
   type StrategyInput,
 } from "./Strategy";
 
@@ -27,11 +25,13 @@ export interface SimplePmmStrategyConfig {
   markoutFeedbackGate?: MarkoutFeedbackGateConfig;
 }
 
+type QuoteEngineDependency = Pick<QuoteEngine, "compute">;
+
 export class SimplePmmStrategy implements Strategy {
   readonly name = "simple_pmm";
 
   constructor(
-    private readonly quoteEngine: QuoteEngine,
+    private readonly quoteEngine: QuoteEngineDependency,
     private readonly config: SimplePmmStrategyConfig = {},
   ) {}
 

@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "neverthrow";
-import { InvalidQuoteError, type DomainError } from "../errors/DomainError";
+import { InvalidQuoteError, type DomainError, type QuoteModelError } from "../errors/DomainError";
 import type { BasisPoints } from "../value-objects/BasisPoints";
 import type { Price } from "../value-objects/Price";
 import type { Quantity } from "../value-objects/Quantity";
@@ -51,35 +51,6 @@ export const ModelQuote = {
     );
   },
 };
-
-export abstract class QuoteModelError extends Error {
-  abstract readonly code: string;
-
-  protected constructor(
-    readonly model: string,
-    message: string,
-    options: { cause?: unknown } = {},
-  ) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
-    this.name = new.target.name;
-  }
-}
-
-export class InvalidQuoteModelInputError extends QuoteModelError {
-  readonly code = "quote_model.invalid_input";
-
-  constructor(model: string, message: string, options: { cause?: unknown } = {}) {
-    super(model, message, options);
-  }
-}
-
-export class InvalidModelQuoteError extends QuoteModelError {
-  readonly code = "quote_model.invalid_model_quote";
-
-  constructor(model: string, message: string, options: { cause?: unknown } = {}) {
-    super(model, message, options);
-  }
-}
 
 export interface QuoteModel {
   readonly name: string;
