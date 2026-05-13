@@ -16,7 +16,7 @@ import { PositionSnapshot } from "../value-objects/PositionSnapshot.ts";
 import type { FairPriceCalculator } from "./FairPriceCalculator.ts";
 import type { VolatilityEstimator } from "./VolatilityEstimator.ts";
 
-export type QuoteSideSpec = Readonly<{
+type QuoteSideSpec = Readonly<{
   enabled: boolean;
   distanceMultiplier: number;
   sizeMultiplier: number;
@@ -35,7 +35,7 @@ export type QuoteEngineInput = Readonly<{
   sideSpecs: QuoteSideSpecs;
 }>;
 
-export type QuoteEngineConfig = Readonly<{
+type QuoteEngineConfig = Readonly<{
   inventoryScale: number;
   timeHorizonSec: number;
   minSpreadBps?: number;
@@ -49,7 +49,7 @@ export type QuoteEngineConfig = Readonly<{
   levels?: readonly QuoteLadderLevelConfig[];
 }>;
 
-export type QuoteLadderLevelConfig = Readonly<{
+type QuoteLadderLevelConfig = Readonly<{
   halfSpreadBps: number;
   sizeUsd: number;
 }>;

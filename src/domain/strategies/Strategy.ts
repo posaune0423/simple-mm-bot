@@ -6,7 +6,7 @@ import type { PositionSnapshot } from "../value-objects/PositionSnapshot";
 import type { Quote } from "../value-objects/Quote";
 import type { OrderSide } from "../value-objects/QuoteLeg";
 
-export interface MarkoutFeedbackHorizon {
+interface MarkoutFeedbackHorizon {
   horizonSec: number;
   sampleCount: number;
   averageMarkoutBps: number | null;
@@ -17,7 +17,7 @@ export interface SideMarkoutFeedback {
   horizons: MarkoutFeedbackHorizon[];
 }
 
-export type StrategyDiagnostics = Readonly<{
+type StrategyDiagnostics = Readonly<{
   strategy: string;
   quoteModel?: string;
 }>;

@@ -665,9 +665,29 @@ describe("BulkOrderGateway", () => {
                 price: 100_100,
                 size: -0.02,
                 reduceOnly: true,
-                tif: "ioc",
+                tif: "ALO",
                 status: "partiallyFilled",
                 timestamp: 1_700_000_000_100,
+              },
+              {
+                symbol: "BTC-USD",
+                orderId: "placed-1",
+                price: 99_900,
+                size: 0.01,
+                reduceOnly: false,
+                tif: "IOC",
+                status: "placed",
+                timestamp: 1_700_000_000_200,
+              },
+              {
+                symbol: "BTC-USD",
+                orderId: "pending-1",
+                price: 100_200,
+                size: -0.01,
+                reduceOnly: false,
+                tif: "GTC",
+                status: "pending",
+                timestamp: 1_700_000_000_300,
               },
               {
                 symbol: "ETH-USD",
@@ -714,11 +734,67 @@ describe("BulkOrderGateway", () => {
         price: 100_100,
         qty: 0.02,
         reduceOnly: true,
-        timeInForce: "IOC",
+        timeInForce: "ALO",
         status: "partially_filled",
         placedAtMs: 1_700_000_000_100,
       },
+      {
+        id: "placed-1",
+        market: "BTC-USD",
+        side: "buy",
+        price: 99_900,
+        qty: 0.01,
+        reduceOnly: false,
+        timeInForce: "IOC",
+        status: "open",
+        placedAtMs: 1_700_000_000_200,
+      },
+      {
+        id: "pending-1",
+        market: "BTC-USD",
+        side: "sell",
+        price: 100_200,
+        qty: 0.01,
+        reduceOnly: false,
+        timeInForce: "GTC",
+        status: "open",
+        placedAtMs: 1_700_000_000_300,
+      },
     ]);
+  });
+
+  test("treats placed and pending placement statuses as open", async () => {
+    for (const statusKey of ["placed", "pending"] as const) {
+      const gateway = new BulkOrderGateway(
+        {
+          trade: {
+            async placeLimitOrder() {
+              return {
+                status: "ok",
+                response: { data: { statuses: [{ [statusKey]: { oid: `${statusKey}-1` } }] } },
+              };
+            },
+          },
+          account: {
+            async fills() {
+              return [];
+            },
+          },
+        },
+        { market: "ETH-USD", accountId: "account" },
+      );
+
+      const placed = await gateway.place({
+        market: "ETH-USD",
+        side: "buy",
+        price: 100,
+        qty: 0.01,
+        reduceOnly: false,
+        timeInForce: "GTC",
+      });
+
+      expect(placed).toMatchObject({ id: `${statusKey}-1`, status: "open" });
+    }
   });
 
   test("places orders when Bulk account leverage is within the configured max", async () => {

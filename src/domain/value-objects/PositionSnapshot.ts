@@ -3,7 +3,7 @@ import { match } from "ts-pattern";
 import { InvalidPositionError, type DomainError } from "../errors/DomainError";
 import type { OrderSide, ExposureIntent } from "./QuoteLeg";
 
-export type PositionSide = "long" | "short" | "flat";
+type PositionSide = "long" | "short" | "flat";
 
 export type PositionSnapshot = Readonly<{
   market: string;

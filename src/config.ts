@@ -159,7 +159,7 @@ interface LoadConfigOptions {
   preset?: string;
 }
 
-export class ConfigError extends Error {
+class ConfigError extends Error {
   readonly context: Readonly<Record<string, string>>;
 
   constructor(
@@ -185,7 +185,7 @@ function envValue(key: string): string | undefined {
   return Bun.env[key] ?? (env as Record<string, string | undefined>)[key];
 }
 
-export function resolveConfigPath(options: LoadConfigOptions = {}): string {
+function resolveConfigPath(options: LoadConfigOptions = {}): string {
   const explicitPath = options.configPath ?? configSelectionEnvValue("CONFIG_PATH");
   if (explicitPath !== undefined) {
     return explicitPath;

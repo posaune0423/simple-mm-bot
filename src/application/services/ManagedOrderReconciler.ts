@@ -16,13 +16,13 @@ export type ReconcileResult = Readonly<{
   }[];
 }>;
 
-export type CancelAllResult = Readonly<{
+type CancelAllResult = Readonly<{
   reason: string;
 }>;
 
-export type ManagedOrderReconcilerError = OrderReconcileFailedError | OrderCancelAllFailedError;
+type ManagedOrderReconcilerError = OrderReconcileFailedError | OrderCancelAllFailedError;
 
-export abstract class ManagedOrderReconcilerBaseError extends ApplicationError {
+abstract class ManagedOrderReconcilerBaseError extends ApplicationError {
   abstract override readonly code: string;
 
   protected constructor(message: string, options: { cause?: unknown } = {}) {

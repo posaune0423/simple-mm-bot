@@ -1,6 +1,6 @@
 import type { MarketSnapshot } from "../ports/IMarketFeed.ts";
 
-export interface MarketContext extends MarketSnapshot {
+interface MarketContext extends MarketSnapshot {
   midPrice: number;
   bookUpdatedAt: number;
   tickerUpdatedAt: number;

@@ -1,11 +1,9 @@
 import type { OrderTimeInForce } from "./Order";
 import type { ExposureIntent as DomainExposureIntent } from "../value-objects/QuoteLeg";
 
-export type { OrderSide, OrderTimeInForce } from "./Order";
+type LegacyExposureIntent = DomainExposureIntent | "disabled";
 
-export type LegacyExposureIntent = DomainExposureIntent | "disabled";
-
-export interface LegacyQuoteLevel {
+interface LegacyQuoteLevel {
   level: number;
   halfSpreadBps: number;
   bid: number;
@@ -18,7 +16,7 @@ export interface LegacyQuoteLevel {
   askControlReasons?: string[];
 }
 
-export interface LegacyQuote {
+interface LegacyQuote {
   bid: number;
   ask: number;
   bidSize: number;
@@ -37,6 +35,9 @@ export interface LegacyQuote {
   sigma: number;
 }
 
+/** @deprecated Use `LegacyQuote` in new code. */
 export type Quote = LegacyQuote;
+/** @deprecated Use `LegacyQuoteLevel` in new code. */
 export type QuoteLevel = LegacyQuoteLevel;
+/** @deprecated Use `LegacyExposureIntent` in new code. */
 export type ExposureIntent = LegacyExposureIntent;

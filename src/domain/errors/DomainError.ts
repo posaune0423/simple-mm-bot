@@ -1,4 +1,4 @@
-export type DomainErrorContext = Readonly<Record<string, string | number | boolean | null>>;
+type DomainErrorContext = Readonly<Record<string, string | number | boolean | null>>;
 
 export abstract class DomainError extends Error {
   abstract readonly code: string;
@@ -140,7 +140,7 @@ export class QuoteModelFailedError extends DomainError {
 
 export type QuoteEngineError = DomainError;
 
-export abstract class StrategyErrorBase extends DomainError {
+abstract class StrategyErrorBase extends DomainError {
   protected constructor(
     readonly strategy: string,
     message: string,
@@ -161,7 +161,7 @@ export class StrategyQuoteFailedError extends StrategyErrorBase {
   }
 }
 
-export class StrategyInputInvalidError extends StrategyErrorBase {
+class StrategyInputInvalidError extends StrategyErrorBase {
   readonly code = "strategy.input_invalid";
 
   constructor(strategy: string, message: string, options: DomainErrorOptions = {}) {

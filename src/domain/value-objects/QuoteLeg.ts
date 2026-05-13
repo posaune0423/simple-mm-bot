@@ -7,7 +7,7 @@ import type { Quantity } from "./Quantity";
 export type QuoteSide = "bid" | "ask";
 export type { OrderSide };
 export type ExposureIntent = "increase_exposure" | "reduce_exposure";
-export type QuoteLevelIndex = number;
+type QuoteLevelIndex = number;
 
 export type QuoteLeg = Readonly<{
   side: QuoteSide;

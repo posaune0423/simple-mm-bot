@@ -2,9 +2,7 @@ import { match, P } from "ts-pattern";
 
 export const DEFAULT_DATABASE_URL = "file:data/mm.db";
 
-export type ResolvedDatabaseUrl =
-  | { kind: "sqlite"; path: string }
-  | { kind: "postgres"; url: string };
+type ResolvedDatabaseUrl = { kind: "sqlite"; path: string } | { kind: "postgres"; url: string };
 
 export function resolveDatabaseUrl(databaseUrl: string | undefined): ResolvedDatabaseUrl {
   const value = databaseUrl?.trim() || DEFAULT_DATABASE_URL;

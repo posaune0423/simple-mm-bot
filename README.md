@@ -127,6 +127,22 @@ Repository split:
 - `scripts/lib`: external evaluation, Bulk YAML tuning, and issue planning helpers
 - `tests`: unit, integration, and e2e test suites; see `docs/TEST.md`
 
+Quoting flow:
+
+```text
+Bot tick
+  -> QuotingCycleService
+  -> Strategy
+  -> QuoteEngine
+  -> QuoteModel
+  -> Quote value object
+  -> OrderIntentBuilder
+  -> ManagedOrderReconciler
+  -> venue adapter
+```
+
+`Strategy` owns bot behavior such as side enablement and markout-feedback gates. `QuoteModel` owns pricing math such as Avellaneda-Stoikov. `OrderIntent` is the venue-neutral submit intent; venue order state stays behind the order gateway and reconciler.
+
 ## Configuration Notes
 
 - Default config selection: `CONFIG_VENUE=bulk`, `CONFIG_PRESET=beta`

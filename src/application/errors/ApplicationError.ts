@@ -1,4 +1,4 @@
-export type ApplicationErrorContext = Readonly<Record<string, string | number | boolean | null>>;
+type ApplicationErrorContext = Readonly<Record<string, string | number | boolean | null>>;
 
 export abstract class ApplicationError extends Error {
   abstract readonly code: string;

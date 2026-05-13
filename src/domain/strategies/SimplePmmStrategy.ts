@@ -21,7 +21,7 @@ export type MarkoutFeedbackGateConfig = Readonly<{
   horizonsSec: readonly number[];
 }>;
 
-export interface SimplePmmStrategyConfig {
+interface SimplePmmStrategyConfig {
   markoutFeedbackGate?: MarkoutFeedbackGateConfig;
 }
 

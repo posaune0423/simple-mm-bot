@@ -47,7 +47,7 @@ type MetricsOperationType =
   | "trade_fill"
   | "ohlcv";
 
-export interface MetricsWriteOperation {
+interface MetricsWriteOperation {
   type: MetricsOperationType;
   priority: MetricsOperationPriority;
   run: () => Promise<void>;
@@ -58,7 +58,7 @@ interface MetricsBufferOptions {
   criticalCapacity?: number;
 }
 
-export interface MetricsDropSummary {
+interface MetricsDropSummary {
   dropped: Partial<Record<MetricsOperationType, number>>;
   criticalBacklogExceeded: number;
 }
@@ -279,7 +279,7 @@ export class MetricsFlushLoop {
   }
 }
 
-export class BufferedMetricsRecorder {
+class BufferedMetricsRecorder {
   readonly runId: string;
   private readonly pnlPositions = new Map<string, PnlPosition>();
   private readonly openOrders = new Map<string, SubmittedOrderState>();

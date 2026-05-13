@@ -114,7 +114,7 @@ type BulkMarketRules = {
   minNotional?: number;
 };
 
-const openStatusKeys = new Set(["resting", "working"]);
+const openStatusKeys = new Set(["resting", "working", "placed", "pending"]);
 const DEFAULT_MAX_SEEN_FILL_IDS = 20_000;
 const DEFAULT_SEEN_FILL_TTL_MS = 24 * 60 * 60 * 1_000;
 const SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS = 100;
@@ -767,9 +767,9 @@ function normalizeOpenOrderStatus(status: string | undefined): OpenOrder["status
 }
 
 function normalizeTimeInForce(timeInForce: string | undefined): OpenOrder["timeInForce"] {
-  return match(timeInForce)
+  return match(timeInForce?.toLowerCase())
     .with("ioc", () => "IOC" as const)
-    .with("postOnly", () => "ALO" as const)
+    .with(P.union("alo", "postonly"), () => "ALO" as const)
     .otherwise(() => "GTC" as const);
 }
 

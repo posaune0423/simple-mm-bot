@@ -173,6 +173,69 @@ describe("Bot", () => {
     expect(calls).toContain("disconnect");
   });
 
+  test("does not run destructive cleanup when start signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort("pre_start_abort");
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    await bot.start({ signal: controller.signal });
+
+    expect(calls).toEqual([]);
+  });
+
   test("does not build or persist a legacy report after a successful run", async () => {
     const bot = new Bot(
       {

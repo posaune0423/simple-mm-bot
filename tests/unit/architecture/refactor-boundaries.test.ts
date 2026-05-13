@@ -154,7 +154,7 @@ describe("refactor architecture boundaries", () => {
     const domainError = readFileSync(join(root, "src/domain/errors/DomainError.ts"), "utf8");
     expect(domainError).toContain("export abstract class QuoteModelError");
     expect(domainError).toContain("export type QuoteEngineError");
-    expect(domainError).toContain("export abstract class StrategyErrorBase");
+    expect(domainError).toContain("abstract class StrategyErrorBase");
 
     for (const file of [
       "src/domain/quote-models/QuoteModel.ts",

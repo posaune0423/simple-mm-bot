@@ -14,7 +14,7 @@ export type QuoteModelInput = Readonly<{
   minSpreadBps?: BasisPoints;
 }>;
 
-export type ModelQuoteDiagnostics = Readonly<{
+type ModelQuoteDiagnostics = Readonly<{
   modelName: string;
   volatilitySigma: number;
   inventorySkew?: number;

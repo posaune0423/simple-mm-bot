@@ -56,7 +56,7 @@ flowchart LR
 
 ## Order Lifecycle
 
-`OrderManager` class と別立ての `OrderReconciler` interface/file は廃止する。現状は実装が1つだけなので、reconcile の result/error contract は `ManagedOrderReconciler.ts` に colocate する。
+現行の order reconcile は `ManagedOrderReconciler` に集約する。旧 `OrderManager` class と別立ての `OrderReconciler` interface/file は廃止済みで、reconcile の result/error contract も `ManagedOrderReconciler.ts` に colocate する。
 
 ```text
 Quote
@@ -77,4 +77,4 @@ increase_exposure
 reduce_exposure
 ```
 
-旧 `open_quote` / `reduce_inventory` は使わない。DB や metrics の stored intent は互換性のため `"quote"` / `"reduce"` のまま維持する。
+旧 `open_quote` / `reduce_inventory` は使わない。legacy quote alias は互換用途だけに限定し、DB や metrics の stored intent は既存分析との互換性のため `"quote"` / `"reduce"` のまま維持する。

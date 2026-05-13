@@ -55,6 +55,13 @@ describe("errors", () => {
     });
   });
 
+  test("describes cyclic error causes without looping", () => {
+    const error = new Error("outer") as Error & { cause?: unknown };
+    error.cause = error;
+
+    expect(describeError(error).chain).toEqual(["outer", "[cycle detected]"]);
+  });
+
   test("extracts an error name only when present", () => {
     expect(getErrorName(new TypeError("bad type"))).toBe("TypeError");
     expect(getErrorName("bad type")).toBeUndefined();

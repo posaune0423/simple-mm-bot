@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ok, okAsync } from "neverthrow";
 
 import type { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
-import type { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
+import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
 import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
 import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type { Position } from "../../../src/domain/types/Position.ts";
@@ -34,7 +34,7 @@ describe("QuotingCycleService", () => {
           );
         },
       } satisfies Strategy,
-      {} as OrderIntentBuilder,
+      new OrderIntentBuilder(),
       {
         reconcile: () => okAsync({ activeOrders: [] }),
         cancelAll: (reason) => okAsync({ reason }),

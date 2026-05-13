@@ -18,7 +18,7 @@ const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
 const MOMENTUM_GUARD_MULTIPLIER = 1;
 const MAX_MOMENTUM_GUARD_BPS = 8;
 
-export type OrderIntentBuilderError = DomainError | OrderIntentBuildFailedError;
+type OrderIntentBuilderError = DomainError | OrderIntentBuildFailedError;
 
 export class OrderIntentBuildFailedError extends ApplicationError {
   readonly code = "application.order_intent_builder.build_failed";
@@ -31,14 +31,14 @@ export class OrderIntentBuildFailedError extends ApplicationError {
   }
 }
 
-export type OrderIntentSkip = Readonly<{
+type OrderIntentSkip = Readonly<{
   key: string;
   reason: "stale_touch" | "downtrend_open_bid" | "uptrend_open_ask";
   sourceQuoteSide: "bid" | "ask";
   sourceQuoteLevel: number;
 }>;
 
-export type OrderIntentBuildInput = Readonly<{
+type OrderIntentBuildInput = Readonly<{
   quote: Quote;
   quoteCycleId: string;
   execution: {

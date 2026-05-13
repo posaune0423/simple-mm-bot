@@ -3,7 +3,7 @@ import { InvalidQuoteError, type DomainError } from "../errors/DomainError";
 import type { Price } from "./Price";
 import type { QuoteLeg } from "./QuoteLeg";
 
-export type QuoteDiagnostics = Readonly<{
+type QuoteDiagnostics = Readonly<{
   quoteModel: string;
   reasonTags: readonly string[];
 }>;

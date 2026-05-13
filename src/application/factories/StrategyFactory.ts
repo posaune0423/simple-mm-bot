@@ -5,7 +5,7 @@ import {
 } from "../../domain/strategies/SimplePmmStrategy";
 import type { QuoteEngine } from "../../domain/services/QuoteEngine";
 
-export type StrategyFactoryInput = Readonly<{
+type StrategyFactoryInput = Readonly<{
   kind: "simple_pmm";
   quoteEngine: Pick<QuoteEngine, "compute">;
   markoutFeedbackGate: MarkoutFeedbackGateConfig;

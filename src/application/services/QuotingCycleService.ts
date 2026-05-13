@@ -17,12 +17,12 @@ import type { ManagedOrderReconciler, ReconcileResult } from "./ManagedOrderReco
 import type { OrderIntentBuilder, OrderIntentBuildResult } from "./OrderIntentBuilder.ts";
 import { toLegacyQuoteForMetrics } from "./QuoteMetricsAdapter.ts";
 
-export type QuotingCycleExecutionConfig = Readonly<{
+type QuotingCycleExecutionConfig = Readonly<{
   defaultTimeInForce: OrderTimeInForce;
   postOnly: boolean;
 }>;
 
-export type QuotingCycleMarkoutFeedbackConfig = Readonly<{
+type QuotingCycleMarkoutFeedbackConfig = Readonly<{
   enabled: boolean;
   lookbackFills?: number;
   maxFillAgeMs?: number;

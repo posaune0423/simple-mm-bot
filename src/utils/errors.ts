@@ -93,9 +93,16 @@ function errorCause(error: Error): unknown {
 
 function errorChain(error: Error): string[] {
   const chain: string[] = [];
+  const seen = new Set<Error>();
   let current: unknown = error;
 
   while (current instanceof Error) {
+    if (seen.has(current)) {
+      chain.push("[cycle detected]");
+      current = undefined;
+      break;
+    }
+    seen.add(current);
     chain.push(
       current.name && current.name !== "Error"
         ? `${current.name}: ${current.message}`

@@ -1,6 +1,6 @@
 import { match, P } from "ts-pattern";
 import type { Fill } from "../domain/types/Fill.ts";
-import { isFlatPositionQty, type Position } from "../domain/types/Position.ts";
+import { isFlatPositionQty } from "../domain/types/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../utils/errors.ts";
@@ -8,6 +8,7 @@ import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
 import { isTransientBulkError } from "../utils/transientBulk.ts";
 import type { MetricsRecorder } from "./services/MetricsRecorder.ts";
 import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
+import type { PositionSyncResult } from "./usecases/SyncPositionUseCase.ts";
 
 interface UseCases {
   guardRisk: { execute(): Promise<RiskState | RiskDecision> };
@@ -34,13 +35,6 @@ interface BotOptions {
   positionSyncIntervalMs?: number;
 }
 
-interface PositionSyncResult {
-  synced: boolean;
-  previous: Position;
-  current: Position;
-  deltaQty: number;
-}
-
 export class Bot {
   private running = false;
   private quotedCount = 0;
@@ -64,6 +58,7 @@ export class Bot {
     const startOptions = normalizeStartOptions(maxTicksOrOptions);
     this.resetRunState();
     const removeAbortListener = this.watchStopSignal(startOptions.signal);
+    let shouldCleanup = false;
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(
@@ -73,6 +68,7 @@ export class Bot {
     try {
       await this.metrics?.start(Date.now());
       if (!this.wasStopRequested()) {
+        shouldCleanup = true;
         await this.connectAndSubscribe();
         await this.runLoop(startOptions.maxTicks, startOptions.signal);
       }
@@ -87,7 +83,11 @@ export class Bot {
       }
     } finally {
       removeAbortListener();
-      closePositionError = await this.cleanup();
+      if (shouldCleanup) {
+        closePositionError = await this.cleanup();
+      } else {
+        this.running = false;
+      }
       const metricsWithDrain = this.metrics as
         | (MetricsRecorder & { drainAndStop?: () => Promise<void> })
         | undefined;
