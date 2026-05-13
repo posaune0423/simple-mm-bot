@@ -3,9 +3,9 @@ import type { Fill } from "../domain/types/Fill.ts";
 import { isFlatPositionQty } from "../domain/types/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
+import { isRecoverableVenueError } from "../domain/ports/RecoverableVenueError.ts";
 import { stringifyError } from "../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
-import { isTransientBulkError } from "../utils/transientBulk.ts";
 import type { MetricsRecorder } from "./services/MetricsRecorder.ts";
 import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
 import type { PositionSyncResult } from "./usecases/SyncPositionUseCase.ts";
@@ -22,6 +22,7 @@ interface UseCases {
 }
 
 type TickResult = "continue" | "stop";
+type RiskTickAction = "quote" | "pause_quoting" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
 
 interface BotStartOptions {
@@ -200,17 +201,9 @@ export class Bot {
     }
 
     await this.orderGateway.syncFills().catch(async (error) => {
-      if (!isTransientBulkError(error)) {
-        throw error;
-      }
-      logger.warn(
-        `[application] Bot | INITIAL_SYNC_TRANSIENT_ERROR | error=${stringifyError(error)}`,
-      );
-      await this.metrics?.recordRuntimeHealth(
-        "warn",
-        "initial_sync_transient_error",
-        stringifyError(error),
-      );
+      const errorMessage = recoverableRuntimeErrorMessageOrThrow(error);
+      logger.warn(`[application] Bot | INITIAL_SYNC_TRANSIENT_ERROR | error=${errorMessage}`);
+      await this.metrics?.recordRuntimeHealth("warn", "initial_sync_transient_error", errorMessage);
     });
   }
 
@@ -224,7 +217,7 @@ export class Bot {
 
     while (this.isRunning()) {
       const tick = ticks + 1;
-      const tickResult = await this.runTickSafely(tick);
+      const tickResult = await this.runTickOrContinueOnTransientError(tick);
       ticks = tick;
 
       if (tickResult === "stop" || this.hasReachedMaxTicks(ticks, maxTicks) || !this.isRunning()) {
@@ -235,24 +228,15 @@ export class Bot {
     }
   }
 
-  private async runTickSafely(tick: number): Promise<TickResult> {
+  private async runTickOrContinueOnTransientError(tick: number): Promise<TickResult> {
     try {
       return await this.runTick(tick);
     } catch (error) {
-      if (!isTransientBulkError(error)) {
-        throw error;
-      }
-      logger.warn(
-        `[application] Bot | TICK_TRANSIENT_ERROR | tick=${tick} error=${stringifyError(error)}`,
-      );
-      await this.metrics?.recordRuntimeHealth(
-        "warn",
-        "transient_tick_error",
-        stringifyError(error),
-        {
-          tick,
-        },
-      );
+      const errorMessage = recoverableRuntimeErrorMessageOrThrow(error);
+      logger.warn(`[application] Bot | TICK_TRANSIENT_ERROR | tick=${tick} error=${errorMessage}`);
+      await this.metrics?.recordRuntimeHealth("warn", "transient_tick_error", errorMessage, {
+        tick,
+      });
       return "continue";
     }
   }
@@ -261,38 +245,59 @@ export class Bot {
     const riskDecision = await this.useCases.guardRisk.execute();
     const riskState = riskStateOf(riskDecision);
     logger.debug(`[application] Bot | TICK | tick=${tick} riskState=${riskState}`);
+    const riskAction = await this.handleRiskGate(tick, riskDecision, riskState);
 
-    if (riskState === "EMERGENCY_STOP") {
-      await this.metrics?.recordRuntimeHealth(
-        "error",
-        "risk_gate_emergency_stop",
-        "Risk gate requested emergency stop",
-        riskRuntimeSummary(tick, riskDecision),
-      );
-      logger.warn(`[application] Bot | STOPPING | reason=emergency_stop tick=${tick}`);
-      this.emergencyStopRequested = true;
-      return "stop";
-    }
-    if (riskState === "PAUSE_QUOTING") {
-      await this.metrics?.recordRuntimeHealth(
-        "warn",
-        "risk_gate_pause_quoting",
-        "Risk gate paused quoting cycle",
-        riskRuntimeSummary(tick, riskDecision),
-      );
-      await this.cancelOpenOrdersForPause(tick, riskDecision);
-    } else {
-      this.pauseQuoteCancelCompleted = false;
-    }
+    return await match(riskAction)
+      .with("stop", () => "stop" as const)
+      .otherwise(async (activeRiskAction) => {
+        await this.drainEventTasks();
+        await this.syncPositionIfDue();
+        const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
+        await match<[RiskTickAction, boolean], Promise<void>>([
+          activeRiskAction,
+          didReduceInventory,
+        ])
+          .with(["quote", false], async () => {
+            await this.useCases.quotingCycle.execute();
+            this.quotedCount += 2;
+          })
+          .otherwise(async () => {});
+        return this.advanceMarketFeed(tick);
+      });
+  }
 
-    await this.drainEventTasks();
-    await this.syncPositionIfDue();
-    const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
-    if (riskState === "OK" && !didReduceInventory) {
-      await this.useCases.quotingCycle.execute();
-      this.quotedCount += 2;
-    }
-    return this.advanceMarketFeed(tick);
+  private async handleRiskGate(
+    tick: number,
+    riskDecision: RiskState | RiskDecision,
+    riskState: RiskState,
+  ): Promise<RiskTickAction> {
+    return await match<RiskState, Promise<RiskTickAction> | RiskTickAction>(riskState)
+      .with("EMERGENCY_STOP", async () => {
+        await this.metrics?.recordRuntimeHealth(
+          "error",
+          "risk_gate_emergency_stop",
+          "Risk gate requested emergency stop",
+          riskRuntimeSummary(tick, riskDecision),
+        );
+        logger.warn(`[application] Bot | STOPPING | reason=emergency_stop tick=${tick}`);
+        this.emergencyStopRequested = true;
+        return "stop" as const;
+      })
+      .with("PAUSE_QUOTING", async () => {
+        await this.metrics?.recordRuntimeHealth(
+          "warn",
+          "risk_gate_pause_quoting",
+          "Risk gate paused quoting cycle",
+          riskRuntimeSummary(tick, riskDecision),
+        );
+        await this.cancelOpenOrdersForPause(tick, riskDecision);
+        return "pause_quoting" as const;
+      })
+      .with("OK", () => {
+        this.pauseQuoteCancelCompleted = false;
+        return "quote";
+      })
+      .exhaustive();
   }
 
   private async syncPositionIfDue(): Promise<void> {
@@ -542,6 +547,16 @@ function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): Bo
       (maxTicks) => ({ maxTicks }),
     )
     .otherwise((options) => options);
+}
+
+function recoverableRuntimeErrorMessageOrThrow(error: unknown): string {
+  return match(error)
+    .with(P.when(isRecoverableVenueError), (recoverableError) =>
+      stringifyError(recoverableError.cause ?? recoverableError),
+    )
+    .otherwise((fatalError) => {
+      throw fatalError;
+    });
 }
 
 function stopReasonFromSignal(signal: AbortSignal): string {

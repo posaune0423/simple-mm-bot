@@ -29,19 +29,48 @@ export interface ChartOutput {
   height: number;
 }
 
+/** Shared width/height, plot rect, and title fragment for Cartesian SVG charts. */
+export interface ChartLayoutOptions {
+  width?: number;
+  height?: number;
+  title?: string;
+  /** Pixels added to merged padding top to obtain plot `y0` (title stays at padding top). */
+  plotTopInset?: number;
+  /** Merged over `theme.layout.padding` for this chart. */
+  padding?: Partial<{ top: number; right: number; bottom: number; left: number }>;
+}
+
+export function layoutChartFrame(opts: ChartLayoutOptions = {}): {
+  width: number;
+  height: number;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  titleNode: string;
+} {
+  const width = opts.width ?? theme.layout.width;
+  const height = opts.height ?? theme.layout.height;
+  const base = theme.layout.padding;
+  const padding = {
+    top: opts.padding?.top ?? base.top,
+    right: opts.padding?.right ?? base.right,
+    bottom: opts.padding?.bottom ?? base.bottom,
+    left: opts.padding?.left ?? base.left,
+  };
+  const x0 = padding.left;
+  const x1 = width - padding.right;
+  const y0 = padding.top + (opts.plotTopInset ?? 0);
+  const y1 = height - padding.bottom;
+  const titleNode = renderTitle(opts.title, x0, padding.top);
+  return { width, height, x0, x1, y0, y1, titleNode };
+}
+
 export function renderLineChart(
   data: ReadonlyArray<LineChartPoint>,
   opts: LineChartOptions = {},
 ): ChartOutput {
-  const width = opts.width ?? theme.layout.width;
-  const height = opts.height ?? theme.layout.height;
-  const padding = theme.layout.padding;
-  const x0 = padding.left;
-  const x1 = width - padding.right;
-  const y0 = padding.top;
-  const y1 = height - padding.bottom;
-
-  const titleNode = renderTitle(opts.title, x0, padding.top);
+  const { width, height, x0, x1, y0, y1, titleNode } = layoutChartFrame(opts);
 
   if (data.length === 0) return emptyChart(width, height, titleNode);
 

@@ -98,7 +98,7 @@ export class QuoteEngine {
       return err(quoteSize.error);
     }
 
-    let minSpreadBps;
+    let minSpreadBps: BasisPoints | undefined;
     if (this.config.minSpreadBps !== undefined) {
       const created = BasisPoints.createNonNegative(this.config.minSpreadBps, "minSpreadBps");
       if (created.isErr()) {
@@ -129,6 +129,7 @@ export class QuoteEngine {
         input,
       ),
       input,
+      fairPrice.value,
     );
     const bids = [];
     const asks = [];
@@ -322,8 +323,8 @@ export class QuoteEngine {
   private withOpenNotionalCaps(
     levels: readonly LevelDraft[],
     input: QuoteEngineInput,
+    fairPrice: number,
   ): LevelDraft[] {
-    const fairPrice = this.fairCalc.compute(input.snapshot);
     if (fairPrice <= 0) {
       return [...levels];
     }

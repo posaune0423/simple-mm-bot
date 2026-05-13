@@ -35,6 +35,9 @@ const removedLegacyFiles = [
   "src/domain/legacy/LegacyQuote.ts",
   "src/application/services/QuoteRefreshService.ts",
   "src/application/services/OrderReconciler.ts",
+  "src/utils/transientBulk.ts",
+  "src/utils/slackNotification.ts",
+  "src/lib/slack/errorLevels.ts",
 ];
 
 describe("refactor architecture boundaries", () => {
@@ -236,6 +239,48 @@ describe("refactor architecture boundaries", () => {
       expect(source, file).toContain("ts-pattern");
       expect(source, file).toContain("match(");
     }
+  });
+
+  test("bot transient and risk decisions are routed through named match helpers", () => {
+    const bot = readFileSync(join(root, "src/application/Bot.ts"), "utf8");
+
+    expect(bot).not.toContain("Bulk");
+    expect(bot).not.toContain("isTransientBulkError");
+    expect(bot).not.toContain("if (!isTransientBulkError(error))");
+    expect(bot).not.toContain("runTickSafely");
+    expect(bot).not.toContain('riskState === "EMERGENCY_STOP"');
+    expect(bot).not.toContain('riskState === "PAUSE_QUOTING"');
+    expect(bot).toContain("recoverableRuntimeErrorMessageOrThrow");
+    expect(bot).toContain("handleRiskGate");
+  });
+
+  test("Bulk transient classification stays behind the Bulk adapter boundary", () => {
+    const bulkTransientError = readFileSync(
+      join(root, "src/adapters/bulk/BulkTransientError.ts"),
+      "utf8",
+    );
+    const bot = readFileSync(join(root, "src/application/Bot.ts"), "utf8");
+
+    expect(bulkTransientError).toContain("isTransientBulkError");
+    expect(bulkTransientError).toContain("retryTransientBulk");
+    expect(bot).not.toContain("BulkTransientError");
+    expect(bot).toContain("isRecoverableVenueError");
+  });
+
+  test("Slack notification errors stay under lib slash slack", () => {
+    const main = readFileSync(join(root, "src/main.ts"), "utf8");
+    const slackWebhook = readFileSync(join(root, "src/lib/slack/SlackWebhook.ts"), "utf8");
+    const slackError = readFileSync(join(root, "src/lib/slack/error.ts"), "utf8");
+    const slackIndex = readFileSync(join(root, "src/lib/slack/index.ts"), "utf8");
+
+    expect(main).not.toContain("utils/slackNotification");
+    expect(main).toContain("lib/slack/notification");
+    expect(slackWebhook).not.toContain("class SlackWebhookError");
+    expect(slackError).toContain("export class SlackWebhookError");
+    expect(slackError).toContain("export function getErrorLevel");
+    expect(slackIndex).toContain("./error.ts");
+    expect(slackIndex).toContain("./notification.ts");
+    expect(slackIndex).not.toContain("errorLevels");
   });
 
   test("quote refresh concept is absent from runtime names", () => {

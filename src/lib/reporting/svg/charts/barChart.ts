@@ -4,7 +4,7 @@ import { g, rect, svgRoot, text } from "../primitives.ts";
 import { bandScale, linearScale, niceTicks } from "../scale.ts";
 import { theme } from "../theme.ts";
 import type { ChartOutput } from "./lineChart.ts";
-import { emptyChart, renderTitle } from "./lineChart.ts";
+import { emptyChart, layoutChartFrame } from "./lineChart.ts";
 
 interface BarChartDatum {
   category: string;
@@ -50,15 +50,7 @@ function renderVerticalBarChart(
   data: ReadonlyArray<BarChartDatum>,
   opts: BarChartOptions,
 ): ChartOutput {
-  const width = opts.width ?? theme.layout.width;
-  const height = opts.height ?? theme.layout.height;
-  const padding = theme.layout.padding;
-  const x0 = padding.left;
-  const x1 = width - padding.right;
-  const y0 = padding.top;
-  const y1 = height - padding.bottom;
-
-  const titleNode = renderTitle(opts.title, x0, padding.top);
+  const { width, height, x0, x1, y0, y1, titleNode } = layoutChartFrame(opts);
 
   if (data.length === 0) return emptyChart(width, height, titleNode);
 
@@ -104,15 +96,12 @@ function renderHorizontalBarChart(
   data: ReadonlyArray<BarChartDatum>,
   opts: BarChartOptions,
 ): ChartOutput {
-  const width = opts.width ?? theme.layout.width;
-  const height = opts.height ?? theme.layout.height;
-  const padding = { ...theme.layout.padding, left: 96 };
-  const x0 = padding.left;
-  const x1 = width - padding.right;
-  const y0 = padding.top;
-  const y1 = height - padding.bottom;
-
-  const titleNode = renderTitle(opts.title, x0, padding.top);
+  const { width, height, x0, x1, y0, y1, titleNode } = layoutChartFrame({
+    title: opts.title,
+    width: opts.width,
+    height: opts.height,
+    padding: { left: 96 },
+  });
 
   if (data.length === 0) return emptyChart(width, height, titleNode);
 

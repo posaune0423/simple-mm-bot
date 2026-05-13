@@ -13,6 +13,7 @@ import type {
 } from "../../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../../utils/logger.ts";
+import { isTransientBulkError, throwRecoverableBulkError } from "./BulkTransientError.ts";
 
 type BulkStatus = Record<string, Record<string, unknown> | undefined>;
 type BulkOrderResponse = {
@@ -69,11 +70,6 @@ type BulkFullAccount = {
 type BulkHttpErrorLike = {
   status?: unknown;
   data?: unknown;
-  message?: unknown;
-};
-type ErrorLike = {
-  name?: unknown;
-  status?: unknown;
   message?: unknown;
 };
 
@@ -224,21 +220,6 @@ function summarizeOrderError(error: BulkHttpErrorLike): unknown {
     data: error.data,
     message: error.message,
   };
-}
-
-function isTransientBulkPollingError(error: unknown): boolean {
-  if (typeof error === "object" && error !== null) {
-    const errorLike = error as ErrorLike;
-    if (errorLike.name === "BulkTimeoutError") {
-      return true;
-    }
-    if (errorLike.status === 408 || errorLike.status === "408") {
-      return true;
-    }
-  }
-
-  const message = stringifyError(error);
-  return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
 }
 
 function isRejectedOrderResult(
@@ -513,7 +494,11 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async syncFills(): Promise<void> {
-    await this.pollFillsSerialized();
+    try {
+      await this.pollFillsSerialized();
+    } catch (error) {
+      throwRecoverableBulkError(error, "sync_fills");
+    }
   }
 
   async getOpenOrders(): Promise<OpenOrder[]> {
@@ -530,7 +515,9 @@ export class BulkOrderGateway implements IOrderGateway {
     if (!this.client.account.fullAccount) {
       throw new Error(`Bulk fullAccount is required to read ${this.params.market} position.`);
     }
-    const account = await this.client.account.fullAccount(this.params.accountId);
+    const account = await this.client.account
+      .fullAccount(this.params.accountId)
+      .catch((error: unknown) => throwRecoverableBulkError(error, "get_position"));
     const position = account.positions?.find((entry) => isCrossPosition(entry, this.params.market));
 
     return {
@@ -565,7 +552,7 @@ export class BulkOrderGateway implements IOrderGateway {
       return;
     }
     await this.pollFillsSerialized().catch((error) => {
-      if (isTransientBulkPollingError(error)) {
+      if (isTransientBulkError(error)) {
         logger.warn(
           `[adapter] BulkOrderGateway | FILLS_POLL_TRANSIENT_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
         );

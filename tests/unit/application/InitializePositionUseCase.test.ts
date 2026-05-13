@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { InitializePositionUseCase } from "../../../src/application/usecases/InitializePositionUseCase.ts";
-import type { Position } from "../../../src/domain/types/Position.ts";
 import type { IOrderGateway } from "../../../src/domain/ports/IOrderGateway.ts";
+import { RecoverableVenueError } from "../../../src/domain/ports/RecoverableVenueError.ts";
+import type { Position } from "../../../src/domain/types/Position.ts";
 import { InMemoryPositionRepository } from "../../../src/infrastructure/InMemoryPositionRepository.ts";
 
 describe("InitializePositionUseCase", () => {
@@ -35,7 +36,7 @@ describe("InitializePositionUseCase", () => {
     });
   });
 
-  test("retries transient Bulk position reads before seeding", async () => {
+  test("retries recoverable venue position reads before seeding", async () => {
     const repository = new InMemoryPositionRepository();
     const calls: string[] = [];
     let attempts = 0;
@@ -44,10 +45,7 @@ describe("InitializePositionUseCase", () => {
       async getPosition() {
         attempts += 1;
         if (attempts === 1) {
-          throw Object.assign(new Error("HTTP error 408"), {
-            name: "BulkHttpError",
-            status: 408,
-          });
+          throw recoverableBulkTimeout("get_position");
         }
         return { qty: 0.2, avgEntry: 80_000, unrealizedPnl: 5 };
       },
@@ -70,6 +68,18 @@ describe("InitializePositionUseCase", () => {
     });
   });
 });
+
+function recoverableBulkTimeout(operation: string): RecoverableVenueError {
+  const cause = Object.assign(new Error("HTTP error 408"), {
+    name: "BulkHttpError",
+    status: 408,
+  });
+  return new RecoverableVenueError("BulkHttpError: HTTP error 408", {
+    venue: "bulk",
+    operation,
+    cause,
+  });
+}
 
 function orderGateway(position?: Position): IOrderGateway {
   return {

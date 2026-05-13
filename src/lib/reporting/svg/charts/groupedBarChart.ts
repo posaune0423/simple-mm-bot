@@ -4,7 +4,7 @@ import { g, rect, svgRoot, text } from "../primitives.ts";
 import { bandScale, linearScale, niceTicks } from "../scale.ts";
 import { theme } from "../theme.ts";
 import type { ChartOutput } from "./lineChart.ts";
-import { emptyChart, renderTitle } from "./lineChart.ts";
+import { emptyChart, layoutChartFrame } from "./lineChart.ts";
 
 interface GroupedBarSeries {
   name: string;
@@ -25,15 +25,12 @@ export function renderGroupedBarChart(
   series: ReadonlyArray<GroupedBarSeries>,
   opts: GroupedBarChartOptions = {},
 ): ChartOutput {
-  const width = opts.width ?? theme.layout.width;
-  const height = opts.height ?? theme.layout.height;
-  const padding = theme.layout.padding;
-  const x0 = padding.left;
-  const x1 = width - padding.right;
-  const y0 = padding.top + 16;
-  const y1 = height - padding.bottom;
-
-  const titleNode = renderTitle(opts.title, x0, padding.top);
+  const { width, height, x0, x1, y0, y1, titleNode } = layoutChartFrame({
+    title: opts.title,
+    width: opts.width,
+    height: opts.height,
+    plotTopInset: 16,
+  });
 
   const allValues = series.flatMap((s) => Array.from(s.values));
   if (categories.length === 0 || allValues.length === 0) {
@@ -76,7 +73,7 @@ export function renderGroupedBarChart(
   }
 
   const legend = series.map((s, index) =>
-    g({ transform: `translate(${x0 + index * 96}, ${padding.top - 4})` }, [
+    g({ transform: `translate(${x0 + index * 96}, ${theme.layout.padding.top - 4})` }, [
       rect(0, -8, 10, 10, { fill: s.color }),
       text(14, 1, s.name, {
         "font-size": theme.font.sizeAxis,

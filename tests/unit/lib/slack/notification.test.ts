@@ -43,7 +43,7 @@ describe("notifyFatalErrorToSlack", () => {
     );
 
     try {
-      const specifier: string = "../../../src/utils/slackNotification.ts?test=no_webhook";
+      const specifier: string = "../../../../src/lib/slack/notification.ts?test=no_webhook";
       const { notifyFatalErrorToSlack } = await import(specifier);
       await notifyFatalErrorToSlack(new Error("boom"), { mode: "live" });
       expect(calls).toHaveLength(0);
@@ -74,7 +74,7 @@ describe("notifyFatalErrorToSlack", () => {
     try {
       const cause = new Error("bad yaml");
       cause.stack = "Error: bad yaml\n    at loadConfig (src/config.ts:1:1)";
-      const specifier: string = "../../../src/utils/slackNotification.ts?test=with_webhook";
+      const specifier: string = "../../../../src/lib/slack/notification.ts?test=with_webhook";
       const { notifyFatalErrorToSlack } = await import(specifier);
       await notifyFatalErrorToSlack(
         new ConfigLoadError("config.invalid", "Config validation failed", cause),
@@ -132,7 +132,7 @@ describe("notifyFatalErrorToSlack", () => {
     );
 
     try {
-      const specifier: string = "../../../src/utils/slackNotification.ts?test=no_context";
+      const specifier: string = "../../../../src/lib/slack/notification.ts?test=no_context";
       const { notifyFatalErrorToSlack } = await import(specifier);
       await notifyFatalErrorToSlack("boom");
 

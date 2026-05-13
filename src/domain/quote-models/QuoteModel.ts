@@ -1,8 +1,12 @@
 import { err, ok, type Result } from "neverthrow";
-import { InvalidQuoteError, type DomainError, type QuoteModelError } from "../errors/DomainError";
-import type { BasisPoints } from "../value-objects/BasisPoints";
-import type { Price } from "../value-objects/Price";
-import type { Quantity } from "../value-objects/Quantity";
+import {
+  InvalidQuoteError,
+  type DomainError,
+  type QuoteModelError,
+} from "../errors/DomainError.ts";
+import type { BasisPoints } from "../value-objects/BasisPoints.ts";
+import type { Price } from "../value-objects/Price.ts";
+import type { Quantity } from "../value-objects/Quantity.ts";
 
 export type QuoteModelInput = Readonly<{
   fairPrice: Price;

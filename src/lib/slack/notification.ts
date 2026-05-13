@@ -1,12 +1,7 @@
-import {
-  ERROR_LEVEL_TO_EMOJI,
-  ERROR_LEVEL_TO_SLACK_COLOR,
-  getErrorLevel,
-  postSlackWebhook,
-  type SlackWebhookMessage,
-} from "../lib/slack/index.ts";
-import { describeError, type ErrorDescription, stringifyError } from "./errors.ts";
-import { logger } from "./logger.ts";
+import { ERROR_LEVEL_TO_EMOJI, ERROR_LEVEL_TO_SLACK_COLOR, getErrorLevel } from "./error.ts";
+import { postSlackWebhook, type SlackWebhookMessage } from "./SlackWebhook.ts";
+import { describeError, type ErrorDescription, stringifyError } from "../../utils/errors.ts";
+import { logger } from "../../utils/logger.ts";
 
 interface FatalErrorSlackContext {
   mode?: string;
@@ -109,6 +104,6 @@ export async function notifyFatalErrorToSlack(
   try {
     await postSlackWebhook(webhookUrl, buildFatalErrorSlackMessage(error, context));
   } catch (notifyError) {
-    logger.warn(`[util] SlackNotification | NOTIFY_FAILED | error=${stringifyError(notifyError)}`);
+    logger.warn(`[lib] SlackNotification | NOTIFY_FAILED | error=${stringifyError(notifyError)}`);
   }
 }

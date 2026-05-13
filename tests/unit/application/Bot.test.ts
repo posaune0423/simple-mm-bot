@@ -3,6 +3,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { Bot } from "../../../src/application/Bot.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
 import type { FillListener, OrderEventListener } from "../../../src/domain/ports/IOrderGateway.ts";
+import { RecoverableVenueError } from "../../../src/domain/ports/RecoverableVenueError.ts";
 import { logger } from "../../../src/utils/logger.ts";
 
 function captureLogs() {
@@ -32,6 +33,18 @@ function captureLogs() {
       logger.error = error;
     },
   };
+}
+
+function recoverableBulkTimeout(operation: string): RecoverableVenueError {
+  const cause = Object.assign(new Error("HTTP error 408"), {
+    name: "BulkHttpError",
+    status: 408,
+  });
+  return new RecoverableVenueError("BulkHttpError: HTTP error 408", {
+    venue: "bulk",
+    operation,
+    cause,
+  });
 }
 
 describe("Bot", () => {
@@ -1417,10 +1430,7 @@ describe("Bot", () => {
         },
         async syncFills() {
           calls.push("syncFills");
-          throw Object.assign(new Error("HTTP error 408"), {
-            name: "BulkHttpError",
-            status: 408,
-          });
+          throw recoverableBulkTimeout("sync_fills");
         },
       },
       1,
@@ -1571,7 +1581,7 @@ describe("Bot", () => {
     expect(calls).toEqual(["connect", "reduce", "cancelAll", "closePosition", "disconnect"]);
   });
 
-  test("continues after a transient Bulk 408 during a live tick", async () => {
+  test("continues after a recoverable venue error during a live tick", async () => {
     const logs = captureLogs();
     const calls: string[] = [];
     const bot = new Bot(
@@ -1581,10 +1591,7 @@ describe("Bot", () => {
           execute: async () => {
             calls.push("quoteCycle");
             if (calls.filter((call) => call === "quoteCycle").length === 1) {
-              throw Object.assign(new Error("HTTP error 408"), {
-                name: "BulkHttpError",
-                status: 408,
-              });
+              throw recoverableBulkTimeout("quote_cycle");
             }
           },
         },

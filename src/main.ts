@@ -2,9 +2,9 @@ import { DIContainer } from "./application/di.ts";
 import { ConfigLoader } from "./config.ts";
 import type { AppMode } from "./config.ts";
 import { env } from "./env.ts";
+import { notifyFatalErrorToSlack } from "./lib/slack/notification.ts";
 import { formatUnknownError } from "./utils/errors.ts";
 import { logger } from "./utils/logger.ts";
-import { notifyFatalErrorToSlack } from "./utils/slackNotification.ts";
 
 const shutdownSignals = ["SIGINT", "SIGTERM"] as const;
 

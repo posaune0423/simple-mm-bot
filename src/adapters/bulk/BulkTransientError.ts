@@ -1,5 +1,6 @@
 import { match, P } from "ts-pattern";
-import { stringifyError } from "./errors.ts";
+import { RecoverableVenueError } from "../../domain/ports/RecoverableVenueError.ts";
+import { stringifyError } from "../../utils/errors.ts";
 
 type ErrorLike = {
   name?: unknown;
@@ -31,6 +32,21 @@ export function isTransientBulkError(error: unknown): boolean {
 
   const message = stringifyError(error);
   return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
+}
+
+export function toRecoverableBulkError(error: unknown, operation: string): RecoverableVenueError {
+  return new RecoverableVenueError(stringifyError(error), {
+    venue: "bulk",
+    operation,
+    cause: error,
+  });
+}
+
+export function throwRecoverableBulkError(error: unknown, operation: string): never {
+  if (isTransientBulkError(error)) {
+    throw toRecoverableBulkError(error, operation);
+  }
+  throw error;
 }
 
 function isErrorLike(error: unknown): error is ErrorLike {

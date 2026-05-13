@@ -1,3 +1,5 @@
+import { SlackWebhookError } from "./error.ts";
+
 interface SlackAttachment {
   color?: string;
   fallback?: string;
@@ -10,17 +12,6 @@ export interface SlackWebhookMessage {
   icon_emoji?: string;
   blocks?: unknown[];
   attachments?: SlackAttachment[];
-}
-
-export class SlackWebhookError extends Error {
-  constructor(
-    message: string,
-    public readonly status?: number,
-    public readonly responseText?: string,
-  ) {
-    super(message);
-    this.name = "SlackWebhookError";
-  }
 }
 
 export async function postSlackWebhook(
