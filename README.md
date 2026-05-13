@@ -107,6 +107,14 @@ bun run db:generate
 bun run db:migrate
 ```
 
+Bulk agent wallet registration:
+
+```bash
+bun run bulk:register-agent-wallet
+```
+
+Before running, edit `scripts/registerBulkAgentWallet.ts` locally and paste the main wallet private key and agent wallet public key into the constants at the top of the file. The script intentionally does not read the main wallet key from `.env`, `Bun.env`, or YAML config. Restore the placeholders after execution and do not commit real keys.
+
 ## Runtime Model
 
 The main runtime stays thin:

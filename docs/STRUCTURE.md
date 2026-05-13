@@ -105,6 +105,7 @@ simple-mm-bot/
 │   └── e2e/
 ├── scripts/
 │   ├── backtestPaperLoop.ts
+│   ├── registerBulkAgentWallet.ts
 │   ├── evaluateLiveRun.ts
 │   ├── tuneBulkConfig.ts
 │   ├── createDesignIssues.ts

@@ -5,6 +5,7 @@
   "scripts": {
     "start": "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=live bun run src/main.ts",
     "bulk:preflight": "bun run scripts/checkBulkPrivateApi.ts",
+    "bulk:register-agent-wallet": "bun run scripts/registerBulkAgentWallet.ts",
     "dev:paper": "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=paper bun run src/main.ts",
     "dev:backtest": "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=backtest bun run src/main.ts",
     "db:generate": "drizzle-kit generate",
