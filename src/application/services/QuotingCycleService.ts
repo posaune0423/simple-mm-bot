@@ -17,19 +17,19 @@ import type { OrderIntentBuilder, OrderIntentBuildResult } from "./OrderIntentBu
 import type { OrderReconciler, ReconcileResult } from "./OrderReconciler.ts";
 import { toLegacyQuoteForMetrics } from "./QuoteMetricsAdapter.ts";
 
-export type QuoteRefreshExecutionConfig = Readonly<{
+export type QuotingCycleExecutionConfig = Readonly<{
   defaultTimeInForce: OrderTimeInForce;
   postOnly: boolean;
 }>;
 
-export type QuoteRefreshMarkoutFeedbackConfig = Readonly<{
+export type QuotingCycleMarkoutFeedbackConfig = Readonly<{
   enabled: boolean;
   lookbackFills?: number;
   maxFillAgeMs?: number;
   horizonsSec: readonly number[];
 }>;
 
-export class QuoteRefreshService {
+export class QuotingCycleService {
   private previousPlacementMid: number | null = null;
 
   constructor(
@@ -38,10 +38,10 @@ export class QuoteRefreshService {
     private readonly strategy: Strategy,
     private readonly orderIntentBuilder: OrderIntentBuilder,
     private readonly orderReconciler: OrderReconciler,
-    private readonly execution: QuoteRefreshExecutionConfig,
+    private readonly execution: QuotingCycleExecutionConfig,
     private readonly metrics?: MetricsRecorder,
     private readonly markoutFeedbackRepository?: IMarkoutFeedbackRepository,
-    private readonly markoutFeedbackGate: QuoteRefreshMarkoutFeedbackConfig = {
+    private readonly markoutFeedbackGate: QuotingCycleMarkoutFeedbackConfig = {
       enabled: false,
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
@@ -156,7 +156,7 @@ export class QuoteRefreshService {
     decisionMid: number;
   }): Promise<void> {
     logger.info(
-      `[application] QuoteRefresh | QUOTE_CREATED | market=${input.snapshot.market} bid=${input.quote.bids[0]?.price ?? "none"} ask=${input.quote.asks[0]?.price ?? "none"} bidSize=${input.quote.bids[0]?.size ?? 0} askSize=${input.quote.asks[0]?.size ?? 0} bidIntent=${input.quote.bids[0]?.exposureIntent ?? "disabled"} askIntent=${input.quote.asks[0]?.exposureIntent ?? "disabled"} levelCount=${Math.max(input.quote.bids.length, input.quote.asks.length)} policy=${this.execution.defaultTimeInForce} positionQty=${input.positionQty}`,
+      `[application] QuotingCycle | QUOTE_CREATED | market=${input.snapshot.market} bid=${input.quote.bids[0]?.price ?? "none"} ask=${input.quote.asks[0]?.price ?? "none"} bidSize=${input.quote.bids[0]?.size ?? 0} askSize=${input.quote.asks[0]?.size ?? 0} bidIntent=${input.quote.bids[0]?.exposureIntent ?? "disabled"} askIntent=${input.quote.asks[0]?.exposureIntent ?? "disabled"} levelCount=${Math.max(input.quote.bids.length, input.quote.asks.length)} policy=${this.execution.defaultTimeInForce} positionQty=${input.positionQty}`,
     );
     await this.recordRuntimeHealth("info", "quote_build_summary", "Quote build summary captured", {
       market: input.snapshot.market,
@@ -219,7 +219,7 @@ export class QuoteRefreshService {
           targetOrderCount: buildResult.value.intents.length,
           skippedCount: buildResult.value.skipped.length,
           reconcileMs: Date.now() - reconcileStartedAt,
-          totalRefreshMs: Date.now() - input.cycleStartedAt,
+          totalCycleMs: Date.now() - input.cycleStartedAt,
           qualityGateMs: input.qualityGateMs,
           quoteComputeMs: input.quoteComputeMs,
           recordQuoteMs,
@@ -232,7 +232,7 @@ export class QuoteRefreshService {
           ),
           decisionMid: input.decisionMid,
           submitMid,
-          midMoveDuringRefreshBps:
+          midMoveDuringCycleBps:
             input.decisionMid > 0
               ? ((submitMid - input.decisionMid) / input.decisionMid) * 10_000
               : 0,
@@ -260,7 +260,7 @@ export class QuoteRefreshService {
       });
     } catch (error) {
       logger.warn(
-        `[application] QuoteRefresh | MARKOUT_FEEDBACK_READ_FAILED | market=${snapshot.market} error=${stringifyError(error)}`,
+        `[application] QuotingCycle | MARKOUT_FEEDBACK_READ_FAILED | market=${snapshot.market} error=${stringifyError(error)}`,
       );
       return [];
     }
@@ -296,7 +296,7 @@ export class QuoteRefreshService {
     targetOrderCount: number;
     skippedCount: number;
     reconcileMs: number;
-    totalRefreshMs: number;
+    totalCycleMs: number;
     qualityGateMs: number;
     quoteComputeMs: number;
     recordQuoteMs: number;
@@ -306,7 +306,7 @@ export class QuoteRefreshService {
     bookAgeMsAtSubmit: number;
     decisionMid: number;
     submitMid: number;
-    midMoveDuringRefreshBps: number;
+    midMoveDuringCycleBps: number;
     quoteCycleId: string;
   }): Promise<void> {
     await this.recordRuntimeHealth(
@@ -320,13 +320,13 @@ export class QuoteRefreshService {
         recordQuoteMs: input.recordQuoteMs,
         buildOrdersMs: input.buildOrdersMs,
         reconcileMs: input.reconcileMs,
-        totalRefreshMs: input.totalRefreshMs,
+        totalCycleMs: input.totalCycleMs,
         bookAgeMsAtDecision: input.bookAgeMsAtDecision,
         tickerAgeMsAtDecision: input.tickerAgeMsAtDecision,
         bookAgeMsAtSubmit: input.bookAgeMsAtSubmit,
         decisionMid: input.decisionMid,
         submitMid: input.submitMid,
-        midMoveDuringRefreshBps: input.midMoveDuringRefreshBps,
+        midMoveDuringCycleBps: input.midMoveDuringCycleBps,
         targetOrderCount: input.targetOrderCount,
         activeOrderCount: input.result.activeOrders.length,
         skippedCount: input.skippedCount,
@@ -335,7 +335,7 @@ export class QuoteRefreshService {
     );
     if (input.result.activeOrders.length === 0) {
       logger.info(
-        `[application] QuoteRefresh | NO_ACTIVE_ORDERS | market=${input.snapshot.market} targetCount=${input.targetOrderCount} rejectedOrSkipped=true`,
+        `[application] QuotingCycle | NO_ACTIVE_ORDERS | market=${input.snapshot.market} targetCount=${input.targetOrderCount} rejectedOrSkipped=true`,
       );
       await this.recordRuntimeHealth(
         "info",
@@ -349,7 +349,7 @@ export class QuoteRefreshService {
     const bidOrder = input.result.activeOrders.find((entry) => entry.side === "buy")?.order;
     const askOrder = input.result.activeOrders.find((entry) => entry.side === "sell")?.order;
     logger.info(
-      `[application] QuoteRefresh | ORDERS_SUBMITTED | market=${input.snapshot.market} bidOrderId=${bidOrder?.id ?? "none"} bidStatus=${bidOrder?.status ?? "skipped"} askOrderId=${askOrder?.id ?? "none"} askStatus=${askOrder?.status ?? "skipped"}`,
+      `[application] QuotingCycle | ORDERS_SUBMITTED | market=${input.snapshot.market} bidOrderId=${bidOrder?.id ?? "none"} bidStatus=${bidOrder?.status ?? "skipped"} askOrderId=${askOrder?.id ?? "none"} askStatus=${askOrder?.status ?? "skipped"}`,
     );
   }
 
@@ -366,7 +366,7 @@ export class QuoteRefreshService {
       await this.metrics.recordRuntimeHealth(level, code, message, rawSummary);
     } catch (error) {
       logger.warn(
-        `[application] QuoteRefresh | RUNTIME_HEALTH_RECORD_FAILED | code=${code} error=${stringifyError(error)}`,
+        `[application] QuotingCycle | RUNTIME_HEALTH_RECORD_FAILED | code=${code} error=${stringifyError(error)}`,
       );
     }
   }

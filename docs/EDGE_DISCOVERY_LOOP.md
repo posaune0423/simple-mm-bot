@@ -212,7 +212,7 @@ Hypothesis:
 - quote生成の hot path では DB view scan や重い集計を行わない。
 - regime判定、side markout feedback、time-of-day別の control は cold path / background updater で計算し、hot path は `SimplePmmStrategy` の side spec 生成で同期的に読むだけにする。
 - `QuoteEngine`、`QuoteModel`、`Strategy` は domain の pure logic として保ち、DB、Bulk SDK、timer、logger には依存させない。
-- `QuoteRefreshService` の hot path budget は、market snapshot取得、position取得、pure quote compute、order reconcile に集中させる。metrics record、quality scan、report用集計は quote生成を待たせない。
+- `QuotingCycleService` の hot path budget は、market snapshot取得、position取得、pure quote compute、order reconcile に集中させる。metrics record、quality scan、report用集計は quote生成を待たせない。
 
 ## Agent Output Template
 

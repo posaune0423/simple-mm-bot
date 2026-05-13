@@ -13,7 +13,7 @@ interface UseCases {
   guardRisk: { execute(): Promise<RiskState | RiskDecision> };
   initializePosition?: { execute(): Promise<void> };
   syncPosition?: { execute(): Promise<PositionSyncResult> };
-  refreshQuotes: { execute(): Promise<void> };
+  quotingCycle: { execute(): Promise<void> };
   updatePositionOnFill: { execute(fill: Fill): Promise<void> };
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
   reduceInventory: { executeIfNeeded(): Promise<boolean> };
@@ -277,7 +277,7 @@ export class Bot {
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "risk_gate_pause_quoting",
-        "Risk gate paused quote refresh",
+        "Risk gate paused quoting cycle",
         riskRuntimeSummary(tick, riskDecision),
       );
       await this.cancelOpenOrdersForPause(tick, riskDecision);
@@ -289,7 +289,7 @@ export class Bot {
     await this.syncPositionIfDue();
     const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
     if (riskState === "OK" && !didReduceInventory) {
-      await this.useCases.refreshQuotes.execute();
+      await this.useCases.quotingCycle.execute();
       this.quotedCount += 2;
     }
     return this.advanceMarketFeed(tick);
@@ -418,7 +418,7 @@ export class Bot {
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "pause_quote_cancel_all",
-        "Cancelled open orders while quote refresh is paused",
+        "Cancelled open orders while quoting cycle is paused",
         { ...summary, latencyMs, success: true },
       );
     } catch (error) {
@@ -429,7 +429,7 @@ export class Bot {
       await this.metrics?.recordRuntimeHealth(
         "error",
         "pause_quote_cancel_all",
-        "Failed to cancel open orders while quote refresh is paused",
+        "Failed to cancel open orders while quoting cycle is paused",
         { ...summary, latencyMs, success: false, error: stringifyError(error) },
       );
     }

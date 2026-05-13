@@ -39,7 +39,7 @@ import {
 import { buildQuoteModel } from "./factories/QuoteModelFactory.ts";
 import { buildStrategy } from "./factories/StrategyFactory.ts";
 import { OrderIntentBuilder } from "./services/OrderIntentBuilder.ts";
-import { QuoteRefreshService } from "./services/QuoteRefreshService.ts";
+import { QuotingCycleService } from "./services/QuotingCycleService.ts";
 import { BufferedRecordOhlcvUseCase } from "./usecases/BufferedRecordOhlcvUseCase.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
@@ -79,7 +79,7 @@ export class DIContainer {
 
     return new Bot(
       {
-        refreshQuotes: new QuoteRefreshService(
+        quotingCycle: new QuotingCycleService(
           feed,
           positionRepository,
           strategy,

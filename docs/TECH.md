@@ -42,7 +42,7 @@ bot の 1 tick は以下の責務順で動作する。
 2. event task を drain する
 3. 必要なら `SyncPositionUseCase` で venue position を同期する
 4. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
-5. risk が `OK` かつ reduce 未実行の場合だけ `QuoteRefreshService` を実行する
+5. risk が `OK` かつ reduce 未実行の場合だけ `QuotingCycleService` を実行する
 6. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
 7. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
 
@@ -125,7 +125,7 @@ Bullet の DI path は持たない。
 
 #### Quote Order Reconcile
 
-`QuoteRefreshService` は通常 tick で blanket `cancelAll()` を行わない。
+`QuotingCycleService` は通常 tick で blanket `cancelAll()` を行わない。
 `Strategy` が `Quote` を返し、`OrderIntentBuilder` が venue-neutral な `OrderIntent[]` へ変換し、`ManagedOrderReconciler` が前回 order と今回 intent を比較して価格/サイズ差分が閾値以上の order だけ cancel/replace する。
 `Bot` cleanup は open order cleanup のため `cancelAll()` を実行し、`shutdown.closePositionPolicy` が `emergency_only` の場合は通常停止で market close を行わず、emergency stop 時だけ close use case を実行する。
 

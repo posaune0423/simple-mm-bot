@@ -479,27 +479,27 @@ function evBps(value: number, notionalUsd: number | undefined): number | null {
 export function emptyQuoteFreshness(): QuoteCycleFreshnessMetrics {
   return {
     sampleCount: 0,
-    totalRefreshMsP50: null,
-    totalRefreshMsP95: null,
-    totalRefreshMsMax: null,
+    totalCycleMsP50: null,
+    totalCycleMsP95: null,
+    totalCycleMsMax: null,
     qualityGateMsP95: null,
     recordQuoteMsP95: null,
     reconcileMsP95: null,
     bookAgeMsAtDecisionP95: null,
-    midMoveDuringRefreshBpsP95Abs: null,
+    midMoveDuringCycleBpsP95Abs: null,
     slowCycleRate: null,
   };
 }
 
 interface QuoteCycleFreshnessMetrics {
   sampleCount: number;
-  totalRefreshMsP50: number | null;
-  totalRefreshMsP95: number | null;
-  totalRefreshMsMax: number | null;
+  totalCycleMsP50: number | null;
+  totalCycleMsP95: number | null;
+  totalCycleMsMax: number | null;
   qualityGateMsP95: number | null;
   recordQuoteMsP95: number | null;
   reconcileMsP95: number | null;
   bookAgeMsAtDecisionP95: number | null;
-  midMoveDuringRefreshBpsP95Abs: number | null;
+  midMoveDuringCycleBpsP95Abs: number | null;
   slowCycleRate: number | null;
 }

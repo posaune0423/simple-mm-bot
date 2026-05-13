@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { MetricsRecorder } from "../../../src/application/services/MetricsRecorder.ts";
 import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
 import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
-import { QuoteRefreshService } from "../../../src/application/services/QuoteRefreshService.ts";
+import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
 import { AvellanedaStoikovQuoteModel } from "../../../src/domain/quote-models/AvellanedaStoikovQuoteModel.ts";
 import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalculator.ts";
 import { QuoteEngine } from "../../../src/domain/services/QuoteEngine.ts";
@@ -29,7 +29,7 @@ interface RuntimeHealthRow {
 }
 
 interface QuoteCycleFreshnessPayload {
-  totalRefreshMs: number;
+  totalCycleMs: number;
   quoteComputeMs: number;
   recordQuoteMs: number;
   buildOrdersMs: number;
@@ -47,7 +47,7 @@ describe("quote-cycle latency", () => {
     rmSync(tempDir, { force: true, recursive: true });
   });
 
-  test("measures fixture-backed quote refresh latency through SQLite runtime health telemetry", async () => {
+  test("measures fixture-backed quoting cycle latency through SQLite runtime health telemetry", async () => {
     const sqliteClient = createSqliteClient(join(tempDir, "metrics.db"));
     const repository = new SqliteMetricsRepository(sqliteClient.db);
     const metrics = new MetricsRecorder(repository, {
@@ -66,7 +66,7 @@ describe("quote-cycle latency", () => {
       exchangeDropQuoteCooldownMs: 0,
       maxRestingMs: 0,
     });
-    const service = new QuoteRefreshService(
+    const service = new QuotingCycleService(
       marketFeed,
       new FixturePositionRepository(),
       new SimplePmmStrategy(createQuoteEngine()),
@@ -92,8 +92,8 @@ describe("quote-cycle latency", () => {
 
       const summary = summarizeLatency(samples);
       process.stdout.write(`quote_cycle_latency ${JSON.stringify(summary)}\n`);
-      expect(summary.p95TotalRefreshMs).toBeLessThanOrEqual(150);
-      expect(summary.maxTotalRefreshMs).toBeLessThanOrEqual(500);
+      expect(summary.p95TotalCycleMs).toBeLessThanOrEqual(150);
+      expect(summary.maxTotalCycleMs).toBeLessThanOrEqual(500);
     } finally {
       await metrics.finish(Date.now(), "completed");
       sqliteClient.sqlite.close();
@@ -202,19 +202,19 @@ function parseQuoteCycleFreshness(rawJson: string | null): QuoteCycleFreshnessPa
     throw new Error("quote_cycle_freshness row is missing raw_json");
   }
   const payload = JSON.parse(rawJson) as QuoteCycleFreshnessPayload;
-  if (!Number.isFinite(payload.totalRefreshMs)) {
+  if (!Number.isFinite(payload.totalCycleMs)) {
     throw new Error(`invalid quote_cycle_freshness payload: ${rawJson}`);
   }
   return payload;
 }
 
 function summarizeLatency(samples: QuoteCycleFreshnessPayload[]) {
-  const totalRefreshMs = samples.map((sample) => sample.totalRefreshMs).sort((a, b) => a - b);
+  const totalCycleMs = samples.map((sample) => sample.totalCycleMs).sort((a, b) => a - b);
   return {
     samples: samples.length,
-    p50TotalRefreshMs: percentile(totalRefreshMs, 0.5),
-    p95TotalRefreshMs: percentile(totalRefreshMs, 0.95),
-    maxTotalRefreshMs: totalRefreshMs.at(-1) ?? 0,
+    p50TotalCycleMs: percentile(totalCycleMs, 0.5),
+    p95TotalCycleMs: percentile(totalCycleMs, 0.95),
+    maxTotalCycleMs: totalCycleMs.at(-1) ?? 0,
     maxQuoteComputeMs: Math.max(...samples.map((sample) => sample.quoteComputeMs)),
     maxRecordQuoteMs: Math.max(...samples.map((sample) => sample.recordQuoteMs)),
     maxBuildOrdersMs: Math.max(...samples.map((sample) => sample.buildOrdersMs)),

@@ -665,45 +665,45 @@ function quoteFreshnessSummary(
   intervalMs: number | null,
 ): {
   sampleCount: number;
-  totalRefreshMsP50: number | null;
-  totalRefreshMsP95: number | null;
-  totalRefreshMsMax: number | null;
+  totalCycleMsP50: number | null;
+  totalCycleMsP95: number | null;
+  totalCycleMsMax: number | null;
   qualityGateMsP95: number | null;
   recordQuoteMsP95: number | null;
   reconcileMsP95: number | null;
   bookAgeMsAtDecisionP95: number | null;
-  midMoveDuringRefreshBpsP95Abs: number | null;
+  midMoveDuringCycleBpsP95Abs: number | null;
   slowCycleRate: number | null;
 } {
   if (rows.length === 0) {
     return {
       sampleCount: 0,
-      totalRefreshMsP50: null,
-      totalRefreshMsP95: null,
-      totalRefreshMsMax: null,
+      totalCycleMsP50: null,
+      totalCycleMsP95: null,
+      totalCycleMsMax: null,
       qualityGateMsP95: null,
       recordQuoteMsP95: null,
       reconcileMsP95: null,
       bookAgeMsAtDecisionP95: null,
-      midMoveDuringRefreshBpsP95Abs: null,
+      midMoveDuringCycleBpsP95Abs: null,
       slowCycleRate: null,
     };
   }
 
-  const totalRefreshMs: number[] = [];
+  const totalCycleMs: number[] = [];
   const qualityGateMs: number[] = [];
   const recordQuoteMs: number[] = [];
   const reconcileMs: number[] = [];
   const bookAgeMsAtDecision: number[] = [];
-  const midMoveDuringRefreshBpsAbs: number[] = [];
+  const midMoveDuringCycleBpsAbs: number[] = [];
 
   for (const row of rows) {
     const payload = parseQuoteFreshnessRawJson(row.rawJson);
     if (payload === null) {
       continue;
     }
-    if (typeof payload.totalRefreshMs === "number" && Number.isFinite(payload.totalRefreshMs)) {
-      totalRefreshMs.push(payload.totalRefreshMs);
+    if (typeof payload.totalCycleMs === "number" && Number.isFinite(payload.totalCycleMs)) {
+      totalCycleMs.push(payload.totalCycleMs);
     }
     if (typeof payload.qualityGateMs === "number" && Number.isFinite(payload.qualityGateMs)) {
       qualityGateMs.push(payload.qualityGateMs);
@@ -721,30 +721,30 @@ function quoteFreshnessSummary(
       bookAgeMsAtDecision.push(payload.bookAgeMsAtDecision);
     }
     if (
-      typeof payload.midMoveDuringRefreshBps === "number" &&
-      Number.isFinite(payload.midMoveDuringRefreshBps)
+      typeof payload.midMoveDuringCycleBps === "number" &&
+      Number.isFinite(payload.midMoveDuringCycleBps)
     ) {
-      midMoveDuringRefreshBpsAbs.push(Math.abs(payload.midMoveDuringRefreshBps));
+      midMoveDuringCycleBpsAbs.push(Math.abs(payload.midMoveDuringCycleBps));
     }
   }
 
-  const sampleCount = totalRefreshMs.length;
+  const sampleCount = totalCycleMs.length;
   const validIntervalMs = intervalMs === null ? null : Number(intervalMs);
   const slowCycleRate =
     validIntervalMs === null || sampleCount === 0
       ? null
-      : totalRefreshMs.filter((value) => value > validIntervalMs).length / sampleCount;
+      : totalCycleMs.filter((value) => value > validIntervalMs).length / sampleCount;
 
   return {
     sampleCount,
-    totalRefreshMsP50: percentile(totalRefreshMs, 0.5),
-    totalRefreshMsP95: percentile(totalRefreshMs, 0.95),
-    totalRefreshMsMax: totalRefreshMs.length === 0 ? null : Math.max(...totalRefreshMs),
+    totalCycleMsP50: percentile(totalCycleMs, 0.5),
+    totalCycleMsP95: percentile(totalCycleMs, 0.95),
+    totalCycleMsMax: totalCycleMs.length === 0 ? null : Math.max(...totalCycleMs),
     qualityGateMsP95: percentile(qualityGateMs, 0.95),
     recordQuoteMsP95: percentile(recordQuoteMs, 0.95),
     reconcileMsP95: percentile(reconcileMs, 0.95),
     bookAgeMsAtDecisionP95: percentile(bookAgeMsAtDecision, 0.95),
-    midMoveDuringRefreshBpsP95Abs: percentile(midMoveDuringRefreshBpsAbs, 0.95),
+    midMoveDuringCycleBpsP95Abs: percentile(midMoveDuringCycleBpsAbs, 0.95),
     slowCycleRate,
   };
 }

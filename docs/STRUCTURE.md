@@ -24,7 +24,7 @@ simple-mm-bot/
 │   │   │   ├── MetricsRecorder.ts
 │   │   │   ├── OrderIntentBuilder.ts
 │   │   │   ├── OrderReconciler.ts
-│   │   │   └── QuoteRefreshService.ts
+│   │   │   └── QuotingCycleService.ts
 │   │   └── usecases/
 │   │       ├── ClosePositionUseCase.ts
 │   │       ├── GuardRiskUseCase.ts
@@ -164,7 +164,7 @@ bot runtime と use case orchestration を置く。
 - venue protocol や SQL を直接書かない
 
 `di.ts` が具体実装を知る唯一の application 境界。
-`QuoteRefreshService` は Strategy、OrderIntentBuilder、OrderReconciler を組み合わせる orchestration service。旧 `RefreshQuotesUseCase` の責務はここへ分解済み。
+`QuotingCycleService` は Strategy、OrderIntentBuilder、OrderReconciler を組み合わせる orchestration service。旧 use case の責務はここへ分解済み。
 `ManagedOrderReconciler.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
 
 process signal handling は `main.ts` の boundary に置き、signal では `AbortController` を abort するだけにする。`Bot.start({ signal })` が stop request として受け取り、position close などの取引処理は `Bot` cleanup から use case 経由で実行する。signal handling から venue protocol を直接触らない。

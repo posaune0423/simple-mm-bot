@@ -150,9 +150,9 @@ describe("generateMetricsReport", () => {
     expect(markdown).toContain("- Required minute volume: 2314.81");
     expect(markdown).toContain("- Rebate reference 14d volume: 150000000.00");
     expect(markdown).toContain("- Rebate projected 14d volume: 115000000.00");
-    expect(markdown).toContain("## Quote Freshness");
+    expect(markdown).toContain("## Quoting Cycle");
     expect(markdown).toContain("- Samples: 0");
-    expect(markdown).toContain("- Total refresh ms: p50=n/a p95=n/a max=n/a");
+    expect(markdown).toContain("- Total cycle ms: p50=n/a p95=n/a max=n/a");
     expect(markdown).toContain("- Slow cycle rate: n/a");
   });
 
@@ -223,22 +223,22 @@ describe("generateMetricsReport", () => {
     const evaluation = minimalEvaluation();
     evaluation.runtimeHealth.quoteFreshness = {
       sampleCount: 5,
-      totalRefreshMsP50: 40,
-      totalRefreshMsP95: 120,
-      totalRefreshMsMax: 150,
+      totalCycleMsP50: 40,
+      totalCycleMsP95: 120,
+      totalCycleMsMax: 150,
       qualityGateMsP95: 12,
       recordQuoteMsP95: 18,
       reconcileMsP95: 70,
       bookAgeMsAtDecisionP95: 250,
-      midMoveDuringRefreshBpsP95Abs: 4.5,
+      midMoveDuringCycleBpsP95Abs: 4.5,
       slowCycleRate: 0.2,
     };
 
     const markdown = formatMetricsReportMarkdown({ run, evaluation });
 
-    expect(markdown).toContain("## Quote Freshness");
+    expect(markdown).toContain("## Quoting Cycle");
     expect(markdown).toContain("- Samples: 5");
-    expect(markdown).toContain("- Total refresh ms: p50=40.00 p95=120.00 max=150.00");
+    expect(markdown).toContain("- Total cycle ms: p50=40.00 p95=120.00 max=150.00");
     expect(markdown).toContain("- Quality gate p95: 12 ms");
     expect(markdown).toContain("- Record quote p95: 18 ms");
     expect(markdown).toContain("- Reconcile p95: 70 ms");
@@ -264,7 +264,7 @@ describe("generateMetricsReport", () => {
 
     const markdown = formatMetricsReportMarkdown({ run, evaluation });
 
-    expect(markdown).toContain("## Quote Freshness");
+    expect(markdown).toContain("## Quoting Cycle");
     expect(markdown).toContain("- Samples: 0");
   });
 });

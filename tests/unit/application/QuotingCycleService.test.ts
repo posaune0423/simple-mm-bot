@@ -3,7 +3,7 @@ import { ok, okAsync } from "neverthrow";
 
 import type { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
 import type { OrderReconciler } from "../../../src/application/services/OrderReconciler.ts";
-import { QuoteRefreshService } from "../../../src/application/services/QuoteRefreshService.ts";
+import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
 import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type { Position } from "../../../src/domain/types/Position.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
@@ -15,10 +15,10 @@ import {
   type StrategyInput,
 } from "../../../src/domain/strategies/Strategy.ts";
 
-describe("QuoteRefreshService", () => {
+describe("QuotingCycleService", () => {
   test("treats markout feedback repository failures as an empty non-fatal signal", async () => {
     const strategyInputs: StrategyInput[] = [];
-    const service = new QuoteRefreshService(
+    const service = new QuotingCycleService(
       new FixtureMarketFeed(),
       new FixturePositionRepository(),
       {

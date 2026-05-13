@@ -40,7 +40,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
@@ -100,9 +100,9 @@ describe("Bot", () => {
             return "OK" as const;
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -177,7 +177,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
@@ -227,9 +227,9 @@ describe("Bot", () => {
             return "OK" as const;
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -285,9 +285,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: {
@@ -359,9 +359,9 @@ describe("Bot", () => {
             positionAgeMs: 5_001,
           }),
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            throw new Error("should not refresh while paused");
+            throw new Error("should not quote while paused");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -447,7 +447,7 @@ describe("Bot", () => {
     });
   });
 
-  test("cancels open orders once when quote refreshing is paused", async () => {
+  test("cancels open orders once when quoting cycle is paused", async () => {
     const calls: string[] = [];
     const healthEvents: Array<{ level: string; code: string; rawSummary?: unknown }> = [];
     const decisions = [
@@ -485,9 +485,9 @@ describe("Bot", () => {
             return decisions.shift() ?? "OK";
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -558,7 +558,7 @@ describe("Bot", () => {
       "reduce",
       "guard",
       "reduce",
-      "refresh",
+      "quoteCycle",
       "cancelAll",
     ]);
     expect(healthEvents.map((event) => event.code)).toEqual([
@@ -588,9 +588,9 @@ describe("Bot", () => {
             calls.push("initializePosition");
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -636,10 +636,10 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls.slice(0, 4)).toEqual(["connect", "syncFills", "initializePosition", "refresh"]);
+    expect(calls.slice(0, 4)).toEqual(["connect", "syncFills", "initializePosition", "quoteCycle"]);
   });
 
-  test("runs inventory reduction before normal quote refresh and skips quotes when reducing", async () => {
+  test("runs inventory reduction before normal quoting cycle and skips quotes when reducing", async () => {
     const calls: string[] = [];
     const bot = new Bot(
       {
@@ -649,9 +649,9 @@ describe("Bot", () => {
             return "OK" as const;
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -707,9 +707,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -772,7 +772,7 @@ describe("Bot", () => {
     expect(calls).toEqual([
       "connect",
       "subscribe",
-      "refresh",
+      "quoteCycle",
       "stopBackgroundSync",
       "cancelAll",
       "closePosition",
@@ -787,9 +787,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -838,7 +838,7 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["refresh", "cancelAll"]);
+    expect(calls).toEqual(["quoteCycle", "cancelAll"]);
   });
 
   test("still closes positions on emergency stop with emergency-only shutdown policy", async () => {
@@ -846,7 +846,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
@@ -907,9 +907,9 @@ describe("Bot", () => {
             return riskCalls === 1 ? ("EMERGENCY_STOP" as const) : ("OK" as const);
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -959,7 +959,7 @@ describe("Bot", () => {
     await bot.start(1);
     await bot.start(1);
 
-    expect(calls).toEqual(["cancelAll", "closePosition", "refresh", "cancelAll"]);
+    expect(calls).toEqual(["cancelAll", "closePosition", "quoteCycle", "cancelAll"]);
   });
 
   test("syncs existing fills before subscribing to live fill events", async () => {
@@ -967,7 +967,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "EMERGENCY_STOP" as const },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
@@ -1015,7 +1015,7 @@ describe("Bot", () => {
     expect(calls).toEqual(["connect", "syncFills", "subscribeFills", "syncFills", "syncFills"]);
   });
 
-  test("syncs live position before quote refresh so manual account changes do not linger", async () => {
+  test("syncs live position before quoting cycle so manual account changes do not linger", async () => {
     const calls: string[] = [];
     const bot = new Bot(
       {
@@ -1031,9 +1031,9 @@ describe("Bot", () => {
             };
           },
         },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -1081,7 +1081,7 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["syncPosition", "reduce", "refresh"]);
+    expect(calls).toEqual(["syncPosition", "reduce", "quoteCycle"]);
   });
 
   test("does not double-apply fills to position when the gateway has authoritative position", async () => {
@@ -1090,9 +1090,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: {
@@ -1162,7 +1162,7 @@ describe("Bot", () => {
 
     await bot.start(1);
 
-    expect(calls).toEqual(["recordFill", "refresh"]);
+    expect(calls).toEqual(["recordFill", "quoteCycle"]);
   });
 
   test("does not warn when live position sync only corrects floating point dust", async () => {
@@ -1178,7 +1178,7 @@ describe("Bot", () => {
             deltaQty: 5.551115123125783e-17,
           }),
         },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
@@ -1246,7 +1246,7 @@ describe("Bot", () => {
             deltaQty: -0.082597,
           }),
         },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },
@@ -1307,9 +1307,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -1376,7 +1376,7 @@ describe("Bot", () => {
       "syncFills",
       "subscribeMarket",
       "subscribeFills",
-      "refresh",
+      "quoteCycle",
       "cancelAll",
       "syncFills",
       "disconnect",
@@ -1392,7 +1392,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
             stopBot();
           },
@@ -1449,7 +1449,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: {
@@ -1514,10 +1514,10 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
-            if (calls.filter((call) => call === "refresh").length === 1) {
+            calls.push("quoteCycle");
+            if (calls.filter((call) => call === "quoteCycle").length === 1) {
               throw Object.assign(new Error("HTTP error 408"), {
                 name: "BulkHttpError",
                 status: 408,
@@ -1573,7 +1573,7 @@ describe("Bot", () => {
       logs.restore();
     }
 
-    expect(calls).toEqual(["connect", "refresh", "refresh", "cancelAll", "disconnect"]);
+    expect(calls).toEqual(["connect", "quoteCycle", "quoteCycle", "cancelAll", "disconnect"]);
     expect(logs.messages).toContain(
       "[application] Bot | TICK_TRANSIENT_ERROR | tick=1 error=BulkHttpError: HTTP error 408",
     );
@@ -1585,9 +1585,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: {
@@ -1663,7 +1663,7 @@ describe("Bot", () => {
       "connect",
       "syncFills",
       "subscribe",
-      "refresh",
+      "quoteCycle",
       "cancelAll",
       "syncFills",
       "fill:late-fill",
@@ -1678,9 +1678,9 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
+            calls.push("quoteCycle");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -1756,7 +1756,7 @@ describe("Bot", () => {
     expect(calls).toEqual([
       "connect",
       "subscribe",
-      "refresh",
+      "quoteCycle",
       "stopBackgroundSync",
       "cancelAll",
       "closePosition",
@@ -1775,10 +1775,10 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
-            calls.push("refresh");
-            throw new Error("refresh failed");
+            calls.push("quoteCycle");
+            throw new Error("quoting cycle failed");
           },
         },
         updatePositionOnFill: { execute: async () => {} },
@@ -1840,11 +1840,11 @@ describe("Bot", () => {
     }
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe("refresh failed");
+    expect((error as Error).message).toBe("quoting cycle failed");
     expect(calls).toEqual([
       "connect",
       "subscribe",
-      "refresh",
+      "quoteCycle",
       "closePosition",
       "disconnect",
       "unsubscribe",
@@ -1878,7 +1878,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
             marketListener?.({
               market: "BTC-USD",
@@ -1930,7 +1930,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
             void marketListener?.({
               market: "BTC-USD",
@@ -2040,7 +2040,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: {
+        quotingCycle: {
           execute: async () => {
             quoteCount += 1;
             void marketListener?.({
@@ -2125,7 +2125,7 @@ describe("Bot", () => {
     const bot = new Bot(
       {
         guardRisk: { execute: async () => "OK" as const },
-        refreshQuotes: { execute: async () => {} },
+        quotingCycle: { execute: async () => {} },
         updatePositionOnFill: { execute: async () => {} },
         recordOhlcv: { execute: async () => {} },
         reduceInventory: { executeIfNeeded: async () => false },

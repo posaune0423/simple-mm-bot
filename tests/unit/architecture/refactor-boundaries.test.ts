@@ -33,6 +33,7 @@ const removedLegacyFiles = [
   "src/domain/orders/OrderTypes.ts",
   "src/domain/positions/Position.ts",
   "src/domain/legacy/LegacyQuote.ts",
+  "src/application/services/QuoteRefreshService.ts",
 ];
 
 describe("refactor architecture boundaries", () => {
@@ -42,12 +43,15 @@ describe("refactor architecture boundaries", () => {
     }
   });
 
-  test("application DI uses the new quote refresh composition", () => {
+  test("application DI uses the new quoting cycle composition", () => {
     const di = readFileSync(join(root, "src/application/di.ts"), "utf8");
 
     expect(di).not.toContain("QuotingStrategyFactory");
     expect(di).not.toContain("RefreshQuotesUseCase");
-    expect(di).toContain("QuoteRefreshService");
+    expect(di).not.toContain("QuoteRefresh");
+    expect(di).not.toContain("refreshQuotes");
+    expect(di).toContain("QuotingCycleService");
+    expect(di).toContain("quotingCycle");
     expect(di).toContain("StrategyFactory");
     expect(di).toContain("OrderIntentBuilder");
     expect(di).toContain("ManagedOrderReconciler");
@@ -210,6 +214,17 @@ describe("refactor architecture boundaries", () => {
       const source = readFileSync(join(root, file), "utf8");
       expect(source, file).toContain("ts-pattern");
       expect(source, file).toContain("match(");
+    }
+  });
+
+  test("quote refresh concept is absent from runtime names", () => {
+    for (const sourceRoot of sourceRoots) {
+      for (const file of tsFiles(join(root, sourceRoot))) {
+        const relative = file.replace(`${root}/`, "");
+        const source = readFileSync(file, "utf8");
+        expect(source, relative).not.toContain("QuoteRefresh");
+        expect(source, relative).not.toContain("refreshQuotes");
+      }
     }
   });
 });

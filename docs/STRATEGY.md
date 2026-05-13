@@ -30,11 +30,11 @@ flowchart LR
 
 `strategies/` には `Strategy` contract、返り値 ADT の `StrategyDecision`、input signal の `SideMarkoutFeedback`、具象 strategy 実装を置く。`StrategyDecision` は value object ではなく strategy contract の一部として扱う。
 
-## Tick 内の quote refresh
+## Tick 内の quoting cycle
 
-`Bot` の tick 順序は risk guard、event drain、position sync、inventory reduction、quote refresh の順を維持する。quote refresh は `QuoteRefreshService` が orchestration し、旧 `RefreshQuotesUseCase` の責務は次に分解済み。
+`Bot` の tick 順序は risk guard、event drain、position sync、inventory reduction、quoting cycle の順を維持する。quoting cycle は `QuotingCycleService` が orchestration し、旧 use case の責務は次に分解済み。
 
-1. `QuoteRefreshService` が market snapshot、position、markout feedback を読む
+1. `QuotingCycleService` が market snapshot、position、markout feedback を読む
 2. `SimplePmmStrategy.decide(...)` が markout feedback から side spec を作る
 3. `QuoteEngine.compute(...)` が fair price、volatility、QuoteModel 出力、ladder、inventory cap を合成して `Quote` を返す
 4. `OrderIntentBuilder.build(...)` が `Quote` を venue-neutral な `OrderIntent[]` に変換する
