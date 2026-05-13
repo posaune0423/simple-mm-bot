@@ -12,10 +12,10 @@ import type {
   OrderBookLevel,
   SnapshotListener,
 } from "../../domain/ports/IMarketFeed.ts";
-import { calculateDepthVampPrice } from "../../domain/FairPriceCalculator.ts";
+import { calculateDepthVampPrice } from "../../domain/services/FairPriceCalculator.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
-import { retryTransientBulk } from "../../utils/transientBulk.ts";
+import { retryTransientBulk } from "./BulkTransientError.ts";
 
 type BulkPositionEntry = {
   symbol?: string;

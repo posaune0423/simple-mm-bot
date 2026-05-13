@@ -4,15 +4,15 @@ import { ResultAsync } from "neverthrow";
 
 import { DIContainer } from "../src/application/di.ts";
 import { ConfigLoader } from "../src/config.ts";
-import type { PerformanceMetrics } from "../src/domain/entities/PerformanceMetrics.ts";
+import type { PerformanceMetrics } from "../src/domain/types/PerformanceMetrics.ts";
 import { resolveSqliteDatabasePath } from "../src/utils/databaseUrl.ts";
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
-import type { AppError } from "../src/utils/errors.ts";
-import { createAppError, formatAppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
 import { logger } from "../src/utils/logger.ts";
-import { BACKTEST_CONFIG_PATH, PAPER_CONFIG_PATH, STRATEGY_RUNS_DIR } from "./lib/paths.ts";
+import { DEFAULT_BULK_BETA_CONFIG_PATH, STRATEGY_RUNS_DIR } from "./lib/paths.ts";
 import { evaluateMetricsRun, type MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 
 interface BacktestPaperLoopSummary {
@@ -37,8 +37,7 @@ interface LoopRunReport {
 
 interface BacktestPaperLoopOptions {
   outputDir: string;
-  backtestConfigPath: string;
-  paperConfigPath: string;
+  configPath: string;
   from: string;
   to: string;
   paperDurationMin: number;
@@ -55,8 +54,7 @@ export function resolveBacktestPaperLoopOptions(
     options["output-dir"] ?? join(STRATEGY_RUNS_DIR, `${formatRunTimestamp(nowMs)}-${label}`);
   return {
     outputDir,
-    backtestConfigPath: options["backtest-config"] ?? options.config ?? BACKTEST_CONFIG_PATH,
-    paperConfigPath: options["paper-config"] ?? options.config ?? PAPER_CONFIG_PATH,
+    configPath: options.config ?? DEFAULT_BULK_BETA_CONFIG_PATH,
     from: options.from ?? "2024-01-01",
     to: options.to ?? "2024-01-07",
     paperDurationMin: Number(options["paper-duration-min"] ?? "1"),
@@ -105,7 +103,8 @@ function buildBot(
         restoreEnv("DATABASE_URL", previousDatabaseUrl);
       }
     }),
-    (error) => createAppError("loop.build_failed", "Failed to build bot runtime", error),
+    (error) =>
+      new ScriptError("script.loop.build_failed", "Failed to build bot runtime", { cause: error }),
   );
 }
 
@@ -225,31 +224,38 @@ function loadLatestRunReport(
   }
 }
 
-export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppError> {
+export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, ScriptError> {
   const options = resolveBacktestPaperLoopOptions(argv);
-  const { outputDir, backtestConfigPath, paperConfigPath, from, to, paperDurationMin, dbPath } =
-    options;
+  const { outputDir, configPath, from, to, paperDurationMin, dbPath } = options;
   const paperTicks = Math.max(1, Math.round(paperDurationMin * 60));
 
-  return ResultAsync.fromPromise(ensureDirectory(outputDir), (error) =>
-    createAppError("loop.prepare_failed", "Failed to prepare output directory", error),
+  return ResultAsync.fromPromise(
+    ensureDirectory(outputDir),
+    (error) =>
+      new ScriptError("script.loop.prepare_failed", "Failed to prepare output directory", {
+        cause: error,
+      }),
   )
-    .andThen(() => buildBot(backtestConfigPath, "backtest", dbPath, { from, to }))
+    .andThen(() => buildBot(configPath, "backtest", dbPath, { from, to }))
     .andThen((bot) =>
       ResultAsync.fromPromise(
         bot
           .start()
           .then(() => loadLatestRunReport(dbPath, "backtest", windowDaysBetween(from, to))),
-        (error) => createAppError("loop.backtest_failed", "Backtest execution failed", error),
+        (error) =>
+          new ScriptError("script.loop.backtest_failed", "Backtest execution failed", {
+            cause: error,
+          }),
       ),
     )
     .andThen((backtestReport) =>
-      buildBot(paperConfigPath, "paper", dbPath).andThen((bot) =>
+      buildBot(configPath, "paper", dbPath).andThen((bot) =>
         ResultAsync.fromPromise(
           bot
             .start(paperTicks)
             .then(() => loadLatestRunReport(dbPath, "paper", paperDurationMin / 60 / 24)),
-          (error) => createAppError("loop.paper_failed", "Paper execution failed", error),
+          (error) =>
+            new ScriptError("script.loop.paper_failed", "Paper execution failed", { cause: error }),
         ).map((paperReport) => ({ backtestReport, paperReport })),
       ),
     )
@@ -278,7 +284,7 @@ export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppErr
             backtest: backtestReport,
             paper: paperReport,
           }),
-          writeLoopConfigSnapshot(outputDir, backtestConfigPath, paperConfigPath, dbPath),
+          writeLoopConfigSnapshot(outputDir, configPath, dbPath),
           writeTextFile(
             join(outputDir, "run.md"),
             [
@@ -300,40 +306,26 @@ export function runBacktestPaperLoop(argv: string[]): ResultAsync<string, AppErr
           ),
         ]),
         (error) =>
-          createAppError("loop.write_failed", "Failed to write backtest/paper results", error),
+          new ScriptError("script.loop.write_failed", "Failed to write backtest/paper results", {
+            cause: error,
+          }),
       ).map(() => outputDir);
     });
 }
 
 async function writeLoopConfigSnapshot(
   outputDir: string,
-  backtestConfigPath: string,
-  paperConfigPath: string,
+  configPath: string,
   dbPath: string,
 ): Promise<void> {
   const metadata = [
     `dbPath: ${JSON.stringify(dbPath)}`,
-    `backtestConfig: ${JSON.stringify(backtestConfigPath)}`,
-    `paperConfig: ${JSON.stringify(paperConfigPath)}`,
+    `config: ${JSON.stringify(configPath)}`,
   ].join("\n");
-  const writes = [writeTextFile(join(outputDir, "config.yml"), `${metadata}\n`)];
-  if (backtestConfigPath === paperConfigPath) {
-    writes.push(
-      writeTextFile(
-        join(outputDir, basename(backtestConfigPath)),
-        await Bun.file(backtestConfigPath).text(),
-      ),
-    );
-  } else {
-    writes.push(
-      writeTextFile(
-        join(outputDir, "backtest-config.yml"),
-        await Bun.file(backtestConfigPath).text(),
-      ),
-      writeTextFile(join(outputDir, "paper-config.yml"), await Bun.file(paperConfigPath).text()),
-    );
-  }
-  await Promise.all(writes);
+  await Promise.all([
+    writeTextFile(join(outputDir, "config.yml"), `${metadata}\n`),
+    writeTextFile(join(outputDir, basename(configPath)), await Bun.file(configPath).text()),
+  ]);
 }
 
 function formatNullableNumber(value: number | null): string {
@@ -355,7 +347,7 @@ if (import.meta.main) {
       logger.info(outputDir);
     },
     (error) => {
-      logger.error(formatAppError(error));
+      logger.error(formatUnknownError(error));
       process.exitCode = 1;
     },
   );

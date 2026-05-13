@@ -1,6 +1,7 @@
-import type { Fill } from "../domain/entities/Fill.ts";
-import { flatPosition } from "../domain/entities/Position.ts";
-import type { Position } from "../domain/entities/Position.ts";
+import { match } from "ts-pattern";
+import type { Fill } from "../domain/types/Fill.ts";
+import { flatPosition } from "../domain/types/Position.ts";
+import type { Position } from "../domain/types/Position.ts";
 import type { IPositionRepository } from "../domain/ports/IPositionRepository.ts";
 
 export class InMemoryPositionRepository implements IPositionRepository {
@@ -15,7 +16,10 @@ export class InMemoryPositionRepository implements IPositionRepository {
   }
 
   async update(fill: Fill): Promise<Position> {
-    const signedQty = fill.side === "buy" ? fill.qty : -fill.qty;
+    const signedQty = match(fill.side)
+      .with("buy", () => fill.qty)
+      .with("sell", () => -fill.qty)
+      .exhaustive();
     const nextQty = this.position.qty + signedQty;
 
     if (this.position.qty === 0 || Math.sign(this.position.qty) === Math.sign(signedQty)) {

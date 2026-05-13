@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { match, P } from "ts-pattern";
 
-import type { Fill } from "../../domain/entities/Fill.ts";
-import type { Position } from "../../domain/entities/Position.ts";
+import type { Fill } from "../../domain/types/Fill.ts";
+import type { Position } from "../../domain/types/Position.ts";
 import type {
   FillListener,
   IOrderGateway,
@@ -12,6 +13,7 @@ import type {
 } from "../../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../../utils/logger.ts";
+import { isTransientBulkError, throwRecoverableBulkError } from "./BulkTransientError.ts";
 
 type BulkStatus = Record<string, Record<string, unknown> | undefined>;
 type BulkOrderResponse = {
@@ -70,11 +72,6 @@ type BulkHttpErrorLike = {
   data?: unknown;
   message?: unknown;
 };
-type ErrorLike = {
-  name?: unknown;
-  status?: unknown;
-  message?: unknown;
-};
 
 interface BulkTradeClient {
   placeLimitOrder?(params: unknown): Promise<BulkOrderResponse>;
@@ -113,7 +110,7 @@ type BulkMarketRules = {
   minNotional?: number;
 };
 
-const openStatusKeys = new Set(["resting", "working"]);
+const openStatusKeys = new Set(["resting", "working", "placed", "pending"]);
 const DEFAULT_MAX_SEEN_FILL_IDS = 20_000;
 const DEFAULT_SEEN_FILL_TTL_MS = 24 * 60 * 60 * 1_000;
 const SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS = 100;
@@ -164,22 +161,21 @@ function rejectReasonFrom(status: BulkStatus): string | undefined {
 
 function placedStatusFrom(status: BulkStatus): PlacedOrder["status"] {
   const key = statusKey(status);
-  if (!key) {
-    return "rejected";
-  }
-  if (openStatusKeys.has(key)) {
-    return "open";
-  }
-  if (filledStatusKeys.has(key)) {
-    return "filled";
-  }
-  if (key === "partiallyFilled") {
-    return "partially_filled";
-  }
-  if (cancelledStatusKeys.has(key)) {
-    return "cancelled";
-  }
-  return "rejected";
+  return match(key)
+    .with(
+      P.when((value) => value !== undefined && openStatusKeys.has(value)),
+      () => "open" as const,
+    )
+    .with(
+      P.when((value) => value !== undefined && filledStatusKeys.has(value)),
+      () => "filled" as const,
+    )
+    .with("partiallyFilled", () => "partially_filled" as const)
+    .with(
+      P.when((value) => value !== undefined && cancelledStatusKeys.has(value)),
+      () => "cancelled" as const,
+    )
+    .otherwise(() => "rejected" as const);
 }
 
 function isCrossPosition(entry: BulkPositionEntry, market: string): boolean {
@@ -224,21 +220,6 @@ function summarizeOrderError(error: BulkHttpErrorLike): unknown {
     data: error.data,
     message: error.message,
   };
-}
-
-function isTransientBulkPollingError(error: unknown): boolean {
-  if (typeof error === "object" && error !== null) {
-    const errorLike = error as ErrorLike;
-    if (errorLike.name === "BulkTimeoutError") {
-      return true;
-    }
-    if (errorLike.status === 408 || errorLike.status === "408") {
-      return true;
-    }
-  }
-
-  const message = stringifyError(error);
-  return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
 }
 
 function isRejectedOrderResult(
@@ -513,7 +494,11 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async syncFills(): Promise<void> {
-    await this.pollFillsSerialized();
+    try {
+      await this.pollFillsSerialized();
+    } catch (error) {
+      throwRecoverableBulkError(error, "sync_fills");
+    }
   }
 
   async getOpenOrders(): Promise<OpenOrder[]> {
@@ -530,7 +515,9 @@ export class BulkOrderGateway implements IOrderGateway {
     if (!this.client.account.fullAccount) {
       throw new Error(`Bulk fullAccount is required to read ${this.params.market} position.`);
     }
-    const account = await this.client.account.fullAccount(this.params.accountId);
+    const account = await this.client.account
+      .fullAccount(this.params.accountId)
+      .catch((error: unknown) => throwRecoverableBulkError(error, "get_position"));
     const position = account.positions?.find((entry) => isCrossPosition(entry, this.params.market));
 
     return {
@@ -565,7 +552,7 @@ export class BulkOrderGateway implements IOrderGateway {
       return;
     }
     await this.pollFillsSerialized().catch((error) => {
-      if (isTransientBulkPollingError(error)) {
+      if (isTransientBulkError(error)) {
         logger.warn(
           `[adapter] BulkOrderGateway | FILLS_POLL_TRANSIENT_FAILED | market=${this.params.market} error=${stringifyError(error)}`,
         );
@@ -760,23 +747,17 @@ function normalizeOpenOrder(order: BulkOpenOrder): OpenOrder | null {
 }
 
 function normalizeOpenOrderStatus(status: string | undefined): OpenOrder["status"] | null {
-  if (status === "partiallyFilled") {
-    return "partially_filled";
-  }
-  if (status === "resting" || status === "working" || status === "placed" || status === "pending") {
-    return "open";
-  }
-  return null;
+  return match(status)
+    .with("partiallyFilled", () => "partially_filled" as const)
+    .with(P.union("resting", "working", "placed", "pending"), () => "open" as const)
+    .otherwise(() => null);
 }
 
 function normalizeTimeInForce(timeInForce: string | undefined): OpenOrder["timeInForce"] {
-  if (timeInForce === "ioc") {
-    return "IOC";
-  }
-  if (timeInForce === "postOnly") {
-    return "ALO";
-  }
-  return "GTC";
+  return match(timeInForce?.toLowerCase())
+    .with("ioc", () => "IOC" as const)
+    .with(P.union("alo", "postonly"), () => "ALO" as const)
+    .otherwise(() => "GTC" as const);
 }
 
 function summarizeResponse(response: BulkOrderResponse | undefined): unknown {

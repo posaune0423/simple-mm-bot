@@ -24,13 +24,13 @@ bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と 
 Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
 metrics fact contract と agent/operator tool logic は core market making domain から分離する。
 
-| 層             | 責務                                                               | 依存可能先                             |
-| -------------- | ------------------------------------------------------------------ | -------------------------------------- |
-| Domain         | 純粋なビジネスロジック、entity、port、strategy                     | 外部依存なし                           |
-| Application    | use case の実行順序、bot ループ、DI 構成                           | domain                                 |
-| Adapters       | venue / mode ごとの port 実装                                      | domain ports + venue SDK               |
-| Infrastructure | metrics fact contract、DB client、schema、repository 実装          | domain ports + storage library         |
-| Scripts        | 保存済み metrics facts / views の評価、YAML tuning、issue planning | domain entities + infrastructure types |
+| 層             | 責務                                                                 | 依存可能先                          |
+| -------------- | -------------------------------------------------------------------- | ----------------------------------- |
+| Domain         | 純粋なビジネスロジック、value object、plain contract、port、strategy | 外部依存なし                        |
+| Application    | use case の実行順序、bot ループ、DI 構成                             | domain                              |
+| Adapters       | venue / mode ごとの port 実装                                        | domain ports + venue SDK            |
+| Infrastructure | metrics fact contract、DB client、schema、repository 実装            | domain ports + storage library      |
+| Scripts        | 保存済み metrics facts / views の評価、YAML tuning、issue planning   | domain types + infrastructure types |
 
 ## ランタイム全体像
 
@@ -39,29 +39,31 @@ metrics fact contract と agent/operator tool logic は core market making domai
 bot の 1 tick は以下の責務順で動作する。
 
 1. `GuardRiskUseCase` を実行する
-2. `OK` の場合のみ `RefreshQuotesUseCase` を実行する
-3. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
-4. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
-5. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
+2. event task を drain する
+3. 必要なら `SyncPositionUseCase` で venue position を同期する
+4. inventory が閾値超過なら `ReduceInventoryUseCase` を実行する
+5. risk が `OK` かつ reduce 未実行の場合だけ `QuotingCycleService` を実行する
+6. fill event は `MetricsRecorder` で fact DB に保存し、`UpdatePositionOnFillUseCase` で position を更新する
+7. metrics fact は `MetricsRecorder` で保存し、分析は DB view で読む
 
 この流れにより、mode や venue を知らない共通の bot ループを維持する。
 
 ## Domain 設計
 
-### Entities
+### Value Objects / Types
 
-- `Quote`
-  - bid / ask price
-  - bid / ask size
-  - order policy
-- `Position`
-  - qty
-  - avg entry
-  - unrealized PnL
-- `Fill`
-  - 約定イベントの正規化表現
-- `PerformanceMetrics`
-  - script / docs report 用の集計型
+- `value-objects/Quote`
+  - 新しい quote VO。bid/ask leg、reference/fair price、diagnostics を持ち、execution policy は持たない。
+- `value-objects/OrderIntent`
+  - submit 前の注文意図。time-in-force、post-only、reduce-only、client order id はここで扱う。
+- `types/Position`
+  - 現行 runtime の position contract。identity / lifecycle を持たないため Entity ではない。
+- `types/Fill`
+  - adapter が正規化して application へ渡す fill event contract。identity lifecycle を管理しないため Entity ではない。
+- `types/LegacyQuote`
+  - legacy metrics / adapter 互換用の旧 quote contract。一時的な型置き場であり、VO ではない。
+- `types/PerformanceMetrics`
+  - backtest / paper loop script の集計 contract。runtime domain entity ではない。
 
 ### Ports
 
@@ -75,11 +77,13 @@ bot の 1 tick は以下の責務順で動作する。
 - `IPositionRepository`
 - `IOhlcvRepository`
 
-### Strategy / Quote Engine
+### Strategy / Quote Model / Quote Engine
 
-Strategy は `quoteEngine.strategy.type: avellaneda-stoikov` を primary path にする。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
-`QuoteEngine` は fair price、volatility、strategy params、quote sizing、`defaultTimeInForce`、任意の `qualityGate` controls を統合して最終 quote を生成する。
-`QuoteEngine` は `IQuotingStrategy` のみへ依存し、具体 strategy を import しない。
+`AvellanedaStoikovQuoteModel` は pricing model であり、bot behavior strategy ではない。ladder は別 strategy ではなく `quoteEngine.levels` で quote expansion として設定する。
+`SimplePmmStrategy` は side markout feedback を見て side spec を作り、`QuoteEngine` に quote 計算を委譲する。
+`QuoteEngine` は fair price、volatility、quote model output、quote sizing、budget/notional cap、exposure intent を統合して新 `Quote` value object を生成する。
+time-in-force、post-only、reduce-only、client order id は quote ではなく `OrderIntentBuilder` / `OrderIntent` 側で扱う。
+`QuoteEngine` は `QuoteModel` interface のみへ依存し、具体 quote model を import しない。
 
 主要パラメータ:
 
@@ -121,8 +125,8 @@ Bullet の DI path は持たない。
 
 #### Quote Order Reconcile
 
-`RefreshQuotesUseCase` は通常 tick で blanket `cancelAll()` を行わない。
-`OrderManager` が前回の quote order と今回の target order を比較し、価格/サイズ差分が閾値以上の order だけ cancel/replace する。
+`QuotingCycleService` は通常 tick で blanket `cancelAll()` を行わない。
+`Strategy` が `Quote` を返し、`OrderIntentBuilder` が venue-neutral な `OrderIntent[]` へ変換し、`ManagedOrderReconciler` が前回 order と今回 intent を比較して価格/サイズ差分が閾値以上の order だけ cancel/replace する。
 `Bot` cleanup は open order cleanup のため `cancelAll()` を実行し、`shutdown.closePositionPolicy` が `emergency_only` の場合は通常停止で market close を行わず、emergency stop 時だけ close use case を実行する。
 
 ## Adapter 設計
@@ -222,18 +226,19 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 
 ## 設定管理
 
-- default config: `config/config.bulk.beta.yml`
-- Bulk beta live preset: `config/config.bulk.beta.yml`
-- Bulk mainnet live preset: `config/config.bulk.mainnet.yml`
-- Bulk paper preset: `config/config.paper.yml`
-- Bulk template: `config/config.example.yml`
-- Bulk backtest preset: `config/config.backtest.yml`
+- default config selection: `CONFIG_VENUE=bulk`, `CONFIG_PRESET=beta`
+- Bulk beta preset: `config/bulk/beta.yml`
+- Bulk mainnet preset: `config/bulk/mainnet.yml`
+- Bulk template: `config/bulk/example.yml`
+- Paper and backtest use the same venue preset with `MODE` override
 
 Runtime env default は `src/env.ts` に閉じる。Drizzle schema / migration path は `drizzle.config.ts` に置き、script / report / agent loop 用の default path は `scripts/lib/paths.ts` に集約する。
 
 環境変数による override:
 
 - `MODE`
+- `CONFIG_VENUE`
+- `CONFIG_PRESET`
 - `CONFIG_PATH`
 - `DATABASE_URL` (default: `file:data/mm.db`)
 - `LOG_LEVEL`

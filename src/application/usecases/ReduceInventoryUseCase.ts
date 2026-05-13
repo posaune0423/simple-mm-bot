@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { match, P } from "ts-pattern";
 
-import type { Position } from "../../domain/entities/Position.ts";
+import type { Position } from "../../domain/types/Position.ts";
 import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
@@ -66,7 +67,10 @@ export class ReduceInventoryUseCase {
       return false;
     }
 
-    const side: "buy" | "sell" = position.qty > 0 ? "sell" : "buy";
+    const side: "buy" | "sell" = match(position.qty > 0)
+      .with(true, () => "sell" as const)
+      .with(false, () => "buy" as const)
+      .exhaustive();
     const qty = Math.max(0, absPositionQty - reduceTargetQty);
     if (qty <= 0) {
       this.rememberReduceSnapshot(snapshot);
@@ -158,34 +162,30 @@ export class ReduceInventoryUseCase {
     phase: "market" | "fallback",
   ): Promise<PlacedOrder | null> {
     return await this.orderGateway.place(orderRequest).catch((error) => {
-      if (phase === "fallback") {
-        this.recordReduceFailure("submit_error", stringifyError(error));
-      } else {
-        logger.warn(
-          `[application] ReduceInventory | MARKET_REDUCE_SUBMIT_FAILED | market=${this.market} side=${orderRequest.side} qty=${orderRequest.qty} error=${stringifyError(error)}`,
-        );
-      }
+      match(phase)
+        .with("fallback", () => this.recordReduceFailure("submit_error", stringifyError(error)))
+        .with("market", () =>
+          logger.warn(
+            `[application] ReduceInventory | MARKET_REDUCE_SUBMIT_FAILED | market=${this.market} side=${orderRequest.side} qty=${orderRequest.qty} error=${stringifyError(error)}`,
+          ),
+        )
+        .exhaustive();
       return null;
     });
   }
 
   private isReduceAccepted(order: PlacedOrder | null): boolean {
-    return (
-      order?.status === "open" || order?.status === "filled" || order?.status === "partially_filled"
-    );
+    return match(order)
+      .with({ status: P.union("open", "filled", "partially_filled") }, () => true)
+      .otherwise(() => false);
   }
 
   private recordReduceResult(order: PlacedOrder): void {
-    if (
-      order.status === "open" ||
-      order.status === "filled" ||
-      order.status === "partially_filled"
-    ) {
-      this.consecutiveReduceFailures = 0;
-      return;
-    }
-
-    this.recordReduceFailure(order.status, order.id);
+    match(order)
+      .with({ status: P.union("open", "filled", "partially_filled") }, () => {
+        this.consecutiveReduceFailures = 0;
+      })
+      .otherwise((order) => this.recordReduceFailure(order.status, order.id));
   }
 
   private logReduceSubmitted(
@@ -242,16 +242,19 @@ function exceededAdverseMove(
     return false;
   }
 
-  const moveBps =
-    positionQty > 0
-      ? ((avgEntry - markPrice) / avgEntry) * 10_000
-      : ((markPrice - avgEntry) / avgEntry) * 10_000;
+  const moveBps = match(positionQty > 0)
+    .with(true, () => ((avgEntry - markPrice) / avgEntry) * 10_000)
+    .with(false, () => ((markPrice - avgEntry) / avgEntry) * 10_000)
+    .exhaustive();
   return moveBps >= options.maxAdverseMoveBps;
 }
 
 function aggressiveReducePrice(bestBid: number, bestAsk: number, side: "buy" | "sell"): number {
   const offset = reduceFallbackOffsetBps / 10_000;
-  const price = side === "sell" ? bestBid * (1 - offset) : bestAsk * (1 + offset);
+  const price = match(side)
+    .with("sell", () => bestBid * (1 - offset))
+    .with("buy", () => bestAsk * (1 + offset))
+    .exhaustive();
   return Number(price.toFixed(8));
 }
 
@@ -266,10 +269,10 @@ function shouldDeferFavorableReduce(input: {
   if (input.lossStop || input.adverseStop || input.absPositionQty > input.maxPositionQty) {
     return false;
   }
-  if (input.side === "buy") {
-    return input.trendBps <= -FAVORABLE_REDUCE_DEFER_THRESHOLD_BPS;
-  }
-  return input.trendBps >= FAVORABLE_REDUCE_DEFER_THRESHOLD_BPS;
+  return match(input.side)
+    .with("buy", () => input.trendBps <= -FAVORABLE_REDUCE_DEFER_THRESHOLD_BPS)
+    .with("sell", () => input.trendBps >= FAVORABLE_REDUCE_DEFER_THRESHOLD_BPS)
+    .exhaustive();
 }
 
 function midPrice(snapshot: { bestBid: number; bestAsk: number }): number {

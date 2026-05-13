@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { postSlackWebhook, SlackWebhookError } from "../../../../src/lib/slack/SlackWebhook.ts";
+import { SlackWebhookError } from "../../../../src/lib/slack/error.ts";
+import { postSlackWebhook } from "../../../../src/lib/slack/SlackWebhook.ts";
 
 function fetchUrl(input: Parameters<typeof fetch>[0]): string {
   if (typeof input === "string") {

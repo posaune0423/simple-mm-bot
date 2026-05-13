@@ -63,13 +63,13 @@ Bulk live mode:
 bun run start
 ```
 
-`bun run start` explicitly sets `MODE=live` and uses `config/config.bulk.beta.yml`.
+`bun run start` explicitly sets `MODE=live`, `CONFIG_VENUE=bulk`, and `CONFIG_PRESET=beta`.
 This is the beta/mock-capital live preset. It sends Bulk Trade orders and fails fast unless `BULK_PRIVATE_KEY` is set.
 
 Bulk mainnet live mode uses the conservative real-capital preset:
 
 ```bash
-CONFIG_PATH=config/config.bulk.mainnet.yml MODE=live bun run src/main.ts
+CONFIG_VENUE=bulk CONFIG_PRESET=mainnet MODE=live bun run src/main.ts
 ```
 
 Bulk paper mode, using the same Bulk market feed with simulated execution:
@@ -97,7 +97,7 @@ bun run test:e2e:paper
 Strategy validation loop:
 
 ```bash
-bun run loop:backtest-paper --backtest-config config/config.backtest.yml --paper-config config/config.paper.yml --from 2026-05-06 --to 2026-05-07
+bun run loop:backtest-paper --config config/bulk/beta.yml --from 2026-05-06 --to 2026-05-07
 ```
 
 Database tooling:
@@ -118,7 +118,7 @@ The main runtime stays thin:
 
 Repository split:
 
-- `src/domain`: pricing, analytics, entities, ports, strategy
+- `src/domain`: pricing, analytics, value objects, plain contracts, ports, strategy
 - `src/application`: bot loop, use cases, dependency injection
 - `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
 - `src/adapters/hyperliquid`: legacy compatibility
@@ -127,20 +127,35 @@ Repository split:
 - `scripts/lib`: external evaluation, Bulk YAML tuning, and issue planning helpers
 - `tests`: unit, integration, and e2e test suites; see `docs/TEST.md`
 
+Quoting flow:
+
+```text
+Bot tick
+  -> QuotingCycleService
+  -> Strategy
+  -> QuoteEngine
+  -> QuoteModel
+  -> Quote value object
+  -> OrderIntentBuilder
+  -> ManagedOrderReconciler
+  -> venue adapter
+```
+
+`Strategy` owns bot behavior such as side enablement and markout-feedback gates. `QuoteModel` owns pricing math such as Avellaneda-Stoikov. `OrderIntent` is the venue-neutral submit intent; venue order state stays behind the order gateway and reconciler.
+
 ## Configuration Notes
 
-- Default config path: `config/config.bulk.beta.yml`
-- Bulk beta live preset: `config/config.bulk.beta.yml`
-- Bulk mainnet live preset: `config/config.bulk.mainnet.yml`
-- Bulk paper preset: `config/config.paper.yml`
-- Bulk template: `config/config.example.yml`
-- Bulk backtest preset: `config/config.backtest.yml`
-- `MODE` can override the config file mode at runtime
+- Default config selection: `CONFIG_VENUE=bulk`, `CONFIG_PRESET=beta`
+- Bulk beta preset: `config/bulk/beta.yml`
+- Bulk mainnet preset: `config/bulk/mainnet.yml`
+- Bulk template: `config/bulk/example.yml`
+- `CONFIG_PATH` can explicitly override the venue/preset resolver
+- `MODE` can override the config file mode at runtime, so paper/backtest use the same venue preset
 - `DATABASE_URL` controls storage. Use `file:data/mm.db` for local SQLite, or `postgres://` / `postgresql://` for PostgreSQL.
 
 Bulk backtest currently replays historical OHLCV from `klines` and uses the paper fill model. Bulk historical L2 is not exposed by the current SDK/API, so backtest fill quality is approximate.
 
-Path defaults and generation destinations are centralized in `src/runtimePaths.ts`.
+Script path defaults and generation destinations are centralized in `scripts/lib/paths.ts`.
 
 ## Verification Status
 

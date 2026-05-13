@@ -1,3 +1,4 @@
+import { match } from "ts-pattern";
 import type { ReportFill, ReportFillAnalysis, ReportPerformanceMetrics } from "../types.ts";
 import { writeTextFile } from "../../../utils/fs.ts";
 import { computeHourlyAdverseRate } from "../metrics/adverseRate.ts";
@@ -306,24 +307,57 @@ function buildPeriodCharts(args: BuildPeriodChartsArgs): ChartSpec[] {
     svg: feeVsPnlChart.svg,
   });
 
-  if (period.key === "7d") {
-    const sharpe = computeRollingSharpe(fills, Math.min(60, Math.max(2, fills.length)));
-    const sharpeChart = renderLineChart(
-      sharpe.map((p) => ({ x: p.timestamp, y: p.sharpe })),
-      {
-        title: `Rolling Sharpe (${period.label})`,
-        yLabel: "Sharpe",
-        xType: "time",
-        zeroBaseline: true,
-      },
-    );
-    out.push({
-      tier: 3,
-      chartId: "rolling-sharpe",
-      alt: "Rolling Sharpe",
-      svg: sharpeChart.svg,
-    });
-  }
+  const periodSpecificCharts = match(period.key)
+    .with("7d", () => {
+      const sharpe = computeRollingSharpe(fills, Math.min(60, Math.max(2, fills.length)));
+      const sharpeChart = renderLineChart(
+        sharpe.map((p) => ({ x: p.timestamp, y: p.sharpe })),
+        {
+          title: `Rolling Sharpe (${period.label})`,
+          yLabel: "Sharpe",
+          xType: "time",
+          zeroBaseline: true,
+        },
+      );
+      return {
+        beforeMarketVolume: [
+          {
+            tier: 3,
+            chartId: "rolling-sharpe",
+            alt: "Rolling Sharpe",
+            svg: sharpeChart.svg,
+          },
+        ] satisfies ChartSpec[],
+        afterMarketVolume: [] satisfies ChartSpec[],
+      };
+    })
+    .with("24h", () => {
+      const scatterChart = renderScatterChart(
+        fills
+          .filter((f) => f.markPriceAtFill !== undefined)
+          .map((f) => ({ x: f.markPriceAtFill ?? 0, y: f.price })),
+        {
+          title: `Fill Price vs Mid (${period.label})`,
+          showDiagonal: true,
+        },
+      );
+      return {
+        beforeMarketVolume: [] satisfies ChartSpec[],
+        afterMarketVolume: [
+          {
+            tier: 3,
+            chartId: "price-vs-mid",
+            alt: "Fill Price vs Mid",
+            svg: scatterChart.svg,
+          },
+        ] satisfies ChartSpec[],
+      };
+    })
+    .otherwise(() => ({
+      beforeMarketVolume: [] satisfies ChartSpec[],
+      afterMarketVolume: [] satisfies ChartSpec[],
+    }));
+  out.push(...periodSpecificCharts.beforeMarketVolume);
 
   const marketVolume = computeMarketVolume(fills);
   const marketVolumeChart = renderBarChart(
@@ -342,23 +376,7 @@ function buildPeriodCharts(args: BuildPeriodChartsArgs): ChartSpec[] {
     svg: marketVolumeChart.svg,
   });
 
-  if (period.key === "24h") {
-    const scatterChart = renderScatterChart(
-      fills
-        .filter((f) => f.markPriceAtFill !== undefined)
-        .map((f) => ({ x: f.markPriceAtFill ?? 0, y: f.price })),
-      {
-        title: `Fill Price vs Mid (${period.label})`,
-        showDiagonal: true,
-      },
-    );
-    out.push({
-      tier: 3,
-      chartId: "price-vs-mid",
-      alt: "Fill Price vs Mid",
-      svg: scatterChart.svg,
-    });
-  }
+  out.push(...periodSpecificCharts.afterMarketVolume);
 
   return out;
 }

@@ -36,14 +36,16 @@ describe("package scripts", () => {
     const packageJson = (await Bun.file("package.json").json()) as PackageJson;
 
     expect(packageJson.scripts?.start).toBe(
-      "CONFIG_PATH=config/config.bulk.beta.yml MODE=live bun run src/main.ts",
+      "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=live bun run src/main.ts",
     );
     expect(packageJson.scripts?.["start:live"]).toBeUndefined();
     expect(packageJson.scripts?.["start:paper"]).toBeUndefined();
     expect(packageJson.scripts?.["start:backtest"]).toBeUndefined();
-    expect(packageJson.scripts?.["dev:paper"]).toBe("MODE=paper bun run src/main.ts");
+    expect(packageJson.scripts?.["dev:paper"]).toBe(
+      "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=paper bun run src/main.ts",
+    );
     expect(packageJson.scripts?.["dev:backtest"]).toBe(
-      "CONFIG_PATH=config/config.backtest.yml MODE=backtest bun run src/main.ts",
+      "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=backtest bun run src/main.ts",
     );
     expect(packageJson.scripts?.["metrics:evaluate"]).toBe("bun run scripts/evaluateLiveRun.ts");
     expect(packageJson.scripts?.["metrics:tune"]).toBe("bun run scripts/tuneBulkConfig.ts");
@@ -58,15 +60,21 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.["telemetry:report"]).toBeUndefined();
   });
 
-  test("uses the Bulk beta config as the only default live preset before mainnet launch", async () => {
+  test("uses venue-scoped Bulk presets and no mode-scoped config files", async () => {
     const dockerfile = await Bun.file("Dockerfile").text();
 
-    expect(existsSync("config/config.bulk.beta.yml")).toBe(true);
-    expect(existsSync("config/config.bulk.mainnet.yml")).toBe(true);
+    expect(existsSync("config/bulk/beta.yml")).toBe(true);
+    expect(existsSync("config/bulk/mainnet.yml")).toBe(true);
+    expect(existsSync("config/config.paper.yml")).toBe(false);
+    expect(existsSync("config/config.backtest.yml")).toBe(false);
+    expect(existsSync("config/config.bulk.beta.yml")).toBe(false);
+    expect(existsSync("config/config.bulk.mainnet.yml")).toBe(false);
     expect(existsSync("config/config.bulk.yml")).toBe(false);
     expect(existsSync("config/config.yml")).toBe(false);
     expect(dockerfile).toContain("ENV MODE=live");
-    expect(dockerfile).toContain("ENV CONFIG_PATH=config/config.bulk.beta.yml");
+    expect(dockerfile).toContain("ENV CONFIG_VENUE=bulk");
+    expect(dockerfile).toContain("ENV CONFIG_PRESET=beta");
+    expect(dockerfile).not.toContain("ENV CONFIG_PATH=");
     expect(dockerfile).not.toContain("config/config.yml");
   });
 
@@ -83,7 +91,7 @@ describe("package scripts", () => {
     expect(existsSync("scripts/lib/paths.ts")).toBe(true);
     expect(drizzleConfig).not.toContain("./src/constants.ts");
     expect(existsSync("scripts/lib/MetricsEvaluation.ts")).toBe(true);
-    expect(existsSync("src/application/MetricsRecorder.ts")).toBe(true);
+    expect(existsSync("src/application/services/MetricsRecorder.ts")).toBe(true);
     expect(existsSync("src/application/TelemetryRecorder.ts")).toBe(false);
     expect(existsSync("src/infrastructure/Telemetry.ts")).toBe(false);
     expect(existsSync("src/infrastructure/TelemetryRepository.ts")).toBe(false);

@@ -22,7 +22,7 @@ bun run test:coverage
 
 ## Latency Integration
 
-`tests/integration/latency/quote-cycle-latency.test.ts` uses fixture market, position, and order adapters with the real quote refresh path and a real SQLite metrics repository. It records `quote_cycle_freshness` runtime health rows, measures 5 warmup plus 30 sampled quote cycles, and fails when the sample is incomplete or the quote refresh soft gate is exceeded.
+`tests/integration/latency/quote-cycle-latency.test.ts` uses fixture market, position, and order adapters with the real quoting cycle path and a real SQLite metrics repository. It records `quote_cycle_freshness` runtime health rows, measures 5 warmup plus 30 sampled quote cycles, and fails when the sample is incomplete or the quoting cycle soft gate is exceeded.
 
 The test prints one compact `quote_cycle_latency` JSON line during `bun run test:integration`.
 

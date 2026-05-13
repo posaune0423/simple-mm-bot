@@ -4,7 +4,8 @@ import { tuneBulkConfigDocument } from "./lib/BulkConfigTuning.ts";
 import type { MetricsEvaluation } from "./lib/MetricsEvaluation.ts";
 import { DEFAULT_BULK_BETA_CONFIG_PATH, LATEST_METRICS_EVALUATION_PATH } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
-import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
@@ -12,7 +13,7 @@ interface EvaluationResult {
   evaluation: MetricsEvaluation;
 }
 
-function tune(argv: string[]): ResultAsync<string, AppError> {
+function tune(argv: string[]): ResultAsync<string, ScriptError> {
   const options = parseFlagOptions(argv);
   const configPath = options.config ?? DEFAULT_BULK_BETA_CONFIG_PATH;
   const evaluationPath = options.evaluation ?? LATEST_METRICS_EVALUATION_PATH;
@@ -36,14 +37,15 @@ function tune(argv: string[]): ResultAsync<string, AppError> {
       });
       return outputPath;
     })(),
-    (error) => createAppError("metrics.tune_failed", "Failed to tune Bulk config", error),
+    (error) =>
+      new ScriptError("script.metrics.tune_failed", "Failed to tune Bulk config", { cause: error }),
   );
 }
 
 void tune(Bun.argv.slice(2)).match(
   (outputPath) => logger.info(`bulk config tuning evaluated for ${outputPath}`),
   (error) => {
-    logger.error(formatAppError(error));
+    logger.error(formatUnknownError(error));
     process.exitCode = 1;
   },
 );

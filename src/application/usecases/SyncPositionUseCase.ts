@@ -1,4 +1,4 @@
-import type { Position } from "../../domain/entities/Position.ts";
+import type { Position } from "../../domain/types/Position.ts";
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import { logger } from "../../utils/logger.ts";

@@ -7,7 +7,8 @@ import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { resolveSqliteDatabasePath } from "../src/utils/databaseUrl.ts";
 import { METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
-import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 import { evaluateMetricsRun } from "./lib/MetricsEvaluation.ts";
@@ -664,45 +665,45 @@ function quoteFreshnessSummary(
   intervalMs: number | null,
 ): {
   sampleCount: number;
-  totalRefreshMsP50: number | null;
-  totalRefreshMsP95: number | null;
-  totalRefreshMsMax: number | null;
+  totalCycleMsP50: number | null;
+  totalCycleMsP95: number | null;
+  totalCycleMsMax: number | null;
   qualityGateMsP95: number | null;
   recordQuoteMsP95: number | null;
   reconcileMsP95: number | null;
   bookAgeMsAtDecisionP95: number | null;
-  midMoveDuringRefreshBpsP95Abs: number | null;
+  midMoveDuringCycleBpsP95Abs: number | null;
   slowCycleRate: number | null;
 } {
   if (rows.length === 0) {
     return {
       sampleCount: 0,
-      totalRefreshMsP50: null,
-      totalRefreshMsP95: null,
-      totalRefreshMsMax: null,
+      totalCycleMsP50: null,
+      totalCycleMsP95: null,
+      totalCycleMsMax: null,
       qualityGateMsP95: null,
       recordQuoteMsP95: null,
       reconcileMsP95: null,
       bookAgeMsAtDecisionP95: null,
-      midMoveDuringRefreshBpsP95Abs: null,
+      midMoveDuringCycleBpsP95Abs: null,
       slowCycleRate: null,
     };
   }
 
-  const totalRefreshMs: number[] = [];
+  const totalCycleMs: number[] = [];
   const qualityGateMs: number[] = [];
   const recordQuoteMs: number[] = [];
   const reconcileMs: number[] = [];
   const bookAgeMsAtDecision: number[] = [];
-  const midMoveDuringRefreshBpsAbs: number[] = [];
+  const midMoveDuringCycleBpsAbs: number[] = [];
 
   for (const row of rows) {
     const payload = parseQuoteFreshnessRawJson(row.rawJson);
     if (payload === null) {
       continue;
     }
-    if (typeof payload.totalRefreshMs === "number" && Number.isFinite(payload.totalRefreshMs)) {
-      totalRefreshMs.push(payload.totalRefreshMs);
+    if (typeof payload.totalCycleMs === "number" && Number.isFinite(payload.totalCycleMs)) {
+      totalCycleMs.push(payload.totalCycleMs);
     }
     if (typeof payload.qualityGateMs === "number" && Number.isFinite(payload.qualityGateMs)) {
       qualityGateMs.push(payload.qualityGateMs);
@@ -720,30 +721,30 @@ function quoteFreshnessSummary(
       bookAgeMsAtDecision.push(payload.bookAgeMsAtDecision);
     }
     if (
-      typeof payload.midMoveDuringRefreshBps === "number" &&
-      Number.isFinite(payload.midMoveDuringRefreshBps)
+      typeof payload.midMoveDuringCycleBps === "number" &&
+      Number.isFinite(payload.midMoveDuringCycleBps)
     ) {
-      midMoveDuringRefreshBpsAbs.push(Math.abs(payload.midMoveDuringRefreshBps));
+      midMoveDuringCycleBpsAbs.push(Math.abs(payload.midMoveDuringCycleBps));
     }
   }
 
-  const sampleCount = totalRefreshMs.length;
+  const sampleCount = totalCycleMs.length;
   const validIntervalMs = intervalMs === null ? null : Number(intervalMs);
   const slowCycleRate =
     validIntervalMs === null || sampleCount === 0
       ? null
-      : totalRefreshMs.filter((value) => value > validIntervalMs).length / sampleCount;
+      : totalCycleMs.filter((value) => value > validIntervalMs).length / sampleCount;
 
   return {
     sampleCount,
-    totalRefreshMsP50: percentile(totalRefreshMs, 0.5),
-    totalRefreshMsP95: percentile(totalRefreshMs, 0.95),
-    totalRefreshMsMax: totalRefreshMs.length === 0 ? null : Math.max(...totalRefreshMs),
+    totalCycleMsP50: percentile(totalCycleMs, 0.5),
+    totalCycleMsP95: percentile(totalCycleMs, 0.95),
+    totalCycleMsMax: totalCycleMs.length === 0 ? null : Math.max(...totalCycleMs),
     qualityGateMsP95: percentile(qualityGateMs, 0.95),
     recordQuoteMsP95: percentile(recordQuoteMs, 0.95),
     reconcileMsP95: percentile(reconcileMs, 0.95),
     bookAgeMsAtDecisionP95: percentile(bookAgeMsAtDecision, 0.95),
-    midMoveDuringRefreshBpsP95Abs: percentile(midMoveDuringRefreshBpsAbs, 0.95),
+    midMoveDuringCycleBpsP95Abs: percentile(midMoveDuringCycleBpsAbs, 0.95),
     slowCycleRate,
   };
 }
@@ -788,18 +789,20 @@ function percentile(values: number[], percentile: number): number | null {
   return sortedValues[index] ?? null;
 }
 
-function evaluate(argv: string[]): ResultAsync<string, AppError> {
+function evaluate(argv: string[]): ResultAsync<string, ScriptError> {
   const options = parseFlagOptions(argv);
   let dbPath: string;
   try {
     dbPath = options.db ?? resolveSqliteDatabasePath(Bun.env.DATABASE_URL);
   } catch (error) {
-    return ResultAsync.fromPromise(Promise.reject(error), (cause) =>
-      createAppError(
-        "metrics.invalid_database_url",
-        "metrics:evaluate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
-        cause,
-      ),
+    return ResultAsync.fromPromise(
+      Promise.reject(error),
+      (cause) =>
+        new ScriptError(
+          "script.metrics.invalid_database_url",
+          "metrics:evaluate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
+          { cause },
+        ),
     );
   }
   const runId = options["run-id"] ?? latestRunId(dbPath);
@@ -808,12 +811,16 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
   if (runId === null) {
     return ResultAsync.fromPromise(
       Promise.reject(new Error("No trading_runs rows found")),
-      (error) => createAppError("metrics.no_run", "No metrics run found", error),
+      (error) => new ScriptError("script.metrics.no_run", "No metrics run found", { cause: error }),
     );
   }
 
-  return ResultAsync.fromPromise(ensureDirectory(outputDir), (error) =>
-    createAppError("metrics.prepare_failed", "Failed to prepare output directory", error),
+  return ResultAsync.fromPromise(
+    ensureDirectory(outputDir),
+    (error) =>
+      new ScriptError("script.metrics.prepare_failed", "Failed to prepare output directory", {
+        cause: error,
+      }),
   ).andThen(() =>
     ResultAsync.fromPromise(
       (async () => {
@@ -821,7 +828,10 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
         await writeJsonFile(join(outputDir, "evaluation.json"), result);
         return outputDir;
       })(),
-      (error) => createAppError("metrics.evaluate_failed", "Failed to evaluate metrics", error),
+      (error) =>
+        new ScriptError("script.metrics.evaluate_failed", "Failed to evaluate metrics", {
+          cause: error,
+        }),
     ),
   );
 }
@@ -830,7 +840,7 @@ if (import.meta.main) {
   void evaluate(Bun.argv.slice(2)).match(
     (outputDir) => logger.info(`metrics evaluation written to ${outputDir}`),
     (error) => {
-      logger.error(formatAppError(error));
+      logger.error(formatUnknownError(error));
       process.exitCode = 1;
     },
   );

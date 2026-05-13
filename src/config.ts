@@ -1,12 +1,11 @@
 import type { ResultAsync } from "neverthrow";
+import { match } from "ts-pattern";
 import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
 
-import type { AvellanedaStoikovParams } from "./domain/strategy/avellaneda-stoikov/AvellanedaStoikovParams.ts";
-import type { BookPriceSource } from "./domain/FairPriceCalculator.ts";
+import type { AvellanedaStoikovParams } from "./domain/quote-models/AvellanedaStoikovQuoteModel.ts";
+import type { BookPriceSource } from "./domain/services/FairPriceCalculator.ts";
 import { env } from "./env.ts";
-import type { AppError } from "./utils/errors.ts";
-import { createAppError } from "./utils/errors.ts";
 import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";
 
 const modeSchema = v.picklist(["live", "paper", "backtest"]);
@@ -34,7 +33,7 @@ const quoteLevelSchema = v.object({
   halfSpreadBps: positiveNumberSchema,
   sizeUsd: positiveNumberSchema,
 });
-const quoteQualityGateSchema = v.optional(
+const markoutFeedbackGateSchema = v.optional(
   v.object({
     enabled: v.optional(v.boolean(), false),
     minAverageMarkoutBps: v.optional(v.number(), 0),
@@ -82,7 +81,7 @@ const commonConfigEntries = {
     defaultTimeInForce: v.optional(timeInForceSchema, "ALO"),
     sizing: quoteSizingSchema,
     levels: v.optional(v.pipe(v.array(quoteLevelSchema), v.minLength(1))),
-    qualityGate: quoteQualityGateSchema,
+    qualityGate: markoutFeedbackGateSchema,
     strategy: strategySchema,
   }),
   risk: v.object({
@@ -156,7 +155,27 @@ export type AppMode = AppConfig["mode"];
 
 interface LoadConfigOptions {
   configPath?: string;
+  venue?: string;
+  preset?: string;
 }
+
+class ConfigError extends Error {
+  readonly context: Readonly<Record<string, string>>;
+
+  constructor(
+    readonly code: "config.read_failed" | "config.invalid",
+    message: string,
+    options: { context?: Readonly<Record<string, string>>; cause?: unknown } = {},
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "ConfigError";
+    this.context = options.context ?? {};
+  }
+}
+
+const DEFAULT_CONFIG_VENUE = "bulk";
+const DEFAULT_CONFIG_PRESET = "beta";
+const configPathSegmentSchema = /^[a-z0-9][a-z0-9._-]*$/;
 
 function interpolateEnv(text: string): string {
   return text.replaceAll(/\$\{([A-Z0-9_]+)\}/g, (_match, key) => envValue(key) ?? "");
@@ -166,34 +185,60 @@ function envValue(key: string): string | undefined {
   return Bun.env[key] ?? (env as Record<string, string | undefined>)[key];
 }
 
-function applyEnvOverrides(config: AppConfig): AppConfig {
-  if (config.venue === "bulk") {
-    return {
-      ...config,
-      mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
-      connections: {
-        bulk: {
-          ...config.connections.bulk,
-          privateKey: envValue("BULK_PRIVATE_KEY") ?? config.connections.bulk.privateKey,
-        },
-      },
-    };
+function resolveConfigPath(options: LoadConfigOptions = {}): string {
+  const explicitPath = options.configPath ?? configSelectionEnvValue("CONFIG_PATH");
+  if (explicitPath !== undefined) {
+    return explicitPath;
   }
 
-  return {
-    ...config,
-    mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
-    connections: {
-      hyperliquid: {
-        ...config.connections.hyperliquid,
-        wsUrl: envValue("HL_WS_URL") ?? config.connections.hyperliquid.wsUrl,
-        httpUrl: envValue("HL_HTTP_URL") ?? config.connections.hyperliquid.httpUrl,
-        secretKey: envValue("HL_SECRET_KEY") ?? config.connections.hyperliquid.secretKey,
-        accountAddress:
-          envValue("HL_ACCOUNT_ADDRESS") ?? config.connections.hyperliquid.accountAddress,
+  const venue = options.venue ?? configSelectionEnvValue("CONFIG_VENUE") ?? DEFAULT_CONFIG_VENUE;
+  const preset =
+    options.preset ?? configSelectionEnvValue("CONFIG_PRESET") ?? DEFAULT_CONFIG_PRESET;
+  assertConfigPathSegment("venue", venue);
+  assertConfigPathSegment("preset", preset);
+  return `config/${venue}/${preset}.yml`;
+}
+
+function configSelectionEnvValue(key: "CONFIG_PATH" | "CONFIG_VENUE" | "CONFIG_PRESET") {
+  const value = Bun.env[key];
+  return value === undefined || value === "" ? undefined : value;
+}
+
+function assertConfigPathSegment(label: "venue" | "preset", value: string): void {
+  if (!configPathSegmentSchema.test(value)) {
+    throw new Error(`Invalid config ${label}: ${value}`);
+  }
+}
+
+function applyEnvOverrides(config: AppConfig): AppConfig {
+  return match(config)
+    .with({ venue: "bulk" }, (bulkConfig) => ({
+      ...bulkConfig,
+      mode: (envValue("MODE") as AppMode | undefined) ?? bulkConfig.mode,
+      connections: {
+        bulk: {
+          ...bulkConfig.connections.bulk,
+          privateKey: envValue("BULK_PRIVATE_KEY") ?? bulkConfig.connections.bulk.privateKey,
+        },
       },
-    },
-  };
+    }))
+    .with({ venue: "hyperliquid" }, (hyperliquidConfig) => ({
+      ...hyperliquidConfig,
+      mode: (envValue("MODE") as AppMode | undefined) ?? hyperliquidConfig.mode,
+      connections: {
+        hyperliquid: {
+          ...hyperliquidConfig.connections.hyperliquid,
+          wsUrl: envValue("HL_WS_URL") ?? hyperliquidConfig.connections.hyperliquid.wsUrl,
+          httpUrl: envValue("HL_HTTP_URL") ?? hyperliquidConfig.connections.hyperliquid.httpUrl,
+          secretKey:
+            envValue("HL_SECRET_KEY") ?? hyperliquidConfig.connections.hyperliquid.secretKey,
+          accountAddress:
+            envValue("HL_ACCOUNT_ADDRESS") ??
+            hyperliquidConfig.connections.hyperliquid.accountAddress,
+        },
+      },
+    }))
+    .exhaustive();
 }
 
 function normalizeConfig(config: AppConfig): LoadedAppConfig {
@@ -206,11 +251,16 @@ function normalizeConfig(config: AppConfig): LoadedAppConfig {
   };
 }
 
-function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, AppError> {
-  const configPath = options.configPath ?? env.CONFIG_PATH;
+function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, ConfigError> {
+  const configPath = resolveConfigPath(options);
 
-  return tryCatchAsync(Bun.file(configPath).text(), (error) =>
-    createAppError("config.read_failed", `Failed to read config: ${configPath}`, error),
+  return tryCatchAsync(
+    Bun.file(configPath).text(),
+    (error) =>
+      new ConfigError("config.read_failed", `Failed to read config: ${configPath}`, {
+        context: { configPath },
+        cause: error,
+      }),
   ).andThen((text) =>
     fromResult(
       tryCatch(
@@ -218,7 +268,11 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfi
           normalizeConfig(
             applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
           ),
-        (error) => createAppError("config.invalid", "Config validation failed", error),
+        (error) =>
+          new ConfigError("config.invalid", "Config validation failed", {
+            context: { configPath },
+            cause: error,
+          }),
       ),
     ),
   );

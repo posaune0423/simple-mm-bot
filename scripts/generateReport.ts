@@ -7,9 +7,10 @@ import { fetchReportFills } from "../src/lib/reporting/queries/MetricsFactQuery.
 import { DEFAULT_PERIODS, generateReport } from "../src/lib/reporting/report/generator.ts";
 import type { PeriodWindow } from "../src/lib/reporting/report/generator.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
-import type { AppError } from "../src/utils/errors.ts";
-import { createAppError, formatAppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { logger } from "../src/utils/logger.ts";
+import { fromResult, tryCatch } from "../src/utils/result.ts";
 
 interface RunOptions {
   mode: string;
@@ -38,25 +39,33 @@ function selectPeriods(key: string): PeriodWindow[] {
   return [...DEFAULT_PERIODS];
 }
 
-function runGenerateReport(argv: string[]): ResultAsync<string, AppError> {
+function runGenerateReport(argv: string[]): ResultAsync<string, ScriptError> {
   let options: RunOptions;
   try {
     options = parseOptions(argv);
   } catch (error) {
-    return ResultAsync.fromPromise(Promise.reject(error), (cause) =>
-      createAppError(
-        "report.invalid_database_url",
-        "report:generate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
-        cause,
-      ),
+    return ResultAsync.fromPromise(
+      Promise.reject(error),
+      (cause) =>
+        new ScriptError(
+          "script.report.invalid_database_url",
+          "report:generate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
+          { cause },
+        ),
     );
   }
   logger.info(
     `Starting report generation: mode=${options.mode}, venue=${options.venue ?? "all"}, periods=${options.periods.map((p) => p.key).join(",")}, output=${options.outputDir}`,
   );
 
-  return ResultAsync.fromPromise(Promise.resolve(createSqliteClient(options.dbPath)), (error) =>
-    createAppError("report.db_open_failed", "Failed to open SQLite database", error),
+  return fromResult(
+    tryCatch(
+      () => createSqliteClient(options.dbPath),
+      (error) =>
+        new ScriptError("script.report.db_open_failed", "Failed to open SQLite database", {
+          cause: error,
+        }),
+    ),
   ).andThen((client) =>
     ResultAsync.fromPromise(
       generateReport({
@@ -67,7 +76,10 @@ function runGenerateReport(argv: string[]): ResultAsync<string, AppError> {
         outputDir: options.outputDir,
         periods: options.periods,
       }),
-      (error) => createAppError("report.generate_failed", "Failed to generate report", error),
+      (error) =>
+        new ScriptError("script.report.generate_failed", "Failed to generate report", {
+          cause: error,
+        }),
     ).map((result) => {
       client.sqlite.close();
       return result.latestMd;
@@ -80,7 +92,7 @@ void runGenerateReport(Bun.argv.slice(2)).match(
     logger.info(`Report generated at ${path}`);
   },
   (error) => {
-    logger.error(formatAppError(error));
+    logger.error(formatUnknownError(error));
     process.exitCode = 1;
   },
 );

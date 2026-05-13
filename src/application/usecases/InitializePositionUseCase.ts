@@ -1,8 +1,8 @@
 import type { IOrderGateway } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
+import { isRecoverableVenueError } from "../../domain/ports/RecoverableVenueError.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
-import { retryTransientBulk } from "../../utils/transientBulk.ts";
 
 interface InitializePositionOptions {
   retryAttempts?: number;
@@ -22,7 +22,7 @@ export class InitializePositionUseCase {
       return;
     }
 
-    const position = await retryTransientBulk(
+    const position = await retryRecoverableVenue(
       async () => this.orderGateway.getPosition?.() ?? noPosition(),
       {
         attempts: this.options.retryAttempts ?? 1,
@@ -40,6 +40,35 @@ export class InitializePositionUseCase {
       `[application] InitializePosition | SEEDED | qty=${position.qty} avgEntry=${position.avgEntry} unrealizedPnl=${position.unrealizedPnl}`,
     );
   }
+}
+
+async function retryRecoverableVenue<T>(
+  operation: () => Promise<T>,
+  options: {
+    attempts: number;
+    delayMs: number;
+    sleep?: (ms: number) => Promise<void>;
+    onRetry?: (error: unknown, attempt: number, attempts: number) => void;
+  },
+): Promise<T> {
+  const attempts = Math.max(1, options.attempts);
+  const sleep = options.sleep ?? Bun.sleep;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRecoverableVenueError(error) || attempt === attempts) {
+        throw error;
+      }
+      options.onRetry?.(error, attempt, attempts);
+      await sleep(options.delayMs);
+    }
+  }
+
+  throw lastError;
 }
 
 function noPosition(): never {

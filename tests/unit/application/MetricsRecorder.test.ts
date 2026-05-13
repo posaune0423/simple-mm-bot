@@ -4,8 +4,8 @@ import {
   MetricsBuffer,
   MetricsFlushLoop,
   MetricsRecorder,
-} from "../../../src/application/MetricsRecorder.ts";
-import type { Fill } from "../../../src/domain/entities/Fill.ts";
+} from "../../../src/application/services/MetricsRecorder.ts";
+import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type {
   AccountStateObservationFact,
   OrderLifecycleEventFact,
@@ -593,49 +593,59 @@ describe("MetricsRecorder", () => {
   });
 
   test("records terminal ack statuses as terminal order facts", async () => {
-    const repository = new MemoryMetricsRepository();
-    const recorder = new MetricsRecorder(repository, {
-      runId: "run-terminal-ack",
-      mode: "live",
-      venue: "bulk",
-      capitalMode: "beta_mock",
-      market: "BTC-USD",
-      strategyName: "bulk-beta-leaderboard",
-      configJson: { venue: "bulk" },
-      gitDirty: false,
-    });
+    const cases = [
+      { venueStatus: "cancelled", expectedFinalStatus: "canceled" },
+      { venueStatus: "canceled by user", expectedFinalStatus: "canceled" },
+      { venueStatus: "filled", expectedFinalStatus: "filled" },
+      { venueStatus: "rejected", expectedFinalStatus: "rejected" },
+    ] as const;
 
-    await recorder.recordOrder({
-      action: "submit",
-      clientOrderId: "client-cancelled",
-      intent: "quote",
-      side: "sell",
-      orderType: "limit",
-      price: 101,
-      qty: 1,
-      timeInForce: "GTC",
-    });
-    await recorder.recordOrder({
-      action: "ack",
-      clientOrderId: "client-cancelled",
-      orderId: "venue-cancelled",
-      intent: "quote",
-      side: "sell",
-      orderType: "limit",
-      price: 101,
-      qty: 1,
-      timeInForce: "GTC",
-      status: "cancelled",
-      rawSummary: { status: "cancelled" },
-    });
-    await recorder.drainAndStop();
+    for (const [index, testCase] of cases.entries()) {
+      const repository = new MemoryMetricsRepository();
+      const recorder = new MetricsRecorder(repository, {
+        runId: `run-terminal-ack-${index}`,
+        mode: "live",
+        venue: "bulk",
+        capitalMode: "beta_mock",
+        market: "BTC-USD",
+        strategyName: "bulk-beta-leaderboard",
+        configJson: { venue: "bulk" },
+        gitDirty: false,
+      });
+      const clientOrderId = `client-${testCase.venueStatus.replaceAll(/\W+/g, "-")}`;
 
-    expect(repository.orders.at(-1)).toMatchObject({
-      id: "run-terminal-ack:client-cancelled",
-      finalStatus: "canceled",
-      venueOrderId: "venue-cancelled",
-      rawJson: { status: "cancelled" },
-    });
+      await recorder.recordOrder({
+        action: "submit",
+        clientOrderId,
+        intent: "quote",
+        side: "sell",
+        orderType: "limit",
+        price: 101,
+        qty: 1,
+        timeInForce: "GTC",
+      });
+      await recorder.recordOrder({
+        action: "ack",
+        clientOrderId,
+        orderId: `venue-${index}`,
+        intent: "quote",
+        side: "sell",
+        orderType: "limit",
+        price: 101,
+        qty: 1,
+        timeInForce: "GTC",
+        status: testCase.venueStatus,
+        rawSummary: { status: testCase.venueStatus },
+      });
+      await recorder.drainAndStop();
+
+      expect(repository.orders.at(-1)).toMatchObject({
+        id: `run-terminal-ack-${index}:${clientOrderId}`,
+        finalStatus: testCase.expectedFinalStatus,
+        venueOrderId: `venue-${index}`,
+        rawJson: { status: testCase.venueStatus },
+      });
+    }
   });
 
   test("links late venue fills back to the submitted client order", async () => {

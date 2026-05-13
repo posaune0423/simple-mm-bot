@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { HyperliquidExchangeApi } from "../../lib/hyperliquid/HyperliquidExchangeApi.ts";
 import type { HyperliquidInfoApi } from "../../lib/hyperliquid/HyperliquidInfoApi.ts";
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { Fill } from "../../domain/types/Fill.ts";
 import type {
   IOrderGateway,
   FillListener,

@@ -4,7 +4,7 @@ import { parse as parseYaml } from "yaml";
 import { ConfigLoader } from "../../src/config.ts";
 import { DEFAULT_DATABASE_URL } from "../../src/utils/databaseUrl.ts";
 
-const DEFAULT_BULK_BETA_CONFIG_PATH = "config/config.bulk.beta.yml";
+const DEFAULT_BULK_BETA_CONFIG_PATH = "config/bulk/beta.yml";
 const DEFAULT_CONFIG_PATH = DEFAULT_BULK_BETA_CONFIG_PATH;
 
 describe("ConfigLoader", () => {
@@ -20,21 +20,21 @@ describe("ConfigLoader", () => {
   });
 
   test("loads quote sizing from committed config", async () => {
-    const config = await ConfigLoader.load({ configPath: "config/config.paper.yml" });
+    const config = await ConfigLoader.load({ configPath: DEFAULT_BULK_BETA_CONFIG_PATH });
 
-    expect(config.quoteEngine.sizing.positionSize).toBe(0.05);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(250);
+    expect(config.quoteEngine.sizing.positionSize).toBe(1);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(45_000);
     expect(config.risk.maxBookAgeMs).toBe(2500);
     expect(config.risk.maxTickerAgeMs).toBe(2500);
   });
 
   test("loads committed Bulk beta config tuned to deploy the daily mock balance", async () => {
-    const rawConfig = parseYaml(await Bun.file("config/config.bulk.beta.yml").text()) as {
+    const rawConfig = parseYaml(await Bun.file(DEFAULT_BULK_BETA_CONFIG_PATH).text()) as {
       mode?: string;
     };
     expect(rawConfig.mode).toBe("live");
 
-    const config = await ConfigLoader.load({ configPath: "config/config.bulk.beta.yml" });
+    const config = await ConfigLoader.load({ configPath: DEFAULT_BULK_BETA_CONFIG_PATH });
 
     expect(config.venue).toBe("bulk");
     if (config.venue !== "bulk") {
@@ -101,7 +101,7 @@ describe("ConfigLoader", () => {
     try {
       const config = await ConfigLoader.load({ configPath: DEFAULT_CONFIG_PATH });
 
-      expect(DEFAULT_BULK_BETA_CONFIG_PATH).toBe("config/config.bulk.beta.yml");
+      expect(DEFAULT_BULK_BETA_CONFIG_PATH).toBe("config/bulk/beta.yml");
       expect(DEFAULT_CONFIG_PATH).toBe(DEFAULT_BULK_BETA_CONFIG_PATH);
       expect(config.mode).toBe("live");
       expect(config.venue).toBe("bulk");
@@ -119,6 +119,30 @@ describe("ConfigLoader", () => {
       } else {
         Bun.env.MODE = previousMode;
       }
+    }
+  });
+
+  test("resolves configs by venue and preset when CONFIG_PATH is not set", async () => {
+    const previousConfigPath = Bun.env.CONFIG_PATH;
+    const previousVenue = Bun.env.CONFIG_VENUE;
+    const previousPreset = Bun.env.CONFIG_PRESET;
+    delete Bun.env.CONFIG_PATH;
+    Bun.env.CONFIG_VENUE = "bulk";
+    Bun.env.CONFIG_PRESET = "mainnet";
+
+    try {
+      const config = await ConfigLoader.load();
+
+      expect(config.venue).toBe("bulk");
+      if (config.venue !== "bulk") {
+        throw new Error("Expected bulk config");
+      }
+      expect(config.connections.bulk.environment).toBe("mainnet");
+      expect(config.quoteEngine.sizing.budgetUsd).toBe(100);
+    } finally {
+      restoreEnv("CONFIG_PATH", previousConfigPath);
+      restoreEnv("CONFIG_VENUE", previousVenue);
+      restoreEnv("CONFIG_PRESET", previousPreset);
     }
   });
 
@@ -257,7 +281,7 @@ backtest:
   });
 
   test("loads committed Bulk mainnet config as conservative real-capital settings", async () => {
-    const config = await ConfigLoader.load({ configPath: "config/config.bulk.mainnet.yml" });
+    const config = await ConfigLoader.load({ configPath: "config/bulk/mainnet.yml" });
 
     expect(config.venue).toBe("bulk");
     if (config.venue !== "bulk") {
@@ -399,7 +423,7 @@ backtest:
 `,
     );
 
-    const bulkConfig = await ConfigLoader.load({ configPath: "config/config.bulk.beta.yml" });
+    const bulkConfig = await ConfigLoader.load({ configPath: DEFAULT_BULK_BETA_CONFIG_PATH });
     try {
       const hyperliquidConfig = await ConfigLoader.load({
         configPath: "config/config.hyperliquid-test.yml",
@@ -412,3 +436,11 @@ backtest:
     }
   });
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete Bun.env[key];
+    return;
+  }
+  Bun.env[key] = value;
+}

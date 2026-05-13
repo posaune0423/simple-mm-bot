@@ -1,5 +1,5 @@
 import type { MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
-import type { MetricsBuffer } from "../MetricsRecorder.ts";
+import type { MetricsBuffer } from "../services/MetricsRecorder.ts";
 
 interface RecordOhlcvDelegate {
   execute(snapshot: MarketSnapshot): Promise<void>;

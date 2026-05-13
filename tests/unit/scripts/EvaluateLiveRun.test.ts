@@ -463,28 +463,28 @@ describe("evaluateLiveRun", () => {
 
     for (const [index, rawJson] of [
       {
-        totalRefreshMs: 40,
+        totalCycleMs: 40,
         qualityGateMs: 4,
         recordQuoteMs: 8,
         reconcileMs: 12,
         bookAgeMsAtDecision: 30,
-        midMoveDuringRefreshBps: -1,
+        midMoveDuringCycleBps: -1,
       },
       {
-        totalRefreshMs: 120,
+        totalCycleMs: 120,
         qualityGateMs: 10,
         recordQuoteMs: 20,
         reconcileMs: 50,
         bookAgeMsAtDecision: 90,
-        midMoveDuringRefreshBps: 3,
+        midMoveDuringCycleBps: 3,
       },
       {
-        totalRefreshMs: 80,
+        totalCycleMs: 80,
         qualityGateMs: 6,
         recordQuoteMs: 12,
         reconcileMs: 20,
         bookAgeMsAtDecision: 60,
-        midMoveDuringRefreshBps: -5,
+        midMoveDuringCycleBps: -5,
       },
     ].entries()) {
       await repository.recordRuntimeHealthEvent({
@@ -504,14 +504,14 @@ describe("evaluateLiveRun", () => {
 
     expect(result.evaluation.runtimeHealth.quoteFreshness).toEqual({
       sampleCount: 3,
-      totalRefreshMsP50: 80,
-      totalRefreshMsP95: 120,
-      totalRefreshMsMax: 120,
+      totalCycleMsP50: 80,
+      totalCycleMsP95: 120,
+      totalCycleMsMax: 120,
       qualityGateMsP95: 10,
       recordQuoteMsP95: 20,
       reconcileMsP95: 50,
       bookAgeMsAtDecisionP95: 90,
-      midMoveDuringRefreshBpsP95Abs: 5,
+      midMoveDuringCycleBpsP95Abs: 5,
       slowCycleRate: 1 / 3,
     });
     client.sqlite.close();
@@ -540,14 +540,14 @@ describe("evaluateLiveRun", () => {
 
     expect(result.evaluation.runtimeHealth.quoteFreshness).toEqual({
       sampleCount: 0,
-      totalRefreshMsP50: null,
-      totalRefreshMsP95: null,
-      totalRefreshMsMax: null,
+      totalCycleMsP50: null,
+      totalCycleMsP95: null,
+      totalCycleMsMax: null,
       qualityGateMsP95: null,
       recordQuoteMsP95: null,
       reconcileMsP95: null,
       bookAgeMsAtDecisionP95: null,
-      midMoveDuringRefreshBpsP95Abs: null,
+      midMoveDuringCycleBpsP95Abs: null,
       slowCycleRate: null,
     });
     client.sqlite.close();

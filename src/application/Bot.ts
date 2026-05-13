@@ -1,18 +1,20 @@
-import type { Fill } from "../domain/entities/Fill.ts";
-import { isFlatPositionQty, type Position } from "../domain/entities/Position.ts";
+import { match, P } from "ts-pattern";
+import type { Fill } from "../domain/types/Fill.ts";
+import { isFlatPositionQty } from "../domain/types/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
+import { isRecoverableVenueError } from "../domain/ports/RecoverableVenueError.ts";
 import { stringifyError } from "../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
-import { isTransientBulkError } from "../utils/transientBulk.ts";
-import type { MetricsRecorder } from "./MetricsRecorder.ts";
+import type { MetricsRecorder } from "./services/MetricsRecorder.ts";
 import type { RiskDecision, RiskState } from "./usecases/GuardRiskUseCase.ts";
+import type { PositionSyncResult } from "./usecases/SyncPositionUseCase.ts";
 
 interface UseCases {
   guardRisk: { execute(): Promise<RiskState | RiskDecision> };
   initializePosition?: { execute(): Promise<void> };
   syncPosition?: { execute(): Promise<PositionSyncResult> };
-  refreshQuotes: { execute(): Promise<void> };
+  quotingCycle: { execute(): Promise<void> };
   updatePositionOnFill: { execute(fill: Fill): Promise<void> };
   recordOhlcv: { execute(snapshot: MarketSnapshot): Promise<void> };
   reduceInventory: { executeIfNeeded(): Promise<boolean> };
@@ -20,19 +22,18 @@ interface UseCases {
 }
 
 type TickResult = "continue" | "stop";
+type RiskTickAction = "quote" | "pause_quoting" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
+
+interface BotStartOptions {
+  maxTicks?: number;
+  signal?: AbortSignal;
+}
 
 interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
   eventTaskDrainTimeoutMs?: number;
   positionSyncIntervalMs?: number;
-}
-
-interface PositionSyncResult {
-  synced: boolean;
-  previous: Position;
-  current: Position;
-  deltaQty: number;
 }
 
 export class Bot {
@@ -54,18 +55,24 @@ export class Bot {
     private readonly options: BotOptions = { closePositionPolicy: "always" },
   ) {}
 
-  async start(maxTicks?: number): Promise<void> {
+  async start(maxTicksOrOptions?: number | BotStartOptions): Promise<void> {
+    const startOptions = normalizeStartOptions(maxTicksOrOptions);
     this.resetRunState();
+    const removeAbortListener = this.watchStopSignal(startOptions.signal);
+    let shouldCleanup = false;
     let runError: unknown;
     let closePositionError: unknown;
     logger.info(
-      `[application] Bot | START | intervalMs=${this.intervalMs} maxTicks=${maxTicks ?? "unbounded"}`,
+      `[application] Bot | START | intervalMs=${this.intervalMs} maxTicks=${startOptions.maxTicks ?? "unbounded"}`,
     );
 
     try {
       await this.metrics?.start(Date.now());
-      await this.connectAndSubscribe();
-      await this.runLoop(maxTicks);
+      if (!this.wasStopRequested()) {
+        shouldCleanup = true;
+        await this.connectAndSubscribe();
+        await this.runLoop(startOptions.maxTicks, startOptions.signal);
+      }
     } catch (err) {
       if (this.wasStopRequested()) {
         logger.warn(
@@ -76,7 +83,12 @@ export class Bot {
         await this.metrics?.recordRuntimeHealth("error", "runtime_error", stringifyError(err));
       }
     } finally {
-      closePositionError = await this.cleanup();
+      removeAbortListener();
+      if (shouldCleanup) {
+        closePositionError = await this.cleanup();
+      } else {
+        this.running = false;
+      }
       const metricsWithDrain = this.metrics as
         | (MetricsRecorder & { drainAndStop?: () => Promise<void> })
         | undefined;
@@ -108,9 +120,36 @@ export class Bot {
     this.unsubscribers.splice(0);
   }
 
-  stop(): void {
+  stop(reason = "requested"): void {
+    this.requestStop(reason);
+  }
+
+  private requestStop(reason = "requested"): boolean {
+    if (this.stopRequested) {
+      return false;
+    }
     this.stopRequested = true;
     this.running = false;
+    logger.info(`[application] Bot | STOP_REQUESTED | reason=${reason}`);
+    return true;
+  }
+
+  private watchStopSignal(signal?: AbortSignal): () => void {
+    if (signal === undefined) {
+      return () => {};
+    }
+
+    const requestStopFromSignal = () => {
+      this.requestStop(stopReasonFromSignal(signal));
+    };
+
+    if (signal.aborted) {
+      requestStopFromSignal();
+      return () => {};
+    }
+
+    signal.addEventListener("abort", requestStopFromSignal, { once: true });
+    return () => signal.removeEventListener("abort", requestStopFromSignal);
   }
 
   private isRunning(): boolean {
@@ -162,54 +201,42 @@ export class Bot {
     }
 
     await this.orderGateway.syncFills().catch(async (error) => {
-      if (!isTransientBulkError(error)) {
-        throw error;
-      }
-      logger.warn(
-        `[application] Bot | INITIAL_SYNC_TRANSIENT_ERROR | error=${stringifyError(error)}`,
-      );
-      await this.metrics?.recordRuntimeHealth(
-        "warn",
-        "initial_sync_transient_error",
-        stringifyError(error),
-      );
+      const errorMessage = recoverableRuntimeErrorMessageOrThrow(error);
+      logger.warn(`[application] Bot | INITIAL_SYNC_TRANSIENT_ERROR | error=${errorMessage}`);
+      await this.metrics?.recordRuntimeHealth("warn", "initial_sync_transient_error", errorMessage);
     });
   }
 
-  private async runLoop(maxTicks?: number): Promise<void> {
+  private async runLoop(maxTicks?: number, signal?: AbortSignal): Promise<void> {
+    if (maxTicks !== undefined && maxTicks <= 0) {
+      logger.info("[application] Bot | STOPPING | reason=max_ticks tick=0");
+      return;
+    }
+
     let ticks = 0;
 
     while (this.isRunning()) {
       const tick = ticks + 1;
-      const tickResult = await this.runTickSafely(tick);
+      const tickResult = await this.runTickOrContinueOnTransientError(tick);
       ticks = tick;
 
       if (tickResult === "stop" || this.hasReachedMaxTicks(ticks, maxTicks) || !this.isRunning()) {
         break;
       }
 
-      await Bun.sleep(this.intervalMs);
+      await this.sleepUntilNextTick(signal);
     }
   }
 
-  private async runTickSafely(tick: number): Promise<TickResult> {
+  private async runTickOrContinueOnTransientError(tick: number): Promise<TickResult> {
     try {
       return await this.runTick(tick);
     } catch (error) {
-      if (!isTransientBulkError(error)) {
-        throw error;
-      }
-      logger.warn(
-        `[application] Bot | TICK_TRANSIENT_ERROR | tick=${tick} error=${stringifyError(error)}`,
-      );
-      await this.metrics?.recordRuntimeHealth(
-        "warn",
-        "transient_tick_error",
-        stringifyError(error),
-        {
-          tick,
-        },
-      );
+      const errorMessage = recoverableRuntimeErrorMessageOrThrow(error);
+      logger.warn(`[application] Bot | TICK_TRANSIENT_ERROR | tick=${tick} error=${errorMessage}`);
+      await this.metrics?.recordRuntimeHealth("warn", "transient_tick_error", errorMessage, {
+        tick,
+      });
       return "continue";
     }
   }
@@ -218,38 +245,59 @@ export class Bot {
     const riskDecision = await this.useCases.guardRisk.execute();
     const riskState = riskStateOf(riskDecision);
     logger.debug(`[application] Bot | TICK | tick=${tick} riskState=${riskState}`);
+    const riskAction = await this.handleRiskGate(tick, riskDecision, riskState);
 
-    if (riskState === "EMERGENCY_STOP") {
-      await this.metrics?.recordRuntimeHealth(
-        "error",
-        "risk_gate_emergency_stop",
-        "Risk gate requested emergency stop",
-        riskRuntimeSummary(tick, riskDecision),
-      );
-      logger.warn(`[application] Bot | STOPPING | reason=emergency_stop tick=${tick}`);
-      this.emergencyStopRequested = true;
-      return "stop";
-    }
-    if (riskState === "PAUSE_QUOTING") {
-      await this.metrics?.recordRuntimeHealth(
-        "warn",
-        "risk_gate_pause_quoting",
-        "Risk gate paused quote refresh",
-        riskRuntimeSummary(tick, riskDecision),
-      );
-      await this.cancelOpenOrdersForPause(tick, riskDecision);
-    } else {
-      this.pauseQuoteCancelCompleted = false;
-    }
+    return await match(riskAction)
+      .with("stop", () => "stop" as const)
+      .otherwise(async (activeRiskAction) => {
+        await this.drainEventTasks();
+        await this.syncPositionIfDue();
+        const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
+        await match<[RiskTickAction, boolean], Promise<void>>([
+          activeRiskAction,
+          didReduceInventory,
+        ])
+          .with(["quote", false], async () => {
+            await this.useCases.quotingCycle.execute();
+            this.quotedCount += 2;
+          })
+          .otherwise(async () => {});
+        return this.advanceMarketFeed(tick);
+      });
+  }
 
-    await this.drainEventTasks();
-    await this.syncPositionIfDue();
-    const didReduceInventory = await this.useCases.reduceInventory.executeIfNeeded();
-    if (riskState === "OK" && !didReduceInventory) {
-      await this.useCases.refreshQuotes.execute();
-      this.quotedCount += 2;
-    }
-    return this.advanceMarketFeed(tick);
+  private async handleRiskGate(
+    tick: number,
+    riskDecision: RiskState | RiskDecision,
+    riskState: RiskState,
+  ): Promise<RiskTickAction> {
+    return await match<RiskState, Promise<RiskTickAction> | RiskTickAction>(riskState)
+      .with("EMERGENCY_STOP", async () => {
+        await this.metrics?.recordRuntimeHealth(
+          "error",
+          "risk_gate_emergency_stop",
+          "Risk gate requested emergency stop",
+          riskRuntimeSummary(tick, riskDecision),
+        );
+        logger.warn(`[application] Bot | STOPPING | reason=emergency_stop tick=${tick}`);
+        this.emergencyStopRequested = true;
+        return "stop" as const;
+      })
+      .with("PAUSE_QUOTING", async () => {
+        await this.metrics?.recordRuntimeHealth(
+          "warn",
+          "risk_gate_pause_quoting",
+          "Risk gate paused quoting cycle",
+          riskRuntimeSummary(tick, riskDecision),
+        );
+        await this.cancelOpenOrdersForPause(tick, riskDecision);
+        return "pause_quoting" as const;
+      })
+      .with("OK", () => {
+        this.pauseQuoteCancelCompleted = false;
+        return "quote";
+      })
+      .exhaustive();
   }
 
   private async syncPositionIfDue(): Promise<void> {
@@ -375,7 +423,7 @@ export class Bot {
       await this.metrics?.recordRuntimeHealth(
         "warn",
         "pause_quote_cancel_all",
-        "Cancelled open orders while quote refresh is paused",
+        "Cancelled open orders while quoting cycle is paused",
         { ...summary, latencyMs, success: true },
       );
     } catch (error) {
@@ -386,7 +434,7 @@ export class Bot {
       await this.metrics?.recordRuntimeHealth(
         "error",
         "pause_quote_cancel_all",
-        "Failed to cancel open orders while quote refresh is paused",
+        "Failed to cancel open orders while quoting cycle is paused",
         { ...summary, latencyMs, success: false, error: stringifyError(error) },
       );
     }
@@ -462,19 +510,93 @@ export class Bot {
   private eventTaskDrainTimeoutMs(): number {
     return this.options.eventTaskDrainTimeoutMs ?? Math.max(1_000, this.intervalMs);
   }
+
+  private async sleepUntilNextTick(signal?: AbortSignal): Promise<void> {
+    if (signal === undefined) {
+      await Bun.sleep(this.intervalMs);
+      return;
+    }
+    if (signal.aborted) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, this.intervalMs);
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+}
+
+function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): BotStartOptions {
+  return match(maxTicksOrOptions)
+    .with(
+      P.union(
+        P.when((value): value is number => typeof value === "number"),
+        undefined,
+      ),
+      (maxTicks) => ({ maxTicks }),
+    )
+    .otherwise((options) => options);
+}
+
+function recoverableRuntimeErrorMessageOrThrow(error: unknown): string {
+  return match(error)
+    .with(P.when(isRecoverableVenueError), (recoverableError) =>
+      stringifyError(recoverableError.cause ?? recoverableError),
+    )
+    .otherwise((fatalError) => {
+      throw fatalError;
+    });
+}
+
+function stopReasonFromSignal(signal: AbortSignal): string {
+  const { reason } = signal;
+  return match(reason)
+    .with(
+      P.when((reason): reason is string => typeof reason === "string"),
+      (reason) => reason,
+    )
+    .with(
+      P.when((reason): reason is Error => reason instanceof Error),
+      (reason) => reason.message,
+    )
+    .with(undefined, () => "aborted")
+    .otherwise((reason) => String(reason));
 }
 
 function riskStateOf(decision: RiskState | RiskDecision): RiskState {
-  return typeof decision === "string" ? decision : decision.state;
+  return match(decision)
+    .with(
+      P.when((decision): decision is RiskState => typeof decision === "string"),
+      (decision) => decision,
+    )
+    .otherwise((decision) => decision.state);
 }
 
 function riskRuntimeSummary(
   tick: number,
   decision: RiskState | RiskDecision,
 ): Record<string, unknown> {
-  if (typeof decision === "string") {
-    return { tick, riskState: decision };
-  }
-  const { state, ...details } = decision;
-  return { tick, riskState: state, ...details };
+  return match(decision)
+    .with(
+      P.when((decision): decision is RiskState => typeof decision === "string"),
+      (decision) => ({
+        tick,
+        riskState: decision,
+      }),
+    )
+    .otherwise((decision) => {
+      const { state, ...details } = decision;
+      return { tick, riskState: state, ...details };
+    });
 }

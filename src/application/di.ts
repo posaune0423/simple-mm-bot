@@ -1,5 +1,6 @@
 import { env } from "../env.ts";
 import { BulkClient } from "bulk-ts-sdk";
+import { match } from "ts-pattern";
 import type { LoadedAppConfig } from "../config.ts";
 import { BulkMarketFeed } from "../adapters/bulk/BulkMarketFeed.ts";
 import { BulkOhlcvFetcher } from "../adapters/bulk/BulkOhlcvFetcher.ts";
@@ -9,15 +10,15 @@ import { HyperliquidOhlcvFetcher } from "../adapters/hyperliquid/HyperliquidOhlc
 import { HyperliquidOrderGateway } from "../adapters/hyperliquid/HyperliquidOrderGateway.ts";
 import { HistoricalMarketFeed } from "../adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../adapters/paper/PaperOrderGateway.ts";
-import { FairPriceCalculator } from "../domain/FairPriceCalculator.ts";
-import { QuoteEngine } from "../domain/QuoteEngine.ts";
+import { FairPriceCalculator } from "../domain/services/FairPriceCalculator.ts";
+import { QuoteEngine } from "../domain/services/QuoteEngine.ts";
 import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
-import type { IQuoteQualityRepository } from "../domain/ports/IQuoteQualityRepository.ts";
+import type { IMarkoutFeedbackRepository } from "../domain/ports/IMarkoutFeedbackRepository.ts";
 import type { CapitalMode, IMetricsRepository } from "../domain/ports/IMetricsRepository.ts";
 import { getGitMetadata } from "../infrastructure/GitMetadata.ts";
-import { VolatilityEstimator } from "../domain/VolatilityEstimator.ts";
+import { VolatilityEstimator } from "../domain/services/VolatilityEstimator.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
@@ -30,9 +31,15 @@ import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeAp
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
-import { MetricsBuffer, MetricsRecorder } from "./MetricsRecorder.ts";
-import type { OrderManagerOptions } from "./OrderManager.ts";
-import { buildQuotingStrategy } from "./QuotingStrategyFactory.ts";
+import { MetricsBuffer, MetricsRecorder } from "./services/MetricsRecorder.ts";
+import {
+  ManagedOrderReconciler,
+  type ManagedOrderReconcilerOptions,
+} from "./services/ManagedOrderReconciler.ts";
+import { buildQuoteModel } from "./factories/QuoteModelFactory.ts";
+import { buildStrategy } from "./factories/StrategyFactory.ts";
+import { OrderIntentBuilder } from "./services/OrderIntentBuilder.ts";
+import { QuotingCycleService } from "./services/QuotingCycleService.ts";
 import { BufferedRecordOhlcvUseCase } from "./usecases/BufferedRecordOhlcvUseCase.ts";
 import { ClosePositionUseCase } from "./usecases/ClosePositionUseCase.ts";
 import { GuardRiskUseCase } from "./usecases/GuardRiskUseCase.ts";
@@ -40,13 +47,12 @@ import { InitializePositionUseCase } from "./usecases/InitializePositionUseCase.
 import { SyncPositionUseCase } from "./usecases/SyncPositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
-import { RefreshQuotesUseCase } from "./usecases/RefreshQuotesUseCase.ts";
 import { UpdatePositionOnFillUseCase } from "./usecases/UpdatePositionOnFillUseCase.ts";
 
 interface Repositories {
   ohlcvRepository: IOhlcvRepository;
   metricsRepository: IMetricsRepository;
-  quoteQualityRepository?: IQuoteQualityRepository;
+  markoutFeedbackRepository?: IMarkoutFeedbackRepository;
 }
 
 interface ResolvedAdapters {
@@ -62,20 +68,34 @@ export class DIContainer {
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
+    const strategy = buildStrategy({
+      kind: "simple_pmm",
+      quoteEngine,
+      markoutFeedbackGate: this.config.quoteEngine.qualityGate,
+    });
     const metricsBuffer = this.buildMetricsBuffer();
     const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
+    const managedOrderReconciler = new ManagedOrderReconciler(
+      gateway,
+      this.managedOrderReconcilerOptions(),
+    );
 
     return new Bot(
       {
-        refreshQuotes: new RefreshQuotesUseCase(
+        quotingCycle: new QuotingCycleService(
           feed,
-          gateway,
           positionRepository,
-          quoteEngine,
+          strategy,
+          new OrderIntentBuilder(),
+          managedOrderReconciler,
+          {
+            defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
+            postOnly: this.config.quoteEngine.defaultTimeInForce === "ALO",
+            slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
+          },
           metrics,
-          repositories.quoteQualityRepository,
+          repositories.markoutFeedbackRepository,
           this.config.quoteEngine.qualityGate,
-          { orderManager: this.orderManagerOptions() },
         ),
         guardRisk: new GuardRiskUseCase(feed, this.config.risk),
         initializePosition: new InitializePositionUseCase(
@@ -118,9 +138,9 @@ export class DIContainer {
   }
 
   private buildQuoteEngine(): QuoteEngine {
-    const strategy = buildQuotingStrategy(this.config.quoteEngine.strategy);
+    const quoteModel = buildQuoteModel(this.config.quoteEngine.strategy);
     return new QuoteEngine(
-      strategy,
+      quoteModel,
       new FairPriceCalculator(
         this.config.quoteEngine.markWeight,
         this.config.quoteEngine.bookPriceSource,
@@ -130,16 +150,15 @@ export class DIContainer {
         inventoryScale: this.config.quoteEngine.inventoryScale,
         timeHorizonSec: this.config.quoteEngine.timeHorizonSec,
         minSpreadBps: this.config.quoteEngine.minSpreadBps,
-        slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
-        defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
         positionSize: this.config.quoteEngine.sizing.positionSize,
         budgetUsd: this.config.quoteEngine.sizing.budgetUsd,
         bidSizeMultiplier: this.config.quoteEngine.sizing.bidSizeMultiplier,
         askSizeMultiplier: this.config.quoteEngine.sizing.askSizeMultiplier,
         bidDistanceMultiplier: this.config.quoteEngine.sizing.bidDistanceMultiplier,
         askDistanceMultiplier: this.config.quoteEngine.sizing.askDistanceMultiplier,
-        maxLeverage:
-          this.config.venue === "bulk" ? this.config.connections.bulk.maxLeverage : undefined,
+        maxLeverage: match(this.config)
+          .with({ venue: "bulk" }, (config) => config.connections.bulk.maxLeverage)
+          .otherwise(() => undefined),
         levels: this.config.quoteEngine.levels,
       },
     );
@@ -147,21 +166,24 @@ export class DIContainer {
 
   private createRepositories(): Repositories {
     const database = resolveDatabaseUrl(Bun.env.DATABASE_URL ?? env.DATABASE_URL);
-    if (database.kind === "postgres") {
-      const client = createPostgresClient(database.url);
-      return {
-        ohlcvRepository: new PostgresOhlcvRepository(client.db),
-        metricsRepository: new PostgresMetricsRepository(client.db),
-      };
-    }
-
-    const client = createSqliteClient(database.path);
-    const metricsRepository = new SqliteMetricsRepository(client.db);
-    return {
-      ohlcvRepository: new SqliteOhlcvRepository(client.db),
-      metricsRepository,
-      quoteQualityRepository: metricsRepository,
-    };
+    return match(database)
+      .with({ kind: "postgres" }, (database) => {
+        const client = createPostgresClient(database.url);
+        return {
+          ohlcvRepository: new PostgresOhlcvRepository(client.db),
+          metricsRepository: new PostgresMetricsRepository(client.db),
+        };
+      })
+      .with({ kind: "sqlite" }, (database) => {
+        const client = createSqliteClient(database.path);
+        const metricsRepository = new SqliteMetricsRepository(client.db);
+        return {
+          ohlcvRepository: new SqliteOhlcvRepository(client.db),
+          metricsRepository,
+          markoutFeedbackRepository: metricsRepository,
+        };
+      })
+      .exhaustive();
   }
 
   private buildMetricsRecorder(
@@ -175,7 +197,7 @@ export class DIContainer {
         venue: this.config.venue,
         capitalMode: resolveCapitalMode(this.config),
         market: this.config.market,
-        strategyName: buildQuotingStrategy(this.config.quoteEngine.strategy).name,
+        strategyName: buildQuoteModel(this.config.quoteEngine.strategy).name,
         configJson: redactConfig(this.config),
         ...getGitMetadata(),
       },
@@ -184,56 +206,72 @@ export class DIContainer {
   }
 
   private buildMetricsBuffer(): MetricsBuffer {
-    if (this.config.mode === "backtest") {
-      return new MetricsBuffer({ normalCapacity: 100_000, criticalCapacity: 100_000 });
-    }
-    return new MetricsBuffer();
+    return match(this.config.mode)
+      .with(
+        "backtest",
+        () => new MetricsBuffer({ normalCapacity: 100_000, criticalCapacity: 100_000 }),
+      )
+      .otherwise(() => new MetricsBuffer());
   }
 
   private resolveAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
-    if (this.config.venue === "bulk") {
-      return this.resolveBulkAdapters(ohlcvRepository);
-    }
+    return match(this.config)
+      .with({ venue: "bulk" }, () => this.resolveBulkAdapters(ohlcvRepository))
+      .with({ venue: "hyperliquid" }, (config) =>
+        this.resolveHyperliquidAdapters(config, ohlcvRepository),
+      )
+      .exhaustive();
+  }
 
-    const { connections, mode } = this.config;
+  private resolveHyperliquidAdapters(
+    config: Extract<LoadedAppConfig, { venue: "hyperliquid" }>,
+    ohlcvRepository: IOhlcvRepository,
+  ): ResolvedAdapters {
+    const { connections, mode } = config;
     const infoApi = new HyperliquidInfoApi(connections.hyperliquid.httpUrl);
 
-    if (mode === "backtest") {
-      const feed = new HistoricalMarketFeed(ohlcvRepository, new HyperliquidOhlcvFetcher(infoApi), {
-        market: this.config.backtest.market,
-        timeframe: this.config.backtest.timeframe,
-        from: Date.parse(this.config.backtest.from),
-        to: Date.parse(this.config.backtest.to),
+    return match(mode)
+      .with("backtest", () => {
+        const feed = new HistoricalMarketFeed(
+          ohlcvRepository,
+          new HyperliquidOhlcvFetcher(infoApi),
+          {
+            market: config.backtest.market,
+            timeframe: config.backtest.timeframe,
+            from: Date.parse(config.backtest.from),
+            to: Date.parse(config.backtest.to),
+          },
+        );
+        return {
+          feed,
+          gateway: new PaperOrderGateway(feed, config.paper.touchFillRatio),
+        };
+      })
+      .otherwise(() => {
+        const subsApi = new HyperliquidSubscriptionApi({
+          wsUrl: connections.hyperliquid.wsUrl,
+          httpUrl: connections.hyperliquid.httpUrl,
+        });
+        const feed = new HyperliquidMarketFeed(infoApi, subsApi, {
+          market: config.market,
+          accountAddress: connections.hyperliquid.accountAddress,
+        });
+
+        return {
+          feed,
+          gateway:
+            mode === "live"
+              ? new HyperliquidOrderGateway(
+                  infoApi,
+                  new HyperliquidExchangeApi({
+                    httpUrl: connections.hyperliquid.httpUrl,
+                    privateKey: this.requireSecretKey(connections.hyperliquid.secretKey),
+                  }),
+                  { market: config.market },
+                )
+              : new PaperOrderGateway(feed, config.paper.touchFillRatio),
+        };
       });
-      return {
-        feed,
-        gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
-      };
-    }
-
-    const subsApi = new HyperliquidSubscriptionApi({
-      wsUrl: connections.hyperliquid.wsUrl,
-      httpUrl: connections.hyperliquid.httpUrl,
-    });
-    const feed = new HyperliquidMarketFeed(infoApi, subsApi, {
-      market: this.config.market,
-      accountAddress: connections.hyperliquid.accountAddress,
-    });
-
-    return {
-      feed,
-      gateway:
-        mode === "live"
-          ? new HyperliquidOrderGateway(
-              infoApi,
-              new HyperliquidExchangeApi({
-                httpUrl: connections.hyperliquid.httpUrl,
-                privateKey: this.requireSecretKey(connections.hyperliquid.secretKey),
-              }),
-              { market: this.config.market },
-            )
-          : new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
-    };
   }
 
   private resolveBulkAdapters(ohlcvRepository: IOhlcvRepository): ResolvedAdapters {
@@ -252,48 +290,51 @@ export class DIContainer {
     });
     const accountId = client.accountPublicKey;
 
-    if (mode === "backtest") {
-      const feed = new HistoricalMarketFeed(ohlcvRepository, new BulkOhlcvFetcher(client), {
-        market: config.backtest.market,
-        timeframe: config.backtest.timeframe,
-        from: Date.parse(config.backtest.from),
-        to: Date.parse(config.backtest.to),
+    return match(mode)
+      .with("backtest", () => {
+        const feed = new HistoricalMarketFeed(ohlcvRepository, new BulkOhlcvFetcher(client), {
+          market: config.backtest.market,
+          timeframe: config.backtest.timeframe,
+          from: Date.parse(config.backtest.from),
+          to: Date.parse(config.backtest.to),
+        });
+        return {
+          feed,
+          gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
+        };
+      })
+      .otherwise((mode) => {
+        const feed = new BulkMarketFeed(client, {
+          market: config.market,
+          nlevels: bulk.nlevels,
+          accountId,
+          marketWsReconnectAfterMs: bulk.marketWsReconnectAfterMs,
+          ...bulkLiveStartupRetryOptions(config),
+        });
+
+        return match(mode)
+          .with("paper", () => ({
+            feed,
+            gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
+          }))
+          .with("live", () => {
+            if (!bulk.privateKey || !accountId) {
+              throw new Error("BULK_PRIVATE_KEY is required for live Bulk order placement");
+            }
+
+            return {
+              feed,
+              gateway: new BulkOrderGateway(client, {
+                market: config.market,
+                accountId,
+                maxLeverage: bulk.maxLeverage,
+                pollIntervalMs: 1000,
+                ignoreFillsBeforeMs: Date.now(),
+              }),
+            };
+          })
+          .exhaustive();
       });
-      return {
-        feed,
-        gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
-      };
-    }
-
-    const feed = new BulkMarketFeed(client, {
-      market: config.market,
-      nlevels: bulk.nlevels,
-      accountId,
-      marketWsReconnectAfterMs: bulk.marketWsReconnectAfterMs,
-      ...bulkLiveStartupRetryOptions(config),
-    });
-
-    if (mode === "paper") {
-      return {
-        feed,
-        gateway: new PaperOrderGateway(feed, this.config.paper.touchFillRatio),
-      };
-    }
-
-    if (!bulk.privateKey || !accountId) {
-      throw new Error("BULK_PRIVATE_KEY is required for live Bulk order placement");
-    }
-
-    return {
-      feed,
-      gateway: new BulkOrderGateway(client, {
-        market: config.market,
-        accountId,
-        maxLeverage: bulk.maxLeverage,
-        pollIntervalMs: 1000,
-        ignoreFillsBeforeMs: Date.now(),
-      }),
-    };
   }
 
   private requireSecretKey(secretKey: string | undefined): string {
@@ -303,8 +344,8 @@ export class DIContainer {
     return secretKey;
   }
 
-  private orderManagerOptions(): Partial<OrderManagerOptions> {
-    const options: Partial<OrderManagerOptions> = {};
+  private managedOrderReconcilerOptions(): Partial<ManagedOrderReconcilerOptions> {
+    const options: Partial<ManagedOrderReconcilerOptions> = {};
     if (this.config.bot.maxRestingMs !== undefined) {
       options.maxRestingMs = this.config.bot.maxRestingMs;
     }
@@ -313,16 +354,14 @@ export class DIContainer {
 }
 
 export function resolveCapitalMode(config: LoadedAppConfig): CapitalMode {
-  if (config.mode === "paper") {
-    return "paper";
-  }
-  if (config.mode === "backtest") {
-    return "backtest";
-  }
-  if (config.venue === "bulk" && config.connections.bulk.environment === "beta") {
-    return "beta_mock";
-  }
-  return "real";
+  return match(config)
+    .with({ mode: "paper" }, () => "paper" as const)
+    .with({ mode: "backtest" }, () => "backtest" as const)
+    .with(
+      { venue: "bulk", connections: { bulk: { environment: "beta" } } },
+      () => "beta_mock" as const,
+    )
+    .otherwise(() => "real" as const);
 }
 
 function bulkLiveStartupRetryOptions(config: LoadedAppConfig): {
@@ -331,20 +370,19 @@ function bulkLiveStartupRetryOptions(config: LoadedAppConfig): {
   accountRetryAttempts?: number;
   accountRetryDelayMs?: number;
 } {
-  if (config.venue !== "bulk" || config.mode !== "live") {
-    return {};
-  }
-  return {
-    retryAttempts: 6,
-    retryDelayMs: 1_000,
-    accountRetryAttempts: 6,
-    accountRetryDelayMs: 1_000,
-  };
+  return match(config)
+    .with({ venue: "bulk", mode: "live" }, () => ({
+      retryAttempts: 6,
+      retryDelayMs: 1_000,
+      accountRetryAttempts: 6,
+      accountRetryDelayMs: 1_000,
+    }))
+    .otherwise(() => ({}));
 }
 
 function redactConfig(config: LoadedAppConfig): unknown {
-  if (config.venue === "bulk") {
-    return {
+  return match(config)
+    .with({ venue: "bulk" }, (config) => ({
       ...config,
       connections: {
         bulk: {
@@ -352,16 +390,16 @@ function redactConfig(config: LoadedAppConfig): unknown {
           privateKey: config.connections.bulk.privateKey === undefined ? undefined : "[redacted]",
         },
       },
-    };
-  }
-  return {
-    ...config,
-    connections: {
-      hyperliquid: {
-        ...config.connections.hyperliquid,
-        secretKey:
-          config.connections.hyperliquid.secretKey === undefined ? undefined : "[redacted]",
+    }))
+    .with({ venue: "hyperliquid" }, (config) => ({
+      ...config,
+      connections: {
+        hyperliquid: {
+          ...config.connections.hyperliquid,
+          secretKey:
+            config.connections.hyperliquid.secretKey === undefined ? undefined : "[redacted]",
+        },
       },
-    },
-  };
+    }))
+    .exhaustive();
 }

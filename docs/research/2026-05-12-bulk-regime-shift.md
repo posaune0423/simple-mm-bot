@@ -145,15 +145,15 @@ regime ごとに profile を切り替えるべき。
 ```text
 RegimeClassifier
   -> StrategyProfile
-  -> QuoteControls + execution controls
-  -> QuoteEngine / OrderManager
+  -> Strategy side specs + execution controls
+  -> QuoteEngine / ManagedOrderReconciler
 ```
 
 Hot path rule:
 
 - quote generation 内で DB view を scan しない。
 - regime / profile は cold path で計算し、in-memory の `currentProfile` として公開する。
-- `RefreshQuotesUseCase` は profile を同期 read して、analysis query を待たずに quote を作る。
+- `QuotingCycleService` は profile を同期 read して、analysis query を待たずに quote を作る。
 
 ## Reproduction
 

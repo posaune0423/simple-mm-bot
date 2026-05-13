@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { Fill } from "../../domain/types/Fill.ts";
 import type { IMarketFeed, MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
 import type {
   FillListener,

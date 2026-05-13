@@ -437,7 +437,7 @@ describe("SqliteMetricsRepository", () => {
     expect(markout?.markout_300s_bps).toBe(1100);
   });
 
-  test("reads recent side quality from multi-horizon fill markouts", async () => {
+  test("reads recent side markout feedback from multi-horizon fill markouts", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
 
@@ -506,7 +506,7 @@ describe("SqliteMetricsRepository", () => {
       filledAt: 1_000,
     });
 
-    const quality = await repository.getRecentSideQuality({
+    const quality = await repository.getRecentSideMarkoutFeedback({
       market: "BTC-USD",
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
@@ -524,7 +524,85 @@ describe("SqliteMetricsRepository", () => {
     ]);
   });
 
-  test("reads side quality across recent runs instead of resetting on a new run", async () => {
+  test("ignores non-positive fill prices when computing markout bps", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-zero-price-markout",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    await repository.recordOrderbookSnapshot({
+      id: "zero-price-5s",
+      runId: "run-zero-price-markout",
+      venue: "bulk",
+      market: "BTC-USD",
+      observedAt: 6_000,
+      bestBid: 99,
+      bestAsk: 101,
+      midPrice: 100,
+      microPrice: 100,
+      markPrice: 100,
+      spreadBps: 200,
+      stalenessMs: 0,
+    });
+    await repository.recordSubmittedOrder({
+      id: "zero-price-order",
+      runId: "run-zero-price-markout",
+      venue: "bulk",
+      market: "BTC-USD",
+      clientOrderId: "zero-price-order",
+      venueOrderId: "zero-price-venue",
+      intent: "quote",
+      side: "buy",
+      orderType: "limit",
+      limitPrice: 0,
+      quantity: 1,
+      timeInForce: "ALO",
+      submittedAt: 500,
+      finalStatus: "filled",
+    });
+    await repository.recordTradeFill({
+      id: "zero-price-fill",
+      runId: "run-zero-price-markout",
+      submittedOrderId: "zero-price-order",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "zero-price-fill",
+      venueOrderId: "zero-price-venue",
+      side: "buy",
+      price: 0,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1_000,
+    });
+
+    const markout = client.sqlite
+      .query<{ markout_5s_bps: number | null }, []>(
+        "SELECT markout_5s_bps FROM v_fill_markouts WHERE fill_id = 'zero-price-fill'",
+      )
+      .get();
+    const quality = await repository.getRecentSideMarkoutFeedback({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      horizonsSec: [5],
+    });
+
+    expect(markout?.markout_5s_bps).toBeNull();
+    expect(quality).toEqual([]);
+  });
+
+  test("reads side markout feedback across recent runs instead of resetting on a new run", async () => {
     const client = createSqliteClient(dbPath);
     const repository = new SqliteMetricsRepository(client.db);
 
@@ -637,7 +715,7 @@ describe("SqliteMetricsRepository", () => {
       status: "running",
     });
 
-    const quality = await repository.getRecentSideQuality({
+    const quality = await repository.getRecentSideMarkoutFeedback({
       market: "BTC-USD",
       lookbackFills: 100,
       horizonsSec: [5, 30, 300],
@@ -718,7 +796,7 @@ describe("SqliteMetricsRepository", () => {
       filledAt: 1_000,
     });
 
-    const quality = await repository.getRecentSideQuality({
+    const quality = await repository.getRecentSideMarkoutFeedback({
       market: "BTC-USD",
       lookbackFills: 100,
       minFilledAt: 2_000,

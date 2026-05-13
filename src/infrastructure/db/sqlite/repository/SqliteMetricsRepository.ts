@@ -1,10 +1,11 @@
 import { eq, sql } from "drizzle-orm";
+import { match } from "ts-pattern";
 
 import type {
-  IQuoteQualityRepository,
-  QuoteQualityQuery,
-  QuoteSideQuality,
-} from "../../../../domain/ports/IQuoteQualityRepository.ts";
+  IMarkoutFeedbackRepository,
+  MarkoutFeedbackQuery,
+  SideMarkoutFeedback,
+} from "../../../../domain/ports/IMarkoutFeedbackRepository.ts";
 import type {
   AccountStateObservationFact,
   IMetricsRepository,
@@ -36,7 +37,7 @@ type MarkoutRow = {
   markout_300s_bps: number | null;
 };
 
-export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualityRepository {
+export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeedbackRepository {
   constructor(private readonly db: SqliteDb) {}
 
   async startRun(run: TradingRunFact): Promise<void> {
@@ -159,7 +160,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
     return row === undefined ? null : deserializeRun(row);
   }
 
-  async getRecentSideQuality(query: QuoteQualityQuery): Promise<QuoteSideQuality[]> {
+  async getRecentSideMarkoutFeedback(query: MarkoutFeedbackQuery): Promise<SideMarkoutFeedback[]> {
     const minFilledAt = query.minFilledAt ?? null;
     const rows = this.db.all<MarkoutRow>(
       sql`
@@ -258,17 +259,17 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
         SELECT
           side,
           CASE
-            WHEN mid_5s IS NULL THEN NULL
+            WHEN mid_5s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_5s - price) / price) * 10000
             ELSE ((price - mid_5s) / price) * 10000
           END AS markout_5s_bps,
           CASE
-            WHEN mid_30s IS NULL THEN NULL
+            WHEN mid_30s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_30s - price) / price) * 10000
             ELSE ((price - mid_30s) / price) * 10000
           END AS markout_30s_bps,
           CASE
-            WHEN mid_300s IS NULL THEN NULL
+            WHEN mid_300s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_300s - price) / price) * 10000
             ELSE ((price - mid_300s) / price) * 10000
           END AS markout_300s_bps
@@ -282,10 +283,16 @@ export class SqliteMetricsRepository implements IMetricsRepository, IQuoteQualit
       if (sideRows.length === 0) {
         return [];
       }
+      const horizons = query.horizonsSec.map((horizonSec) =>
+        aggregateHorizon(sideRows, horizonSec),
+      );
+      if (horizons.every((horizon) => horizon.sampleCount === 0)) {
+        return [];
+      }
       return [
         {
           side,
-          horizons: query.horizonsSec.map((horizonSec) => aggregateHorizon(sideRows, horizonSec)),
+          horizons,
         },
       ];
     });
@@ -305,16 +312,11 @@ function aggregateHorizon(rows: MarkoutRow[], horizonSec: number) {
 }
 
 function markoutForHorizon(row: MarkoutRow, horizonSec: number): number | null {
-  switch (horizonSec) {
-    case 5:
-      return row.markout_5s_bps;
-    case 30:
-      return row.markout_30s_bps;
-    case 300:
-      return row.markout_300s_bps;
-    default:
-      return null;
-  }
+  return match(horizonSec)
+    .with(5, () => row.markout_5s_bps)
+    .with(30, () => row.markout_30s_bps)
+    .with(300, () => row.markout_300s_bps)
+    .otherwise(() => null);
 }
 
 function serializeRun(run: TradingRunFact): typeof tradingRunsTable.$inferInsert {
