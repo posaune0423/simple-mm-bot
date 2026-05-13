@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "neverthrow";
-import type { DomainError } from "../errors/DomainError";
+import { InvalidQuoteError, type DomainError } from "../errors/DomainError";
 import type { Price } from "./Price";
 import type { Quantity } from "./Quantity";
 
@@ -27,10 +27,11 @@ export const QuoteLeg = {
     reasonTags?: readonly string[];
   }): Result<QuoteLeg, DomainError> {
     if (!Number.isInteger(input.level) || input.level < 0) {
-      return err({
-        type: "invalid_quote",
-        reason: `quote level must be a non-negative integer: ${input.level}`,
-      });
+      return err(
+        new InvalidQuoteError(`quote level must be a non-negative integer: ${input.level}`, {
+          context: { level: input.level },
+        }),
+      );
     }
     return ok(QuoteLeg.unsafe(input));
   },

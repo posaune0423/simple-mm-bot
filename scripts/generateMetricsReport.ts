@@ -6,7 +6,8 @@ import { emptyQuoteFreshness, type MetricsEvaluation } from "./lib/MetricsEvalua
 import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { LATEST_METRICS_EVALUATION_PATH, LATEST_METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
-import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { writeJsonFile, writeTextFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
@@ -219,7 +220,7 @@ function formatNullableMultiplier(value: number | null): string {
   return value === null ? "n/a" : `${value.toFixed(2)}x`;
 }
 
-function generate(argv: string[]): ResultAsync<string, AppError> {
+function generate(argv: string[]): ResultAsync<string, ScriptError> {
   const options = parseFlagOptions(argv);
   const evaluationPath = options.evaluation ?? LATEST_METRICS_EVALUATION_PATH;
   const outputDir = options["output-dir"] ?? LATEST_METRICS_RESULTS_DIR;
@@ -234,7 +235,10 @@ function generate(argv: string[]): ResultAsync<string, AppError> {
       ]);
       return reportPath;
     })(),
-    (error) => createAppError("metrics.report_failed", "Failed to generate metrics report", error),
+    (error) =>
+      new ScriptError("script.metrics.report_failed", "Failed to generate metrics report", {
+        cause: error,
+      }),
   );
 }
 
@@ -242,7 +246,7 @@ if (import.meta.main) {
   void generate(Bun.argv.slice(2)).match(
     (reportPath) => logger.info(`metrics report written to ${reportPath}`),
     (error) => {
-      logger.error(formatAppError(error));
+      logger.error(formatUnknownError(error));
       process.exitCode = 1;
     },
   );

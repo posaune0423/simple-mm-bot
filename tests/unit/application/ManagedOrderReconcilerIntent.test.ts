@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler";
+import { OrderCancelAllFailedError } from "../../../src/application/services/OrderReconciler";
 import type {
   IOrderGateway,
   OrderRequest,
   PlacedOrder,
 } from "../../../src/domain/ports/IOrderGateway";
-import { MarketId } from "../../../src/domain/value-objects/MarketId";
 import { OrderIntent } from "../../../src/domain/value-objects/OrderIntent";
 import { Price } from "../../../src/domain/value-objects/Price";
 import { Quantity } from "../../../src/domain/value-objects/Quantity";
@@ -19,7 +19,7 @@ describe("ManagedOrderReconciler intent mapping", () => {
     const result = await reconciler.reconcile([
       OrderIntent.create({
         key: "bid:0",
-        market: MarketId.unsafe("BTC-USD"),
+        market: "BTC-USD",
         orderSide: "buy",
         price: Price.unsafe(99),
         quantity: Quantity.unsafe(1),
@@ -54,7 +54,8 @@ describe("ManagedOrderReconciler intent mapping", () => {
     const result = await reconciler.cancelAll("risk_pause");
 
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("order_cancel_all_failed");
+    expect(result._unsafeUnwrapErr()).toBeInstanceOf(OrderCancelAllFailedError);
+    expect(result._unsafeUnwrapErr().code).toBe("application.order_reconciler.cancel_all_failed");
   });
 });
 

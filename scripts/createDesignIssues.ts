@@ -9,7 +9,8 @@ import {
   METRICS_ISSUES_PATH,
 } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
-import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { writeJsonFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 
@@ -31,7 +32,7 @@ async function createGitHubIssue(title: string, body: string, label: string): Pr
   }
 }
 
-function createIssues(argv: string[]): ResultAsync<string, AppError> {
+function createIssues(argv: string[]): ResultAsync<string, ScriptError> {
   const options = parseFlagOptions(argv);
   const evaluationPath = options.evaluation ?? LATEST_METRICS_EVALUATION_PATH;
   const reportPath = options.report ?? LATEST_METRICS_REPORT_PATH;
@@ -55,14 +56,16 @@ function createIssues(argv: string[]): ResultAsync<string, AppError> {
       return outputPath;
     })(),
     (error) =>
-      createAppError("metrics.issue_failed", "Failed to create metrics design issues", error),
+      new ScriptError("script.metrics.issue_failed", "Failed to create metrics design issues", {
+        cause: error,
+      }),
   );
 }
 
 void createIssues(Bun.argv.slice(2)).match(
   (outputPath) => logger.info(`metrics issue plan written to ${outputPath}`),
   (error) => {
-    logger.error(formatAppError(error));
+    logger.error(formatUnknownError(error));
     process.exitCode = 1;
   },
 );

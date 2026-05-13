@@ -1,5 +1,5 @@
 # Bulk mainnet real-capital preset.
-# Keep this conservative; beta/mock balance sizing lives in config.bulk.beta.yml.
+# Keep this conservative; beta/mock balance sizing lives in config/bulk/beta.yml.
 mode: live
 venue: bulk
 

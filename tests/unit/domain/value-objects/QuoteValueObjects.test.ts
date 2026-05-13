@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import { BasisPoints } from "../../../../src/domain/value-objects/BasisPoints";
-import { MarketId } from "../../../../src/domain/value-objects/MarketId";
 import { OrderIntent } from "../../../../src/domain/value-objects/OrderIntent";
 import { PositionSnapshot } from "../../../../src/domain/value-objects/PositionSnapshot";
 import { Price } from "../../../../src/domain/value-objects/Price";
@@ -10,9 +9,6 @@ import { QuoteLeg } from "../../../../src/domain/value-objects/QuoteLeg";
 
 describe("domain value objects", () => {
   it("validates primitive market-making value objects", () => {
-    expect(MarketId.create("BTC-USD").isOk()).toBe(true);
-    expect(MarketId.create("").isErr()).toBe(true);
-
     expect(Price.create(100).isOk()).toBe(true);
     expect(Price.create(0).isErr()).toBe(true);
     expect(Price.create(Number.POSITIVE_INFINITY).isErr()).toBe(true);
@@ -47,7 +43,7 @@ describe("domain value objects", () => {
   });
 
   it("rejects empty, crossed, negative-sigma, and unsorted quotes", () => {
-    const market = MarketId.unsafe("BTC-USD");
+    const market = "BTC-USD";
     const referencePrice = Price.unsafe(100);
     const fairPrice = Price.unsafe(100);
     const bid0 = QuoteLeg.unsafe({
@@ -138,19 +134,19 @@ describe("domain value objects", () => {
 
   it("derives exposure intent from signed position and order side", () => {
     const long = PositionSnapshot.unsafe({
-      market: MarketId.unsafe("BTC-USD"),
+      market: "BTC-USD",
       signedQuantity: 2,
       averageEntryPrice: 100,
       unrealizedPnl: 0,
     });
     const short = PositionSnapshot.unsafe({
-      market: MarketId.unsafe("BTC-USD"),
+      market: "BTC-USD",
       signedQuantity: -2,
       averageEntryPrice: 100,
       unrealizedPnl: 0,
     });
     const flat = PositionSnapshot.unsafe({
-      market: MarketId.unsafe("BTC-USD"),
+      market: "BTC-USD",
       signedQuantity: 0,
       averageEntryPrice: null,
       unrealizedPnl: null,
@@ -170,7 +166,7 @@ describe("domain value objects", () => {
   it("validates order intent as submit-before-venue intent", () => {
     const valid = OrderIntent.create({
       key: "bid:0",
-      market: MarketId.unsafe("BTC-USD"),
+      market: "BTC-USD",
       orderSide: "buy",
       price: Price.unsafe(99),
       quantity: Quantity.unsafe(1),
@@ -195,7 +191,7 @@ describe("domain value objects", () => {
     expect(
       OrderIntent.create({
         key: "ask:0",
-        market: MarketId.unsafe("BTC-USD"),
+        market: "BTC-USD",
         orderSide: "sell",
         price: Price.unsafe(101),
         quantity: Quantity.unsafe(1),

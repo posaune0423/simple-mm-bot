@@ -226,18 +226,19 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 
 ## 設定管理
 
-- default config: `config/config.bulk.beta.yml`
-- Bulk beta live preset: `config/config.bulk.beta.yml`
-- Bulk mainnet live preset: `config/config.bulk.mainnet.yml`
-- Bulk paper preset: `config/config.paper.yml`
-- Bulk template: `config/config.example.yml`
-- Bulk backtest preset: `config/config.backtest.yml`
+- default config selection: `CONFIG_VENUE=bulk`, `CONFIG_PRESET=beta`
+- Bulk beta preset: `config/bulk/beta.yml`
+- Bulk mainnet preset: `config/bulk/mainnet.yml`
+- Bulk template: `config/bulk/example.yml`
+- Paper and backtest use the same venue preset with `MODE` override
 
 Runtime env default は `src/env.ts` に閉じる。Drizzle schema / migration path は `drizzle.config.ts` に置き、script / report / agent loop 用の default path は `scripts/lib/paths.ts` に集約する。
 
 環境変数による override:
 
 - `MODE`
+- `CONFIG_VENUE`
+- `CONFIG_PRESET`
 - `CONFIG_PATH`
 - `DATABASE_URL` (default: `file:data/mm.db`)
 - `LOG_LEVEL`

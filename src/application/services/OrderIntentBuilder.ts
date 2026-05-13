@@ -6,6 +6,7 @@ import { OrderIntent } from "../../domain/value-objects/OrderIntent";
 import type { Quote } from "../../domain/value-objects/Quote";
 import type { QuoteLeg } from "../../domain/value-objects/QuoteLeg";
 import { Price } from "../../domain/value-objects/Price";
+import { ApplicationError } from "../errors/ApplicationError";
 
 const MAX_OPEN_QUOTE_TOUCH_STALENESS_MS = 1_500;
 const EPOCH_MS_LOWER_BOUND = 1_000_000_000_000;
@@ -16,12 +17,18 @@ const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
 const MOMENTUM_GUARD_MULTIPLIER = 1;
 const MAX_MOMENTUM_GUARD_BPS = 8;
 
-export type OrderIntentBuilderError =
-  | DomainError
-  | {
-      type: "order_intent_build_failed";
-      reason: string;
-    };
+export type OrderIntentBuilderError = DomainError | OrderIntentBuildFailedError;
+
+export class OrderIntentBuildFailedError extends ApplicationError {
+  readonly code = "application.order_intent_builder.build_failed";
+
+  constructor(
+    message: string,
+    context: Readonly<Record<string, string | number | boolean | null>> = {},
+  ) {
+    super(message, { context });
+  }
+}
 
 export type OrderIntentSkip = Readonly<{
   key: string;
@@ -67,10 +74,11 @@ export class OrderIntentBuilder {
       const key = legKey(leg);
       const touch = input.placement.touchByLegKey.get(key);
       if (touch === undefined) {
-        return err({
-          type: "order_intent_build_failed",
-          reason: `missing placement touch for quote leg: ${key}`,
-        });
+        return err(
+          new OrderIntentBuildFailedError(`missing placement touch for quote leg: ${key}`, {
+            key,
+          }),
+        );
       }
 
       const skipReason = this.skipReason(leg, touch, input.placement.trendBps);

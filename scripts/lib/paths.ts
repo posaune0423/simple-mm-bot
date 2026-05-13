@@ -1,6 +1,5 @@
-export const DEFAULT_BULK_BETA_CONFIG_PATH = "config/config.bulk.beta.yml";
-export const PAPER_CONFIG_PATH = "config/config.paper.yml";
-export const BACKTEST_CONFIG_PATH = "config/config.backtest.yml";
+export const DEFAULT_BULK_BETA_CONFIG_PATH = "config/bulk/beta.yml";
+export const DEFAULT_BULK_MAINNET_CONFIG_PATH = "config/bulk/mainnet.yml";
 
 export const STRATEGY_RUNS_DIR = "data/strategy-runs";
 export const METRICS_RESULTS_DIR = "data/metrics";

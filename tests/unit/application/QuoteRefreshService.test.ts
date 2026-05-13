@@ -9,8 +9,11 @@ import type { Position } from "../../../src/domain/entities/Position.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
 import type { IMarkoutFeedbackRepository } from "../../../src/domain/ports/IMarkoutFeedbackRepository.ts";
 import type { IPositionRepository } from "../../../src/domain/ports/IPositionRepository.ts";
-import type { Strategy, StrategyInput } from "../../../src/domain/strategies/Strategy.ts";
-import { StrategyDecision } from "../../../src/domain/value-objects/StrategyDecision.ts";
+import {
+  StrategyDecision,
+  type Strategy,
+  type StrategyInput,
+} from "../../../src/domain/strategies/Strategy.ts";
 
 describe("QuoteRefreshService", () => {
   test("treats markout feedback repository failures as an empty non-fatal signal", async () => {

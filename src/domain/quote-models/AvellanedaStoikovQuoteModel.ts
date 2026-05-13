@@ -1,10 +1,15 @@
 import { err, type Result } from "neverthrow";
 import type { AvellanedaStoikovParams } from "./AvellanedaStoikovParams";
 import { BasisPoints } from "../value-objects/BasisPoints";
-import { ModelQuote } from "../value-objects/ModelQuote";
 import { Price } from "../value-objects/Price";
-import type { QuoteModelInput } from "../value-objects/QuoteModelInput";
-import type { QuoteModel, QuoteModelError } from "./QuoteModel";
+import {
+  InvalidModelQuoteError,
+  InvalidQuoteModelInputError,
+  ModelQuote,
+  type QuoteModel,
+  type QuoteModelError,
+  type QuoteModelInput,
+} from "./QuoteModel";
 
 export class AvellanedaStoikovQuoteModel implements QuoteModel {
   readonly name = "avellaneda-stoikov";
@@ -14,11 +19,7 @@ export class AvellanedaStoikovQuoteModel implements QuoteModel {
   compute(input: QuoteModelInput): Result<ModelQuote, QuoteModelError> {
     const invalidReason = this.validateInput(input);
     if (invalidReason !== undefined) {
-      return err({
-        type: "invalid_quote_model_input",
-        model: this.name,
-        reason: invalidReason,
-      });
+      return err(new InvalidQuoteModelInputError(this.name, invalidReason));
     }
 
     const spread = this.computeSpread(input);
@@ -46,11 +47,7 @@ export class AvellanedaStoikovQuoteModel implements QuoteModel {
         gamma: this.params.gamma,
         kappa: this.params.kappa,
       },
-    }).mapErr((error) => ({
-      type: "invalid_model_quote",
-      model: this.name,
-      reason: error.reason,
-    }));
+    }).mapErr((error) => new InvalidModelQuoteError(this.name, error.message, { cause: error }));
   }
 
   private validateInput(input: QuoteModelInput): string | undefined {

@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 
-import { createAppError } from "../../../src/utils/errors.ts";
-
 function fetchUrl(input: Parameters<typeof fetch>[0]): string {
   if (typeof input === "string") {
     return input;
@@ -79,7 +77,7 @@ describe("notifyFatalErrorToSlack", () => {
       const specifier: string = "../../../src/utils/slackNotification.ts?test=with_webhook";
       const { notifyFatalErrorToSlack } = await import(specifier);
       await notifyFatalErrorToSlack(
-        createAppError("config.invalid", "Config validation failed", cause),
+        new ConfigLoadError("config.invalid", "Config validation failed", cause),
         { mode: "paper", venue: "bulk", market: "BTC-USD", configPath: "config/test.yml" },
       );
 
@@ -158,3 +156,14 @@ describe("notifyFatalErrorToSlack", () => {
     }
   });
 });
+
+class ConfigLoadError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    cause: unknown,
+  ) {
+    super(message, { cause });
+    this.name = "ConfigLoadError";
+  }
+}

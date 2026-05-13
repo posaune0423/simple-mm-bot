@@ -10,6 +10,7 @@ import type {
   OrderReconcilerError,
   ReconcileResult,
 } from "./OrderReconciler.ts";
+import { OrderCancelAllFailedError, OrderReconcileFailedError } from "./OrderReconciler.ts";
 
 export interface ManagedOrderReconcilerOptions {
   priceReplaceThresholdBps: number;
@@ -92,10 +93,7 @@ export class ManagedOrderReconciler implements OrderReconciler {
   reconcile(intents: readonly OrderIntent[]) {
     return tryCatchAsync(
       this.reconcileTargets(intents.map(toReconciliationTarget)),
-      (cause): OrderReconcilerError => ({
-        type: "order_reconcile_failed",
-        cause,
-      }),
+      (cause): OrderReconcilerError => new OrderReconcileFailedError(cause),
     ).map(
       (activeOrders): ReconcileResult => ({
         activeOrders,
@@ -106,11 +104,7 @@ export class ManagedOrderReconciler implements OrderReconciler {
   cancelAll(reason: string) {
     return tryCatchAsync(
       this.cancelAllTargets(reason),
-      (cause): OrderReconcilerError => ({
-        type: "order_cancel_all_failed",
-        reason,
-        cause,
-      }),
+      (cause): OrderReconcilerError => new OrderCancelAllFailedError(reason, cause),
     ).map(
       (): CancelAllResult => ({
         reason,

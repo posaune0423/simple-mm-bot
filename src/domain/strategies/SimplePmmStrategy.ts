@@ -1,9 +1,18 @@
 import type { Result } from "neverthrow";
-import type { SideMarkoutFeedback } from "../value-objects/SideMarkoutFeedback";
-import type { QuoteSideSpecs, QuoteEngineInput } from "../value-objects/QuoteEngineInput";
-import type { QuoteEngine, QuoteEngineError } from "../services/QuoteEngine";
-import type { Strategy, StrategyError, StrategyInput } from "./Strategy";
-import { StrategyDecision } from "../value-objects/StrategyDecision";
+import type {
+  QuoteEngine,
+  QuoteEngineError,
+  QuoteEngineInput,
+  QuoteSideSpecs,
+} from "../services/QuoteEngine";
+import {
+  StrategyDecision,
+  StrategyQuoteFailedError,
+  type SideMarkoutFeedback,
+  type Strategy,
+  type StrategyError,
+  type StrategyInput,
+} from "./Strategy";
 
 export type MarkoutFeedbackGateConfig = Readonly<{
   enabled: boolean;
@@ -93,11 +102,7 @@ export class SimplePmmStrategy implements Strategy {
   }
 
   private quoteEngineError(error: QuoteEngineError): StrategyError {
-    return {
-      type: "strategy_quote_failed",
-      strategy: this.name,
-      reason: error.reason,
-    };
+    return new StrategyQuoteFailedError(this.name, error.message, { cause: error });
   }
 }
 

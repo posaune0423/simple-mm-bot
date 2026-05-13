@@ -7,7 +7,8 @@ import type { TradingRunFact } from "../src/domain/ports/IMetricsRepository.ts";
 import { resolveSqliteDatabasePath } from "../src/utils/databaseUrl.ts";
 import { METRICS_RESULTS_DIR } from "./lib/paths.ts";
 import { parseFlagOptions } from "../src/utils/args.ts";
-import { createAppError, formatAppError, type AppError } from "../src/utils/errors.ts";
+import { ScriptError } from "./errors/ScriptError.ts";
+import { formatUnknownError } from "../src/utils/errors.ts";
 import { ensureDirectory, writeJsonFile } from "../src/utils/fs.ts";
 import { logger } from "../src/utils/logger.ts";
 import { evaluateMetricsRun } from "./lib/MetricsEvaluation.ts";
@@ -788,18 +789,20 @@ function percentile(values: number[], percentile: number): number | null {
   return sortedValues[index] ?? null;
 }
 
-function evaluate(argv: string[]): ResultAsync<string, AppError> {
+function evaluate(argv: string[]): ResultAsync<string, ScriptError> {
   const options = parseFlagOptions(argv);
   let dbPath: string;
   try {
     dbPath = options.db ?? resolveSqliteDatabasePath(Bun.env.DATABASE_URL);
   } catch (error) {
-    return ResultAsync.fromPromise(Promise.reject(error), (cause) =>
-      createAppError(
-        "metrics.invalid_database_url",
-        "metrics:evaluate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
-        cause,
-      ),
+    return ResultAsync.fromPromise(
+      Promise.reject(error),
+      (cause) =>
+        new ScriptError(
+          "script.metrics.invalid_database_url",
+          "metrics:evaluate requires --db <sqlite-path> or DATABASE_URL=file:<path>",
+          { cause },
+        ),
     );
   }
   const runId = options["run-id"] ?? latestRunId(dbPath);
@@ -808,12 +811,16 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
   if (runId === null) {
     return ResultAsync.fromPromise(
       Promise.reject(new Error("No trading_runs rows found")),
-      (error) => createAppError("metrics.no_run", "No metrics run found", error),
+      (error) => new ScriptError("script.metrics.no_run", "No metrics run found", { cause: error }),
     );
   }
 
-  return ResultAsync.fromPromise(ensureDirectory(outputDir), (error) =>
-    createAppError("metrics.prepare_failed", "Failed to prepare output directory", error),
+  return ResultAsync.fromPromise(
+    ensureDirectory(outputDir),
+    (error) =>
+      new ScriptError("script.metrics.prepare_failed", "Failed to prepare output directory", {
+        cause: error,
+      }),
   ).andThen(() =>
     ResultAsync.fromPromise(
       (async () => {
@@ -821,7 +828,10 @@ function evaluate(argv: string[]): ResultAsync<string, AppError> {
         await writeJsonFile(join(outputDir, "evaluation.json"), result);
         return outputDir;
       })(),
-      (error) => createAppError("metrics.evaluate_failed", "Failed to evaluate metrics", error),
+      (error) =>
+        new ScriptError("script.metrics.evaluate_failed", "Failed to evaluate metrics", {
+          cause: error,
+        }),
     ),
   );
 }
@@ -830,7 +840,7 @@ if (import.meta.main) {
   void evaluate(Bun.argv.slice(2)).match(
     (outputDir) => logger.info(`metrics evaluation written to ${outputDir}`),
     (error) => {
-      logger.error(formatAppError(error));
+      logger.error(formatUnknownError(error));
       process.exitCode = 1;
     },
   );

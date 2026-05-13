@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
 import type { IOrderGateway, PlacedOrder } from "../../../src/domain/ports/IOrderGateway.ts";
-import { MarketId } from "../../../src/domain/value-objects/MarketId.ts";
 import type { OrderIntent } from "../../../src/domain/value-objects/OrderIntent.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 import { Quantity } from "../../../src/domain/value-objects/Quantity.ts";
@@ -22,7 +21,7 @@ async function activeOrders(promise: ReturnType<ManagedOrderReconciler["reconcil
 function quoteOrder(overrides: Partial<OrderIntent> = {}): OrderIntent {
   return {
     key: "bid",
-    market: MarketId.unsafe("BTC-USD"),
+    market: "BTC-USD",
     orderSide: "buy",
     price: Price.unsafe(100),
     quantity: Quantity.unsafe(1),

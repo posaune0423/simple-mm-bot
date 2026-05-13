@@ -1,7 +1,8 @@
+# Bulk beta paper-mode example only. Do not use this file for production live trading.
 # Bulk beta example:
 # - Faucet deposits 10,000 mock USD once per 24 hours per account.
-# - This mirrors config.bulk.beta.yml and keeps the private key templated.
-mode: live
+# - This mirrors config/bulk/beta.yml and keeps the private key templated.
+mode: paper
 venue: bulk
 
 connections:
@@ -30,7 +31,7 @@ quoteEngine:
     budgetUsd: 9600
   levels:
     - halfSpreadBps: 1.5
-      sizeUsd: 14400
+      sizeUsd: 9600
   qualityGate:
     enabled: true
     minAverageMarkoutBps: 0

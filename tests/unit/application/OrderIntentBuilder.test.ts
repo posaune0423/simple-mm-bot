@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder";
 import type { MarketSnapshot } from "../../../src/domain/ports/IMarketFeed";
-import { MarketId } from "../../../src/domain/value-objects/MarketId";
 import { Price } from "../../../src/domain/value-objects/Price";
 import { Quantity } from "../../../src/domain/value-objects/Quantity";
 import { Quote } from "../../../src/domain/value-objects/Quote";
@@ -96,7 +95,7 @@ describe("OrderIntentBuilder", () => {
 
 function quote(input: { bid?: number; ask?: number } = {}) {
   return Quote.create({
-    market: MarketId.unsafe("BTC-USD"),
+    market: "BTC-USD",
     bids: [
       QuoteLeg.unsafe({
         side: "bid",

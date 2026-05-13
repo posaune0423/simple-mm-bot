@@ -1,4 +1,4 @@
-import type { SideMarkoutFeedback } from "../value-objects/SideMarkoutFeedback.ts";
+import type { SideMarkoutFeedback } from "../strategies/Strategy.ts";
 
 export interface MarkoutFeedbackQuery {
   market: string;

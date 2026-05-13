@@ -1,14 +1,13 @@
 import { err, ok, type Result } from "neverthrow";
 import type { OrderTimeInForce } from "../entities/Quote";
-import type { DomainError } from "../errors/DomainError";
-import type { MarketId } from "./MarketId";
+import { InvalidOrderIntentError, type DomainError } from "../errors/DomainError";
 import type { Price } from "./Price";
 import type { Quantity } from "./Quantity";
 import type { ExposureIntent, OrderSide, QuoteSide } from "./QuoteLeg";
 
 export type OrderIntent = Readonly<{
   key: string;
-  market: MarketId;
+  market: string;
   orderSide: OrderSide;
   price: Price;
   quantity: Quantity;
@@ -27,34 +26,26 @@ export const OrderIntent = {
     const key = input.key.trim();
     const clientOrderId = input.clientOrderId.trim();
     if (key.length === 0) {
-      return err({
-        type: "invalid_order_intent",
-        reason: "order intent key must be non-empty",
-      });
+      return err(new InvalidOrderIntentError("order intent key must be non-empty"));
     }
     if (clientOrderId.length === 0) {
-      return err({
-        type: "invalid_order_intent",
-        reason: "clientOrderId must be non-empty",
-      });
+      return err(new InvalidOrderIntentError("clientOrderId must be non-empty"));
     }
     if (!Number.isInteger(input.sourceQuoteLevel) || input.sourceQuoteLevel < 0) {
-      return err({
-        type: "invalid_order_intent",
-        reason: `sourceQuoteLevel must be a non-negative integer: ${input.sourceQuoteLevel}`,
-      });
+      return err(
+        new InvalidOrderIntentError(
+          `sourceQuoteLevel must be a non-negative integer: ${input.sourceQuoteLevel}`,
+          { context: { sourceQuoteLevel: input.sourceQuoteLevel } },
+        ),
+      );
     }
     if (input.exposureIntent === "reduce_exposure" && !input.reduceOnly) {
-      return err({
-        type: "invalid_order_intent",
-        reason: "reduce_exposure order intent must be reduceOnly",
-      });
+      return err(new InvalidOrderIntentError("reduce_exposure order intent must be reduceOnly"));
     }
     if (input.exposureIntent === "increase_exposure" && input.reduceOnly) {
-      return err({
-        type: "invalid_order_intent",
-        reason: "increase_exposure order intent must not be reduceOnly",
-      });
+      return err(
+        new InvalidOrderIntentError("increase_exposure order intent must not be reduceOnly"),
+      );
     }
 
     return ok(

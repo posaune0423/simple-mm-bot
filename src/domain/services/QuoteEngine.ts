@@ -1,29 +1,62 @@
 import { err, ok, type Result } from "neverthrow";
 import type { DomainError } from "../errors/DomainError.ts";
+import type { QuoteModel } from "../quote-models/QuoteModel.ts";
+import type { QuoteModelError } from "../quote-models/QuoteModel.ts";
+import type { MarketSnapshot } from "../ports/IMarketFeed.ts";
 import type { ExposureIntent, OrderSide, QuoteSide } from "../value-objects/QuoteLeg.ts";
 import { QuoteLeg } from "../value-objects/QuoteLeg.ts";
-import { MarketId } from "../value-objects/MarketId.ts";
 import { Price } from "../value-objects/Price.ts";
 import { Quantity } from "../value-objects/Quantity.ts";
 import { BasisPoints } from "../value-objects/BasisPoints.ts";
 import { Quote } from "../value-objects/Quote.ts";
-import type { QuoteEngineInput, QuoteSideSpec } from "../value-objects/QuoteEngineInput.ts";
 import { PositionSnapshot } from "../value-objects/PositionSnapshot.ts";
-import type { QuoteModel } from "../quote-models/QuoteModel.ts";
 import type { FairPriceCalculator } from "./FairPriceCalculator.ts";
 import type { VolatilityEstimator } from "./VolatilityEstimator.ts";
 
-export type QuoteEngineError =
-  | DomainError
-  | {
-      type: "invalid_quote_engine_input";
-      reason: string;
-    }
-  | {
-      type: "quote_model_failed";
-      model: string;
-      reason: string;
-    };
+export type QuoteSideSpec = Readonly<{
+  enabled: boolean;
+  distanceMultiplier: number;
+  sizeMultiplier: number;
+  disableIncreaseExposure: boolean;
+  reasonTags: readonly string[];
+}>;
+
+export type QuoteSideSpecs = Readonly<{
+  bid: QuoteSideSpec;
+  ask: QuoteSideSpec;
+}>;
+
+export type QuoteEngineInput = Readonly<{
+  snapshot: MarketSnapshot;
+  position: PositionSnapshot;
+  sideSpecs: QuoteSideSpecs;
+}>;
+
+export type QuoteEngineError = DomainError | InvalidQuoteEngineInputError | QuoteModelFailedError;
+
+export class InvalidQuoteEngineInputError extends Error {
+  readonly code = "quote_engine.invalid_input";
+
+  constructor(
+    message: string,
+    readonly context: Readonly<Record<string, string | number | boolean | null>> = {},
+  ) {
+    super(message);
+    this.name = "InvalidQuoteEngineInputError";
+  }
+}
+
+export class QuoteModelFailedError extends Error {
+  readonly code = "quote_engine.quote_model_failed";
+
+  constructor(
+    readonly model: string,
+    cause: QuoteModelError,
+  ) {
+    super(cause.message, { cause });
+    this.name = "QuoteModelFailedError";
+  }
+}
 
 export type QuoteEngineConfig = Readonly<{
   inventoryScale: number;
@@ -74,17 +107,13 @@ export class QuoteEngine {
       return err(referencePrice.error);
     }
 
-    const market = MarketId.create(input.snapshot.market);
-    if (market.isErr()) {
-      return err(market.error);
-    }
-
     const sigma = this.volEst.update(input.snapshot.markPrice, input.snapshot.timestamp);
     if (!Number.isFinite(sigma) || sigma < 0) {
-      return err({
-        type: "invalid_quote_engine_input",
-        reason: `sigma must be finite and non-negative: ${sigma}`,
-      });
+      return err(
+        new InvalidQuoteEngineInputError(`sigma must be finite and non-negative: ${sigma}`, {
+          sigma,
+        }),
+      );
     }
 
     const quoteSize = Quantity.create(this.computeQuoteSize(fairPrice.value), "quoteSize");
@@ -111,11 +140,7 @@ export class QuoteEngine {
       minSpreadBps,
     });
     if (modelQuote.isErr()) {
-      return err({
-        type: "quote_model_failed",
-        model: this.quoteModel.name,
-        reason: modelQuote.error.reason,
-      });
+      return err(new QuoteModelFailedError(this.quoteModel.name, modelQuote.error));
     }
 
     const levels = this.withOpenNotionalCaps(
@@ -168,7 +193,7 @@ export class QuoteEngine {
     }
 
     return Quote.create({
-      market: market.value,
+      market: input.snapshot.market,
       bids,
       asks,
       referencePrice: referencePrice.value,

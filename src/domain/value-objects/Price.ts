@@ -1,18 +1,14 @@
 import { err, ok, type Result } from "neverthrow";
-import type { DomainError } from "../errors/DomainError";
-import type { Brand } from "./Brand";
+import { InvalidPriceError, type DomainError } from "../errors/DomainError";
 
-export type Price = Brand<number, "Price">;
+declare const priceBrand: unique symbol;
+
+export type Price = number & { readonly [priceBrand]: "Price" };
 
 export const Price = {
   create(value: number, field = "price"): Result<Price, DomainError> {
     if (!Number.isFinite(value) || value <= 0) {
-      return err({
-        type: "invalid_price",
-        field,
-        value,
-        reason: "price must be finite and positive",
-      });
+      return err(new InvalidPriceError(field, value, "price must be finite and positive"));
     }
     return ok(value as Price);
   },

@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { IMarketFeed, MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import type { IMarkoutFeedbackRepository } from "../../domain/ports/IMarkoutFeedbackRepository.ts";
-import type { SideMarkoutFeedback } from "../../domain/value-objects/SideMarkoutFeedback.ts";
-import type { Strategy } from "../../domain/strategies/Strategy.ts";
-import { StrategyDecision } from "../../domain/value-objects/StrategyDecision.ts";
+import {
+  StrategyDecision,
+  type SideMarkoutFeedback,
+  type Strategy,
+} from "../../domain/strategies/Strategy.ts";
 import type { Quote } from "../../domain/value-objects/Quote.ts";
-import { MarketId } from "../../domain/value-objects/MarketId.ts";
 import { PositionSnapshot } from "../../domain/value-objects/PositionSnapshot.ts";
 import type { OrderTimeInForce } from "../../domain/entities/Quote.ts";
 import { stringifyError } from "../../utils/errors.ts";
@@ -49,7 +50,6 @@ export class QuoteRefreshService {
 
   async execute(): Promise<void> {
     const cycleStartedAt = Date.now();
-    await this.marketFeed.getSnapshot();
     const [snapshot, position] = await Promise.all([
       this.marketFeed.getSnapshot(),
       this.positionRepository.get(),
@@ -67,16 +67,8 @@ export class QuoteRefreshService {
     const qualityGateStartedAt = Date.now();
     const markoutFeedback = await this.readMarkoutFeedback(snapshot);
     const qualityGateMs = Date.now() - qualityGateStartedAt;
-    const market = MarketId.create(snapshot.market);
-    if (market.isErr()) {
-      await this.recordRuntimeHealth("error", "strategy_input_invalid", market.error.reason, {
-        market: snapshot.market,
-      });
-      return;
-    }
-
     const positionSnapshot = PositionSnapshot.create({
-      market: market.value,
+      market: snapshot.market,
       signedQuantity: position.qty,
       averageEntryPrice: position.avgEntry,
       unrealizedPnl: position.unrealizedPnl,
@@ -85,7 +77,7 @@ export class QuoteRefreshService {
       await this.recordRuntimeHealth(
         "error",
         "strategy_input_invalid",
-        positionSnapshot.error.reason,
+        positionSnapshot.error.message,
         {
           market: snapshot.market,
         },
@@ -206,7 +198,7 @@ export class QuoteRefreshService {
       await this.recordRuntimeHealth(
         "error",
         "order_intent_build_failed",
-        buildResult.error.reason,
+        buildResult.error.message,
         buildResult.error,
       );
       return;

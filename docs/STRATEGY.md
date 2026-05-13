@@ -28,7 +28,7 @@ flowchart LR
   Builder --> Reconciler
 ```
 
-`strategies/` には `Strategy` contract と具象 strategy 実装だけを置く。`StrategyDecision` は strategy の返り値 ADT なので `domain/value-objects/StrategyDecision.ts` に置く。
+`strategies/` には `Strategy` contract、返り値 ADT の `StrategyDecision`、input signal の `SideMarkoutFeedback`、具象 strategy 実装を置く。`StrategyDecision` は value object ではなく strategy contract の一部として扱う。
 
 ## Tick 内の quote refresh
 

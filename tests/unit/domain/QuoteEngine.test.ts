@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 import type { QuoteModel } from "../../../src/domain/quote-models/QuoteModel.ts";
+import { ModelQuote } from "../../../src/domain/quote-models/QuoteModel.ts";
 import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalculator.ts";
 import { QuoteEngine } from "../../../src/domain/services/QuoteEngine.ts";
 import { VolatilityEstimator } from "../../../src/domain/services/VolatilityEstimator.ts";
-import { MarketId } from "../../../src/domain/value-objects/MarketId.ts";
-import { ModelQuote } from "../../../src/domain/value-objects/ModelQuote.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 
@@ -152,7 +151,7 @@ function sideSpec() {
 
 function position(signedQuantity: number) {
   return PositionSnapshot.unsafe({
-    market: MarketId.unsafe("BTC-USD"),
+    market: "BTC-USD",
     signedQuantity,
     averageEntryPrice: null,
     unrealizedPnl: null,

@@ -2,14 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
-import { StrategyDecision } from "../../../src/domain/value-objects/StrategyDecision.ts";
-import { MarketId } from "../../../src/domain/value-objects/MarketId.ts";
+import { StrategyDecision } from "../../../src/domain/strategies/Strategy.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 import { Quantity } from "../../../src/domain/value-objects/Quantity.ts";
 import { Quote } from "../../../src/domain/value-objects/Quote.ts";
 import { QuoteLeg } from "../../../src/domain/value-objects/QuoteLeg.ts";
-import type { QuoteEngineInput } from "../../../src/domain/value-objects/QuoteEngineInput.ts";
+import type { QuoteEngineInput } from "../../../src/domain/services/QuoteEngine.ts";
 
 class StubQuoteEngine {
   computeCalls: QuoteEngineInput[] = [];
@@ -18,7 +17,7 @@ class StubQuoteEngine {
     this.computeCalls.push(input);
     return ok(
       Quote.create({
-        market: MarketId.unsafe("BTC-USD"),
+        market: "BTC-USD",
         bids: [
           QuoteLeg.unsafe({
             side: "bid",
@@ -101,7 +100,7 @@ describe("SimplePmmStrategy", () => {
 
 function position(signedQuantity: number) {
   return PositionSnapshot.unsafe({
-    market: MarketId.unsafe("BTC-USD"),
+    market: "BTC-USD",
     signedQuantity,
     averageEntryPrice: null,
     unrealizedPnl: null,

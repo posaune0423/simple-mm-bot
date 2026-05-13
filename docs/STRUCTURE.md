@@ -46,11 +46,13 @@ simple-mm-bot/
 │   │   │   ├── SimplePmmStrategy.ts
 │   │   │   └── Strategy.ts
 │   │   └── value-objects/
+│   │       ├── BasisPoints.ts
 │   │       ├── OrderIntent.ts
+│   │       ├── PositionSnapshot.ts
+│   │       ├── Price.ts
+│   │       ├── Quantity.ts
 │   │       ├── Quote.ts
-│   │       ├── QuoteLeg.ts
-│   │       ├── SideMarkoutFeedback.ts
-│   │       └── StrategyDecision.ts
+│   │       └── QuoteLeg.ts
 │   ├── adapters/
 │   │   ├── bulk/
 │   │   │   ├── BulkMarketFeed.ts
@@ -80,12 +82,11 @@ simple-mm-bot/
 │           ├── queries/
 │           ├── report/
 │           └── svg/
-├── config/
-│   ├── config.bulk.beta.yml
-│   ├── config.bulk.mainnet.yml
-│   ├── config.paper.yml
-│   ├── config.backtest.yml
-│   └── config.example.yml
+	├── config/
+	│   └── bulk/
+	│       ├── beta.yml
+	│       ├── mainnet.yml
+	│       └── example.yml
 ├── tests/
 │   ├── unit/
 │   │   ├── adapters/
@@ -141,7 +142,7 @@ simple-mm-bot/
 
 `QuoteEngine` は quote model、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
 `MarketContextBuilder` は component freshness、外部価格差、LOB/risk context など venue 非依存の market context を構築する純粋 domain service。`MarketContext` 型は builder の出力型として同じ file に置き、`domain/market` のような曖昧な bucket は作らない。
-quote model は `src/domain/quote-models/*`、bot behavior strategy は `src/domain/strategies/*` に pure domain code として置く。`StrategyDecision` のような返り値ADTは `src/domain/value-objects/*` に置き、`strategies/` には `Strategy` contract と具象 strategy 実装だけを置く。
+quote model は `src/domain/quote-models/*`、bot behavior strategy は `src/domain/strategies/*` に pure domain code として置く。`QuoteModelInput` / `ModelQuote` は quote model contract、`StrategyDecision` / `SideMarkoutFeedback` は strategy contract として colocate し、`value-objects/` には validation / 不変条件 / domain helper を持つ型だけを置く。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
 metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
@@ -226,7 +227,7 @@ runtime source ではなく tool 用 script の実装詳細として扱う。
 - `MetricsEvaluation.ts`
   - 保存済み metrics facts / views から data health、PnL、markout、order quality、runtime health を評価する
 - `BulkConfigTuning.ts`
-  - `config/config.bulk.beta.yml` への最小YAML tuningだけを扱うBulk固有tool logic
+  - `config/bulk/beta.yml` への最小YAML tuningだけを扱うBulk固有tool logic
 - `DesignIssuePlanner.ts`
   - SDK/API/code/design修正が必要な metrics signal をGitHub issue案へ変換する
 - `paths.ts`
@@ -284,18 +285,16 @@ Bulk Trade の API wrapper は `bulk-ts-sdk` を利用し、この repo の `src
 
 `config/` には commit 可能な設定だけを置く。
 
-- `config/config.bulk.beta.yml`
-  - Bulk beta live config。日次 10,000 mock USD を使う前提の aggressive preset
-- `config/config.bulk.mainnet.yml`
-  - Bulk mainnet live config。real capital 用の conservative preset
-- `config/config.paper.yml`
-  - Bulk Trade paper config
-- `config/config.backtest.yml`
-  - Bulk historical backtest config
-- `config/config.example.yml`
+- `config/bulk/beta.yml`
+  - Bulk beta config。日次 10,000 mock USD を使う前提の aggressive preset
+- `config/bulk/mainnet.yml`
+  - Bulk mainnet config。real capital 用の conservative preset
+- `config/bulk/example.yml`
   - safe template with `${BULK_PRIVATE_KEY}`
 
-デフォルトの `CONFIG_PATH` は `config/config.bulk.beta.yml`。
+デフォルトの config selection は `CONFIG_VENUE=bulk`、`CONFIG_PRESET=beta`。
+`CONFIG_PATH` を指定した場合は venue/preset resolver より優先して、その YAML を直接読む。
+Paper / backtest は専用 YAML ではなく、同じ venue preset に `MODE=paper` / `MODE=backtest` を重ねる。
 
 Bulk の HTTP URL、WS URL、market、environment、L2 depth は YAML に置く。
 secret env として追加するのは `BULK_PRIVATE_KEY` のみ。

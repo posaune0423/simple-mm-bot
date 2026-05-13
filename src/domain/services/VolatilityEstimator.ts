@@ -20,7 +20,7 @@ export class VolatilityEstimator {
       return Math.sqrt(this.variancePerSec);
     }
 
-    const dtSec = this.previousTs === null ? 1 : (timestamp - this.previousTs) / 1000;
+    const dtSec = (timestamp - this.previousTs!) / 1000;
     const logReturn = Math.log(price / this.previousPrice);
     const instantVariancePerSec = logReturn ** 2 / dtSec;
     this.variancePerSec =

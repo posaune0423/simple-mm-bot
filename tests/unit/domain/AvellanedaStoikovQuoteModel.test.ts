@@ -33,17 +33,18 @@ describe("AvellanedaStoikovQuoteModel", () => {
       kInv: 0,
     });
 
-    const quote = model
-      .compute({
-        fairPrice: Price.unsafe(100),
-        volatilitySigma: 0.01,
-        quoteSize: Quantity.unsafe(0.01),
-        positionQty: 0,
-        inventoryScale: 1,
-        timeHorizonSec: 30,
-        minSpreadBps: BasisPoints.unsafe(10),
-      })
-      ._unsafeUnwrap();
+    const result = model.compute({
+      fairPrice: Price.unsafe(100),
+      volatilitySigma: 0.01,
+      quoteSize: Quantity.unsafe(0.01),
+      positionQty: 0,
+      inventoryScale: 1,
+      timeHorizonSec: 30,
+      minSpreadBps: BasisPoints.unsafe(10),
+    });
+
+    expect(result.isOk()).toBe(true);
+    const quote = result._unsafeUnwrap();
 
     expect(Number((quote.askPrice - quote.bidPrice).toFixed(6))).toBe(0.1);
   });
@@ -63,8 +64,13 @@ describe("AvellanedaStoikovQuoteModel", () => {
       timeHorizonSec: 30,
     };
 
-    const longQuote = model.compute({ ...base, positionQty: 3 })._unsafeUnwrap();
-    const shortQuote = model.compute({ ...base, positionQty: -3 })._unsafeUnwrap();
+    const longResult = model.compute({ ...base, positionQty: 3 });
+    const shortResult = model.compute({ ...base, positionQty: -3 });
+
+    expect(longResult.isOk()).toBe(true);
+    expect(shortResult.isOk()).toBe(true);
+    const longQuote = longResult._unsafeUnwrap();
+    const shortQuote = shortResult._unsafeUnwrap();
 
     expect(longQuote.reservationPrice).toBeLessThan(200);
     expect(shortQuote.reservationPrice).toBeGreaterThan(200);

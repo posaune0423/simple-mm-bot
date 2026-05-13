@@ -57,7 +57,7 @@ flowchart LR
         QuoteModel["QuoteModel\nAvellanedaStoikovQuoteModel"]
         Fair["FairPriceCalculator"]
         Vol["VolatilityEstimator"]
-        Values["Value objects\nQuote / QuoteLeg / OrderIntent\nStrategyDecision"]
+        Values["Value objects\nQuote / QuoteLeg / OrderIntent\nPrice / Quantity"]
         Entities["Entities\nQuote / Position / Fill"]
         Ports["Ports\nIMarketFeed\nIOrderGateway\nIPositionRepository\nIOhlcvRepository\nIMarkoutFeedbackRepository\nIMetricsRepository"]
     end
@@ -117,7 +117,7 @@ flowchart LR
 - `DIContainer` だけが「どの venue / mode / DB 実装を使うか」を知る。
 - `Bot` と use case は `IMarketFeed` / `IOrderGateway` などの port だけを見る。
 - `QuoteEngine` は `QuoteModel` interface にだけ依存し、Avellaneda-Stoikov の具象生成は `QuoteModelFactory` に閉じる。
-- `StrategyFactory` は bot behavior strategy を組み立てる。`strategies/` には `Strategy` contract と具象 strategy 実装を置き、`StrategyDecision` は value object として扱う。
+- `StrategyFactory` は bot behavior strategy を組み立てる。`strategies/` には `Strategy` contract、`StrategyDecision`、markout feedback DTO、具象 strategy 実装を置く。
 - `MetricsRecorder` は runtime から fact を保存するだけ。評価結果や report は DB view / reporting tool 側で作る。
 
 ---
@@ -276,7 +276,7 @@ sequenceDiagram
     participant Ohlcv as RecordOhlcvUseCase
     participant Pos as UpdatePositionOnFillUseCase
 
-    Main->>Config: load(CONFIG_PATH)
+    Main->>Config: load(CONFIG_PATH or CONFIG_VENUE/CONFIG_PRESET)
     Config-->>Main: AppConfig
     Main->>DI: new DIContainer(config)
     Main->>DI: buildBot()
@@ -531,7 +531,9 @@ flowchart LR
 
 現在の主要 env:
 
-- `CONFIG_PATH`: 読み込む YAML。default は `config/config.bulk.beta.yml`。
+- `CONFIG_VENUE`: config directory under `config/`。default は `bulk`。
+- `CONFIG_PRESET`: venue 内の preset filename。default は `beta`。
+- `CONFIG_PATH`: 読み込む YAML の明示 override。
 - `MODE`: `live` / `paper` / `backtest` override。
 - `DATABASE_URL`: `file:<path>` なら SQLite、`postgres://` / `postgresql://` なら Postgres。default は `file:data/mm.db`。
 - `BULK_PRIVATE_KEY`: Bulk live order placement 用。

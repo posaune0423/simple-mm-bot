@@ -5,8 +5,6 @@ import { parse as parseYaml } from "yaml";
 import type { AvellanedaStoikovParams } from "./domain/quote-models/AvellanedaStoikovParams.ts";
 import type { BookPriceSource } from "./domain/services/FairPriceCalculator.ts";
 import { env } from "./env.ts";
-import type { AppError } from "./utils/errors.ts";
-import { createAppError } from "./utils/errors.ts";
 import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";
 
 const modeSchema = v.picklist(["live", "paper", "backtest"]);
@@ -156,7 +154,27 @@ export type AppMode = AppConfig["mode"];
 
 interface LoadConfigOptions {
   configPath?: string;
+  venue?: string;
+  preset?: string;
 }
+
+export class ConfigError extends Error {
+  readonly context: Readonly<Record<string, string>>;
+
+  constructor(
+    readonly code: "config.read_failed" | "config.invalid",
+    message: string,
+    options: { context?: Readonly<Record<string, string>>; cause?: unknown } = {},
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "ConfigError";
+    this.context = options.context ?? {};
+  }
+}
+
+const DEFAULT_CONFIG_VENUE = "bulk";
+const DEFAULT_CONFIG_PRESET = "beta";
+const configPathSegmentSchema = /^[a-z0-9][a-z0-9._-]*$/;
 
 function interpolateEnv(text: string): string {
   return text.replaceAll(/\$\{([A-Z0-9_]+)\}/g, (_match, key) => envValue(key) ?? "");
@@ -164,6 +182,31 @@ function interpolateEnv(text: string): string {
 
 function envValue(key: string): string | undefined {
   return Bun.env[key] ?? (env as Record<string, string | undefined>)[key];
+}
+
+export function resolveConfigPath(options: LoadConfigOptions = {}): string {
+  const explicitPath = options.configPath ?? configSelectionEnvValue("CONFIG_PATH");
+  if (explicitPath !== undefined) {
+    return explicitPath;
+  }
+
+  const venue = options.venue ?? configSelectionEnvValue("CONFIG_VENUE") ?? DEFAULT_CONFIG_VENUE;
+  const preset =
+    options.preset ?? configSelectionEnvValue("CONFIG_PRESET") ?? DEFAULT_CONFIG_PRESET;
+  assertConfigPathSegment("venue", venue);
+  assertConfigPathSegment("preset", preset);
+  return `config/${venue}/${preset}.yml`;
+}
+
+function configSelectionEnvValue(key: "CONFIG_PATH" | "CONFIG_VENUE" | "CONFIG_PRESET") {
+  const value = Bun.env[key];
+  return value === undefined || value === "" ? undefined : value;
+}
+
+function assertConfigPathSegment(label: "venue" | "preset", value: string): void {
+  if (!configPathSegmentSchema.test(value)) {
+    throw new Error(`Invalid config ${label}: ${value}`);
+  }
 }
 
 function applyEnvOverrides(config: AppConfig): AppConfig {
@@ -206,11 +249,16 @@ function normalizeConfig(config: AppConfig): LoadedAppConfig {
   };
 }
 
-function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, AppError> {
-  const configPath = options.configPath ?? env.CONFIG_PATH;
+function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, ConfigError> {
+  const configPath = resolveConfigPath(options);
 
-  return tryCatchAsync(Bun.file(configPath).text(), (error) =>
-    createAppError("config.read_failed", `Failed to read config: ${configPath}`, error),
+  return tryCatchAsync(
+    Bun.file(configPath).text(),
+    (error) =>
+      new ConfigError("config.read_failed", `Failed to read config: ${configPath}`, {
+        context: { configPath },
+        cause: error,
+      }),
   ).andThen((text) =>
     fromResult(
       tryCatch(
@@ -218,7 +266,11 @@ function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfi
           normalizeConfig(
             applyEnvOverrides(v.parse(appConfigSchema, parseYaml(interpolateEnv(text)))),
           ),
-        (error) => createAppError("config.invalid", "Config validation failed", error),
+        (error) =>
+          new ConfigError("config.invalid", "Config validation failed", {
+            context: { configPath },
+            cause: error,
+          }),
       ),
     ),
   );

@@ -13,6 +13,7 @@ describe("resolveBacktestPaperLoopOptions", () => {
 
       expect(options.dbPath).toBe("data/mm.db");
       expect(options.outputDir).toBe(join("data/strategy-runs", "20260219-000000-loop"));
+      expect(options.configPath).toBe("config/bulk/beta.yml");
       expect(options.dbPath).not.toContain("loop.db");
     } finally {
       restoreEnv("DATABASE_URL", previousDatabaseUrl);
@@ -37,6 +38,17 @@ describe("resolveBacktestPaperLoopOptions", () => {
     } finally {
       restoreEnv("DATABASE_URL", previousDatabaseUrl);
     }
+  });
+
+  test("uses one venue preset for both backtest and paper phases", () => {
+    const options = resolveBacktestPaperLoopOptions(
+      ["--config", "config/bulk/mainnet.yml"],
+      1_771_459_200_000,
+    );
+
+    expect(options.configPath).toBe("config/bulk/mainnet.yml");
+    expect("backtestConfigPath" in options).toBe(false);
+    expect("paperConfigPath" in options).toBe(false);
   });
 });
 

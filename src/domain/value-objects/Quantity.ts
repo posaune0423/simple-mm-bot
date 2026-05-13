@@ -1,18 +1,14 @@
 import { err, ok, type Result } from "neverthrow";
-import type { DomainError } from "../errors/DomainError";
-import type { Brand } from "./Brand";
+import { InvalidQuantityError, type DomainError } from "../errors/DomainError";
 
-export type Quantity = Brand<number, "Quantity">;
+declare const quantityBrand: unique symbol;
+
+export type Quantity = number & { readonly [quantityBrand]: "Quantity" };
 
 export const Quantity = {
   create(value: number, field = "quantity"): Result<Quantity, DomainError> {
     if (!Number.isFinite(value) || value <= 0) {
-      return err({
-        type: "invalid_quantity",
-        field,
-        value,
-        reason: "quantity must be finite and positive",
-      });
+      return err(new InvalidQuantityError(field, value, "quantity must be finite and positive"));
     }
     return ok(value as Quantity);
   },
