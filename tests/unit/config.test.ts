@@ -122,6 +122,16 @@ describe("ConfigLoader", () => {
     }
   });
 
+  test("loads tight maker canary order lifecycle controls", async () => {
+    const config = await ConfigLoader.load({
+      configPath: "config/bulk/tight-near-touch-maker.yml",
+    });
+
+    expect(config.bot.maxRestingMs).toBe(900);
+    expect(config.bot.exchangeOpenOrderSyncIntervalMs).toBe(1_500);
+    expect(config.shutdown.closePositionPolicy).toBe("emergency_only");
+  });
+
   test("resolves configs by venue and preset when CONFIG_PATH is not set", async () => {
     const previousConfigPath = Bun.env.CONFIG_PATH;
     const previousVenue = Bun.env.CONFIG_VENUE;

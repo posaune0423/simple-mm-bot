@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  ManagedOrderReconciler,
+  OrderReconciler,
   OrderCancelAllFailedError,
-} from "../../../src/application/services/ManagedOrderReconciler";
+} from "../../../src/application/services/OrderReconciler";
 import type {
   IOrderGateway,
   OrderRequest,
@@ -13,10 +13,10 @@ import { OrderIntent } from "../../../src/domain/value-objects/OrderIntent";
 import { Price } from "../../../src/domain/value-objects/Price";
 import { Quantity } from "../../../src/domain/value-objects/Quantity";
 
-describe("ManagedOrderReconciler intent mapping", () => {
-  test("converts order intents to managed order requests", async () => {
+describe("OrderReconciler intent mapping", () => {
+  test("converts order intents to order requests", async () => {
     const gateway = new FakeOrderGateway();
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
 
     const result = await reconciler.reconcile([
       OrderIntent.create({
@@ -51,15 +51,13 @@ describe("ManagedOrderReconciler intent mapping", () => {
 
   test("maps cancelAll failure to Err", async () => {
     const gateway = new FakeOrderGateway({ cancelAllError: new Error("cancel failed") });
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
 
     const result = await reconciler.cancelAll("risk_pause");
 
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr()).toBeInstanceOf(OrderCancelAllFailedError);
-    expect(result._unsafeUnwrapErr().code).toBe(
-      "application.managed_order_reconciler.cancel_all_failed",
-    );
+    expect(result._unsafeUnwrapErr().code).toBe("application.order_reconciler.cancel_all_failed");
   });
 });
 

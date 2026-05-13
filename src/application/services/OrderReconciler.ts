@@ -20,9 +20,9 @@ type CancelAllResult = Readonly<{
   reason: string;
 }>;
 
-type ManagedOrderReconcilerError = OrderReconcileFailedError | OrderCancelAllFailedError;
+type OrderReconcilerError = OrderReconcileFailedError | OrderCancelAllFailedError;
 
-abstract class ManagedOrderReconcilerBaseError extends ApplicationError {
+abstract class OrderReconcilerBaseError extends ApplicationError {
   abstract override readonly code: string;
 
   protected constructor(message: string, options: { cause?: unknown } = {}) {
@@ -30,16 +30,16 @@ abstract class ManagedOrderReconcilerBaseError extends ApplicationError {
   }
 }
 
-export class OrderReconcileFailedError extends ManagedOrderReconcilerBaseError {
-  readonly code = "application.managed_order_reconciler.reconcile_failed";
+export class OrderReconcileFailedError extends OrderReconcilerBaseError {
+  readonly code = "application.order_reconciler.reconcile_failed";
 
   constructor(cause: unknown) {
     super("order reconciliation failed", { cause });
   }
 }
 
-export class OrderCancelAllFailedError extends ManagedOrderReconcilerBaseError {
-  readonly code = "application.managed_order_reconciler.cancel_all_failed";
+export class OrderCancelAllFailedError extends OrderReconcilerBaseError {
+  readonly code = "application.order_reconciler.cancel_all_failed";
 
   constructor(
     readonly reason: string,
@@ -49,11 +49,12 @@ export class OrderCancelAllFailedError extends ManagedOrderReconcilerBaseError {
   }
 }
 
-export interface ManagedOrderReconcilerOptions {
+export interface OrderReconcilerOptions {
   priceReplaceThresholdBps: number;
   sizeReplaceThresholdRatio: number;
   maxRestingMs: number;
   exchangeDropQuoteCooldownMs: number;
+  exchangeOpenOrderSyncIntervalMs: number;
   nowMs: () => number;
 }
 
@@ -65,14 +66,14 @@ interface ReconciliationTarget extends OrderRequest {
   timeInForce: OrderTimeInForce;
 }
 
-interface ActiveManagedOrder {
+interface ActiveOrder {
   key: string;
   side: OrderSide;
   order: PlacedOrder;
   replaced: boolean;
 }
 
-interface ManagedOrderReconcilerState {
+interface OrderReconcilerState {
   unknownOrderState: boolean;
   cancelFailures: number;
   unknownOrderKeys: string[];
@@ -82,39 +83,41 @@ interface ManagedOrderReconcilerState {
   quoteCooldownRemainingMs: number;
 }
 
-class ManagedOrderReconcilerUnknownStateError extends Error {
+class OrderReconcilerUnknownStateError extends Error {
   constructor(
     message: string,
     override readonly cause: unknown,
   ) {
     super(message);
-    this.name = "ManagedOrderReconcilerUnknownStateError";
+    this.name = "OrderReconcilerUnknownStateError";
   }
 }
 
-const defaultOptions: ManagedOrderReconcilerOptions = {
+const defaultOptions: OrderReconcilerOptions = {
   priceReplaceThresholdBps: 0.8,
   sizeReplaceThresholdRatio: 0.15,
   maxRestingMs: 30_000,
   exchangeDropQuoteCooldownMs: 1_500,
+  exchangeOpenOrderSyncIntervalMs: 0,
   nowMs: Date.now,
 };
 
-export class ManagedOrderReconciler {
+export class OrderReconciler {
   private readonly activeOrders = new Map<string, { order: PlacedOrder; placedAtMs: number }>();
   private readonly unknownOrders = new Map<string, { id: string }>();
-  private readonly options: ManagedOrderReconcilerOptions;
+  private readonly options: OrderReconcilerOptions;
   private quoteCooldownUntilMs = 0;
   private cancelFailures = 0;
+  private lastExchangeOpenOrderSyncAtMs: number | null = null;
 
   constructor(
     private readonly orderGateway: IOrderGateway,
-    options: Partial<ManagedOrderReconcilerOptions> = {},
+    options: Partial<OrderReconcilerOptions> = {},
   ) {
     this.options = { ...defaultOptions, ...options };
   }
 
-  state(): ManagedOrderReconcilerState {
+  state(): OrderReconcilerState {
     const nowMs = this.options.nowMs();
     return {
       unknownOrderState: this.unknownOrders.size > 0,
@@ -127,12 +130,10 @@ export class ManagedOrderReconciler {
     };
   }
 
-  reconcile(
-    intents: readonly OrderIntent[],
-  ): ResultAsync<ReconcileResult, ManagedOrderReconcilerError> {
+  reconcile(intents: readonly OrderIntent[]): ResultAsync<ReconcileResult, OrderReconcilerError> {
     return tryCatchAsync(
       this.reconcileTargets(intents.map(toReconciliationTarget)),
-      (cause): ManagedOrderReconcilerError => new OrderReconcileFailedError(cause),
+      (cause): OrderReconcilerError => new OrderReconcileFailedError(cause),
     ).map(
       (activeOrders): ReconcileResult => ({
         activeOrders,
@@ -140,10 +141,10 @@ export class ManagedOrderReconciler {
     );
   }
 
-  cancelAll(reason: string): ResultAsync<CancelAllResult, ManagedOrderReconcilerError> {
+  cancelAll(reason: string): ResultAsync<CancelAllResult, OrderReconcilerError> {
     return tryCatchAsync(
       this.cancelAllTargets(reason),
-      (cause): ManagedOrderReconcilerError => new OrderCancelAllFailedError(reason, cause),
+      (cause): OrderReconcilerError => new OrderCancelAllFailedError(reason, cause),
     ).map(
       (): CancelAllResult => ({
         reason,
@@ -153,7 +154,7 @@ export class ManagedOrderReconciler {
 
   private async reconcileTargets(
     targetOrders: ReadonlyArray<ReconciliationTarget>,
-  ): Promise<ActiveManagedOrder[]> {
+  ): Promise<ActiveOrder[]> {
     const droppedTrackedQuoteOrders = await this.syncExchangeOpenOrders();
     if (droppedTrackedQuoteOrders) {
       this.quoteCooldownUntilMs = Math.max(
@@ -169,7 +170,7 @@ export class ManagedOrderReconciler {
       }
     }
 
-    const activeOrders: ActiveManagedOrder[] = [];
+    const activeOrders: ActiveOrder[] = [];
     const ordersToPlace: ReconciliationTarget[] = [];
     for (const target of targetOrders) {
       const previous = this.activeOrders.get(target.key);
@@ -187,7 +188,7 @@ export class ManagedOrderReconciler {
       }
       if (this.shouldDelayQuotePlacement(target)) {
         logger.debug(
-          `[application] ManagedOrderReconciler | QUOTE_PLACEMENT_DELAYED | key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} cooldownUntilMs=${this.quoteCooldownUntilMs}`,
+          `[application] OrderReconciler | QUOTE_PLACEMENT_DELAYED | key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} cooldownUntilMs=${this.quoteCooldownUntilMs}`,
         );
         continue;
       }
@@ -198,23 +199,23 @@ export class ManagedOrderReconciler {
     const placedOrders = await Promise.all(ordersToPlace.map(async (target) => this.place(target)));
     return [
       ...activeOrders,
-      ...placedOrders.filter((placed): placed is ActiveManagedOrder => placed !== undefined),
+      ...placedOrders.filter((placed): placed is ActiveOrder => placed !== undefined),
     ];
   }
 
   private async cancelAllTargets(reason: string): Promise<void> {
-    logger.info(`[application] ManagedOrderReconciler | CANCEL_ALL | reason=${reason}`);
+    logger.info(`[application] OrderReconciler | CANCEL_ALL | reason=${reason}`);
     await this.orderGateway.cancelAll();
     this.activeOrders.clear();
     this.unknownOrders.clear();
   }
 
-  private async place(target: ReconciliationTarget): Promise<ActiveManagedOrder | undefined> {
+  private async place(target: ReconciliationTarget): Promise<ActiveOrder | undefined> {
     const { key: _key, ...request } = target;
     const placed = await this.orderGateway.place(request).catch((error) => {
       this.activeOrders.delete(target.key);
       logger.warn(
-        `[application] ManagedOrderReconciler | PLACE_FAILED | key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} market=${target.market} side=${target.side} intent=${target.intent ?? "unknown"} error=${stringifyError(error)}`,
+        `[application] OrderReconciler | PLACE_FAILED | key=${target.key} clientOrderId=${target.clientOrderId ?? "none"} market=${target.market} side=${target.side} intent=${target.intent ?? "unknown"} error=${stringifyError(error)}`,
       );
       return undefined;
     });
@@ -264,14 +265,14 @@ export class ManagedOrderReconciler {
     this.cancelFailures += 1;
     this.unknownOrders.set(key, order);
     logger.error(
-      `[application] ManagedOrderReconciler | CANCEL_FAILED_UNKNOWN_STATE | key=${key} orderId=${order.id} reason=${reason} error=${stringifyError(error)}`,
+      `[application] OrderReconciler | CANCEL_FAILED_UNKNOWN_STATE | key=${key} orderId=${order.id} reason=${reason} error=${stringifyError(error)}`,
     );
     await this.orderGateway.cancelAll().catch((cancelAllError) => {
       logger.error(
-        `[application] ManagedOrderReconciler | CANCEL_ALL_AFTER_CANCEL_FAILURE_FAILED | key=${key} orderId=${order.id} error=${stringifyError(cancelAllError)}`,
+        `[application] OrderReconciler | CANCEL_ALL_AFTER_CANCEL_FAILURE_FAILED | key=${key} orderId=${order.id} error=${stringifyError(cancelAllError)}`,
       );
     });
-    throw new ManagedOrderReconcilerUnknownStateError(
+    throw new OrderReconcilerUnknownStateError(
       `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${stringifyError(error)}`,
       error,
     );
@@ -311,8 +312,17 @@ export class ManagedOrderReconciler {
     if (this.orderGateway.getOpenOrders === undefined) {
       return false;
     }
+    const nowMs = this.options.nowMs();
+    if (
+      this.options.exchangeOpenOrderSyncIntervalMs > 0 &&
+      this.lastExchangeOpenOrderSyncAtMs !== null &&
+      nowMs - this.lastExchangeOpenOrderSyncAtMs < this.options.exchangeOpenOrderSyncIntervalMs
+    ) {
+      return false;
+    }
 
     const exchangeOpenOrders = await this.orderGateway.getOpenOrders();
+    this.lastExchangeOpenOrderSyncAtMs = nowMs;
     const exchangeOpenIds = new Set(exchangeOpenOrders.map((order) => order.id));
     let droppedTrackedQuoteOrders = false;
     for (const [key, active] of this.activeOrders) {

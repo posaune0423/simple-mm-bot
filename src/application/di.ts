@@ -32,10 +32,7 @@ import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
 import { Bot } from "./Bot.ts";
 import { MetricsBuffer, MetricsRecorder } from "./services/MetricsRecorder.ts";
-import {
-  ManagedOrderReconciler,
-  type ManagedOrderReconcilerOptions,
-} from "./services/ManagedOrderReconciler.ts";
+import { OrderReconciler, type OrderReconcilerOptions } from "./services/OrderReconciler.ts";
 import { buildQuoteModel } from "./factories/QuoteModelFactory.ts";
 import { buildStrategy } from "./factories/StrategyFactory.ts";
 import { OrderIntentBuilder } from "./services/OrderIntentBuilder.ts";
@@ -75,10 +72,7 @@ export class DIContainer {
     });
     const metricsBuffer = this.buildMetricsBuffer();
     const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
-    const managedOrderReconciler = new ManagedOrderReconciler(
-      gateway,
-      this.managedOrderReconcilerOptions(),
-    );
+    const orderReconciler = new OrderReconciler(gateway, this.orderReconcilerOptions());
 
     return new Bot(
       {
@@ -87,7 +81,7 @@ export class DIContainer {
           positionRepository,
           strategy,
           new OrderIntentBuilder(),
-          managedOrderReconciler,
+          orderReconciler,
           {
             defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
             postOnly: this.config.quoteEngine.defaultTimeInForce === "ALO",
@@ -344,10 +338,13 @@ export class DIContainer {
     return secretKey;
   }
 
-  private managedOrderReconcilerOptions(): Partial<ManagedOrderReconcilerOptions> {
-    const options: Partial<ManagedOrderReconcilerOptions> = {};
+  private orderReconcilerOptions(): Partial<OrderReconcilerOptions> {
+    const options: Partial<OrderReconcilerOptions> = {};
     if (this.config.bot.maxRestingMs !== undefined) {
       options.maxRestingMs = this.config.bot.maxRestingMs;
+    }
+    if (this.config.bot.exchangeOpenOrderSyncIntervalMs !== undefined) {
+      options.exchangeOpenOrderSyncIntervalMs = this.config.bot.exchangeOpenOrderSyncIntervalMs;
     }
     return options;
   }

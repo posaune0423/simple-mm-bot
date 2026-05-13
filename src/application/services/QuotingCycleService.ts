@@ -13,7 +13,7 @@ import type { OrderTimeInForce } from "../../domain/types/Order.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";
-import type { ManagedOrderReconciler, ReconcileResult } from "./ManagedOrderReconciler.ts";
+import type { OrderReconciler, ReconcileResult } from "./OrderReconciler.ts";
 import type { OrderIntentBuilder, OrderIntentBuildResult } from "./OrderIntentBuilder.ts";
 import { toLegacyQuoteForMetrics } from "./QuoteMetricsAdapter.ts";
 
@@ -43,10 +43,7 @@ export class QuotingCycleService {
     private readonly positionRepository: IPositionRepository,
     private readonly strategy: Strategy,
     private readonly orderIntentBuilder: OrderIntentBuilder,
-    private readonly managedOrderReconciler: Pick<
-      ManagedOrderReconciler,
-      "reconcile" | "cancelAll"
-    >,
+    private readonly orderReconciler: Pick<OrderReconciler, "reconcile" | "cancelAll">,
     private readonly execution: QuotingCycleExecutionConfig,
     private readonly metrics?: MetricsRecorder,
     private readonly markoutFeedbackRepository?: IMarkoutFeedbackRepository,
@@ -124,7 +121,7 @@ export class QuotingCycleService {
         },
         noQuote: async (noQuoteDecision) => {
           if (noQuoteDecision.cancelExisting) {
-            const cancelResult = await this.managedOrderReconciler.cancelAll(
+            const cancelResult = await this.orderReconciler.cancelAll(
               noQuoteDecision.reasonTags.join(","),
             );
             await cancelResult.match(
@@ -215,7 +212,7 @@ export class QuotingCycleService {
     const submitObservedAt = Date.now();
     const submitMid = midPrice(submitSnapshot);
     const reconcileStartedAt = Date.now();
-    const reconcile = await this.managedOrderReconciler.reconcile(buildResult.value.intents);
+    const reconcile = await this.orderReconciler.reconcile(buildResult.value.intents);
     if (reconcile.isErr()) {
       await this.recordRuntimeHealth(
         "error",
@@ -258,7 +255,7 @@ export class QuotingCycleService {
       stringifyError(error),
       error,
     );
-    const cancelResult = await this.managedOrderReconciler.cancelAll("strategy_decision_failed");
+    const cancelResult = await this.orderReconciler.cancelAll("strategy_decision_failed");
     if (cancelResult.isErr()) {
       await this.recordRuntimeHealth(
         "error",

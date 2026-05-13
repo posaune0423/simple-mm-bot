@@ -30,13 +30,28 @@ export function buildManageAgentWalletParams(options: BuildParamsOptions): Agent
   };
 }
 
+export function validateRegistrationConstants(input: {
+  mainWalletPrivateKey: string;
+  agentWalletPublicKey: string;
+}): void {
+  if (
+    input.mainWalletPrivateKey === MAIN_WALLET_PRIVATE_KEY_PLACEHOLDER ||
+    input.agentWalletPublicKey === AGENT_WALLET_PUBLIC_KEY_PLACEHOLDER
+  ) {
+    throw new Error(
+      "Edit scripts/registerBulkAgentWallet.ts constants before running this script.",
+    );
+  }
+}
+
 function maskPublicKey(publicKey: string): string {
   return `${publicKey.slice(0, 6)}...${publicKey.slice(-4)}`;
 }
 
 async function main(): Promise<void> {
-  const mainWalletPrivateKey = MAIN_WALLET_PRIVATE_KEY!;
-  const agentWalletPublicKey = AGENT_WALLET_PUBLIC_KEY!;
+  const mainWalletPrivateKey = MAIN_WALLET_PRIVATE_KEY;
+  const agentWalletPublicKey = AGENT_WALLET_PUBLIC_KEY;
+  validateRegistrationConstants({ mainWalletPrivateKey, agentWalletPublicKey });
 
   const client = new BulkClient({
     httpUrl: BULK_HTTP_URL,

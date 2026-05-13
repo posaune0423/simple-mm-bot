@@ -126,7 +126,7 @@ Bullet の DI path は持たない。
 #### Quote Order Reconcile
 
 `QuotingCycleService` は通常 tick で blanket `cancelAll()` を行わない。
-`Strategy` が `Quote` を返し、`OrderIntentBuilder` が venue-neutral な `OrderIntent[]` へ変換し、`ManagedOrderReconciler` が前回 order と今回 intent を比較して価格/サイズ差分が閾値以上の order だけ cancel/replace する。
+`Strategy` が `Quote` を返し、`OrderIntentBuilder` が venue-neutral な `OrderIntent[]` へ変換し、`OrderReconciler` が前回 order と今回 intent を比較して価格/サイズ差分が閾値以上の order だけ cancel/replace する。
 `Bot` cleanup は open order cleanup のため `cancelAll()` を実行し、`shutdown.closePositionPolicy` が `emergency_only` の場合は通常停止で market close を行わず、emergency stop 時だけ close use case を実行する。
 
 ## Adapter 設計
@@ -228,6 +228,10 @@ core metrics DB は「後から評価できる fact」だけを保存する。
 
 - default config selection: `CONFIG_VENUE=bulk`, `CONFIG_PRESET=beta`
 - Bulk beta preset: `config/bulk/beta.yml`
+- Bulk tight-spread canary preset: `config/bulk/tight-near-touch.yml`
+- Bulk micro tight-spread canary preset: `config/bulk/tight-near-touch-micro.yml`
+- Bulk maker-quality tight-spread canary preset: `config/bulk/tight-near-touch-maker.yml`
+- Bulk inner-level maker tight-spread canary preset: `config/bulk/tight-near-touch-inner-maker.yml`
 - Bulk mainnet preset: `config/bulk/mainnet.yml`
 - Bulk template: `config/bulk/example.yml`
 - Paper and backtest use the same venue preset with `MODE` override

@@ -20,7 +20,7 @@ simple-mm-bot/
 │   │   │   ├── QuoteModelFactory.ts
 │   │   │   └── StrategyFactory.ts
 │   │   ├── services/
-│   │   │   ├── ManagedOrderReconciler.ts
+│   │   │   ├── OrderReconciler.ts
 │   │   │   ├── MetricsRecorder.ts
 │   │   │   ├── OrderIntentBuilder.ts
 │   │   │   └── QuotingCycleService.ts
@@ -89,6 +89,10 @@ simple-mm-bot/
 	├── config/
 	│   └── bulk/
 	│       ├── beta.yml
+	│       ├── tight-near-touch.yml
+	│       ├── tight-near-touch-micro.yml
+	│       ├── tight-near-touch-maker.yml
+	│       ├── tight-near-touch-inner-maker.yml
 	│       ├── mainnet.yml
 	│       └── example.yml
 ├── tests/
@@ -164,8 +168,8 @@ bot runtime と use case orchestration を置く。
 - venue protocol や SQL を直接書かない
 
 `di.ts` が具体実装を知る唯一の application 境界。
-`QuotingCycleService` は Strategy、OrderIntentBuilder、ManagedOrderReconciler を組み合わせる orchestration service。旧 use case の責務はここへ分解済み。
-`ManagedOrderReconciler.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
+`QuotingCycleService` は Strategy、OrderIntentBuilder、OrderReconciler を組み合わせる orchestration service。旧 use case の責務はここへ分解済み。
+`OrderReconciler.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
 
 process signal handling は `main.ts` の boundary に置き、signal では `AbortController` を abort するだけにする。`Bot.start({ signal })` が stop request として受け取り、position close などの取引処理は `Bot` cleanup から use case 経由で実行する。signal handling から venue protocol を直接触らない。
 
@@ -293,6 +297,14 @@ Bulk Trade の API wrapper は `bulk-ts-sdk` を利用し、この repo の `src
 
 - `config/bulk/beta.yml`
   - Bulk beta config。日次 10,000 mock USD を使う前提の aggressive preset
+- `config/bulk/tight-near-touch.yml`
+  - Bulk beta tight-spread canary config。`beta.yml` を wide-spread profile として残し、`CONFIG_PATH` で明示した小さな live canary にだけ使う
+- `config/bulk/tight-near-touch-micro.yml`
+  - Bulk beta micro tight-spread canary config。`tight-near-touch.yml` より小さい size / position cap で maker-fill quality を確認する
+- `config/bulk/tight-near-touch-maker.yml`
+  - Bulk beta maker-quality tight-spread canary config。通常停止時の market close を避け、shutdown taker fill と maker quote fill を分離して評価する
+- `config/bulk/tight-near-touch-inner-maker.yml`
+  - Bulk beta inner-level maker tight-spread canary config。外側levelを外し、短い quote age と低churnを検証する
 - `config/bulk/mainnet.yml`
   - Bulk mainnet config。real capital 用の conservative preset
 - `config/bulk/example.yml`

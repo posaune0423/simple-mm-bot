@@ -146,7 +146,7 @@ regime ごとに profile を切り替えるべき。
 RegimeClassifier
   -> StrategyProfile
   -> Strategy side specs + execution controls
-  -> QuoteEngine / ManagedOrderReconciler
+  -> QuoteEngine / OrderReconciler
 ```
 
 Hot path rule:

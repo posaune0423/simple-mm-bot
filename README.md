@@ -145,7 +145,7 @@ Bot tick
   -> QuoteModel
   -> Quote value object
   -> OrderIntentBuilder
-  -> ManagedOrderReconciler
+  -> OrderReconciler
   -> venue adapter
 ```
 

@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 const root = process.cwd();
 const sourceRoots = ["src", "scripts"];
+const legacyOrderReconcilerName = ["Managed", "Order", "Reconciler"].join("");
 
 const removedLegacyFiles = [
   "src/application/QuotingStrategyFactory.ts",
@@ -34,7 +35,7 @@ const removedLegacyFiles = [
   "src/domain/positions/Position.ts",
   "src/domain/legacy/LegacyQuote.ts",
   "src/application/services/QuoteRefreshService.ts",
-  "src/application/services/OrderReconciler.ts",
+  `src/application/services/${legacyOrderReconcilerName}.ts`,
   "src/utils/transientBulk.ts",
   "src/utils/slackNotification.ts",
   "src/lib/slack/errorLevels.ts",
@@ -58,7 +59,7 @@ describe("refactor architecture boundaries", () => {
     expect(di).toContain("quotingCycle");
     expect(di).toContain("StrategyFactory");
     expect(di).toContain("OrderIntentBuilder");
-    expect(di).toContain("ManagedOrderReconciler");
+    expect(di).toContain("OrderReconciler");
     expect(di).not.toContain("OrderManagerReconciler");
     expect(di).not.toContain("OrderManager");
   });
@@ -192,31 +193,32 @@ describe("refactor architecture boundaries", () => {
       join(root, "src/application/services/OrderIntentBuilder.ts"),
       "utf8",
     );
-    const managedOrderReconciler = readFileSync(
-      join(root, "src/application/services/ManagedOrderReconciler.ts"),
+    const orderReconciler = readFileSync(
+      join(root, "src/application/services/OrderReconciler.ts"),
       "utf8",
     );
 
     expect(orderIntentBuilder).toContain("ApplicationError");
-    expect(managedOrderReconciler).toContain("ApplicationError");
+    expect(orderReconciler).toContain("ApplicationError");
   });
 
-  test("managed order reconciliation is a single application service boundary", () => {
-    const managedOrderReconciler = readFileSync(
-      join(root, "src/application/services/ManagedOrderReconciler.ts"),
+  test("order reconciliation is a single application service boundary", () => {
+    const orderReconciler = readFileSync(
+      join(root, "src/application/services/OrderReconciler.ts"),
       "utf8",
     );
 
-    expect(managedOrderReconciler).toContain("export class ManagedOrderReconciler");
-    expect(managedOrderReconciler).toContain("export type ReconcileResult");
-    expect(managedOrderReconciler).toContain("export class OrderReconcileFailedError");
+    expect(orderReconciler).toContain("export class OrderReconciler");
+    expect(orderReconciler).toContain("export type ReconcileResult");
+    expect(orderReconciler).toContain("export class OrderReconcileFailedError");
 
     for (const sourceRoot of sourceRoots) {
       for (const file of tsFiles(join(root, sourceRoot))) {
         const relative = file.replace(`${root}/`, "");
         const source = readFileSync(file, "utf8");
-        expect(source, relative).not.toContain("services/OrderReconciler");
-        expect(source, relative).not.toContain("./OrderReconciler");
+        expect(source, relative).not.toContain(`services/${legacyOrderReconcilerName}`);
+        expect(source, relative).not.toContain(`./${legacyOrderReconcilerName}`);
+        expect(source, relative).not.toContain(legacyOrderReconcilerName);
       }
     }
   });

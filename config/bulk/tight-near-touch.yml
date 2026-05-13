@@ -1,0 +1,77 @@
+# Bulk beta tight-spread canary.
+# Keep beta.yml as the wide-spread spread-capture profile; use this file with
+# CONFIG_PATH for small tight-spread probes only.
+mode: live
+venue: bulk
+
+connections:
+  bulk:
+    wsUrl: wss://exchange-ws1.bulk.trade
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    market: BTC-USD
+    environment: beta
+    nlevels: 20
+    timeoutMs: 30000
+    maxLeverage: 50
+    marketWsReconnectAfterMs: 5000
+
+quoteEngine:
+  markWeight: 0.25
+  bookPriceSource: micro
+  inventoryScale: 0.08
+  timeHorizonSec: 5
+  minSpreadBps: 2.0
+  slideMarginThreshold: 0.03
+  defaultTimeInForce: ALO
+  sizing:
+    positionSize: 0.12
+    budgetUsd: 9000
+    bidDistanceMultiplier: 1.15
+    askSizeMultiplier: 0.35
+  levels:
+    - halfSpreadBps: 1.5
+      sizeUsd: 3000
+    - halfSpreadBps: 3.0
+      sizeUsd: 3000
+    - halfSpreadBps: 5.0
+      sizeUsd: 3000
+  qualityGate:
+    enabled: true
+    minAverageMarkoutBps: 0
+    minSamples: 12
+    lookbackFills: 60
+    maxFillAgeMs: 600000
+    horizonsSec: [5, 30, 300]
+  strategy:
+    type: avellaneda-stoikov
+    params:
+      gamma: 0
+      kappa: 625
+      kInv: 2
+
+risk:
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxBookAgeMs: 2500
+  maxTickerAgeMs: 2500
+  maxPositionQty: 0.35
+  reduceTriggerQty: 0.25
+  reduceTargetQty: 0.05
+  maxUnrealizedLossUsd: 100
+  maxAdverseMoveBps: 80
+
+bot:
+  intervalMs: 150
+  maxRestingMs: 1800
+
+shutdown:
+  closePositionPolicy: always
+
+paper:
+  touchFillRatio: 1
+
+backtest:
+  market: BTC-USD
+  timeframe: 1m
+  from: 2026-05-12T10:13:41.000Z
+  to: 2026-05-12T12:38:01.000Z

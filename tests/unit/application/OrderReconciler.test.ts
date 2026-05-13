@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
-import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
+import { OrderReconciler } from "../../../src/application/services/OrderReconciler.ts";
 import type { IOrderGateway, PlacedOrder } from "../../../src/domain/ports/IOrderGateway.ts";
 import type { OrderIntent } from "../../../src/domain/value-objects/OrderIntent.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 import { Quantity } from "../../../src/domain/value-objects/Quantity.ts";
 
 async function expectUnknownStateError(
-  promise: ReturnType<ManagedOrderReconciler["reconcile"]>,
+  promise: ReturnType<OrderReconciler["reconcile"]>,
 ): Promise<void> {
   const result = await promise;
   expect(result.isErr()).toBe(true);
   expect(String(result._unsafeUnwrapErr().cause)).toContain("cancel_failed_unknown_order_state");
 }
 
-async function activeOrders(promise: ReturnType<ManagedOrderReconciler["reconcile"]>) {
+async function activeOrders(promise: ReturnType<OrderReconciler["reconcile"]>) {
   return (await promise)._unsafeUnwrap().activeOrders;
 }
 
@@ -51,7 +51,7 @@ function reduceOrder(overrides: Partial<OrderIntent> = {}): OrderIntent {
   });
 }
 
-describe("ManagedOrderReconciler", () => {
+describe("OrderReconciler", () => {
   test("places replacement orders only after the previous order cancellation completes", async () => {
     let cancelFinished = false;
     let releaseCancel: (() => void) | undefined;
@@ -82,7 +82,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     await activeOrders(reconciler.reconcile([quoteOrder()]));
 
     const reconcile = reconciler.reconcile([
@@ -114,7 +114,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     const firstActive = await activeOrders(reconciler.reconcile([quoteOrder()]));
     const secondActive = await activeOrders(reconciler.reconcile([quoteOrder()]));
 
@@ -146,7 +146,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     const active = await activeOrders(
       reconciler.reconcile([
         quoteOrder({ key: "bad", clientOrderId: "bad", quantity: Quantity.unsafe(0.000001) }),
@@ -188,7 +188,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway, {
+    const reconciler = new OrderReconciler(gateway, {
       exchangeDropQuoteCooldownMs: 1_500,
       nowMs: () => nowMs,
     });
@@ -221,7 +221,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway, {
+    const reconciler = new OrderReconciler(gateway, {
       exchangeDropQuoteCooldownMs: 1_500,
     });
     await activeOrders(reconciler.reconcile([reduceOrder({ clientOrderId: "reduce-1" })]));
@@ -256,7 +256,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway, {
+    const reconciler = new OrderReconciler(gateway, {
       exchangeDropQuoteCooldownMs: 1_500,
       nowMs: () => nowMs,
     });
@@ -310,7 +310,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
     await activeOrders(
       reconciler.reconcile([
@@ -376,11 +376,62 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
     await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-2" })]));
 
     expect(calls).toEqual(["place:quote-1", "cancel:orphan"]);
+  });
+
+  test("throttles exchange open-order sync when an interval is configured", async () => {
+    const calls: string[] = [];
+    let nowMs = 1_000;
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      async getOpenOrders() {
+        calls.push("sync");
+        return [];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const reconciler = new OrderReconciler(gateway, {
+      exchangeOpenOrderSyncIntervalMs: 2_000,
+      exchangeDropQuoteCooldownMs: 0,
+      nowMs: () => nowMs,
+    });
+
+    await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
+    nowMs = 1_500;
+    await activeOrders(
+      reconciler.reconcile([quoteOrder({ price: Price.unsafe(101), clientOrderId: "quote-2" })]),
+    );
+    nowMs = 3_001;
+    await activeOrders(
+      reconciler.reconcile([quoteOrder({ price: Price.unsafe(102), clientOrderId: "quote-3" })]),
+    );
+
+    expect(calls).toEqual([
+      "sync",
+      "place:quote-1",
+      "cancel:quote-1",
+      "place:quote-2",
+      "sync",
+      "place:quote-3",
+    ]);
   });
 
   test("marks tracked orders unknown and cancels all when cancel fails", async () => {
@@ -406,7 +457,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
 
     await expectUnknownStateError(reconciler.reconcile([]));
@@ -457,7 +508,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
 
     await expectUnknownStateError(reconciler.reconcile([]));
     expect(reconciler.state()).toEqual(
@@ -490,7 +541,7 @@ describe("ManagedOrderReconciler", () => {
       },
     };
 
-    const reconciler = new ManagedOrderReconciler(gateway);
+    const reconciler = new OrderReconciler(gateway);
     await activeOrders(
       reconciler.reconcile([
         quoteOrder({

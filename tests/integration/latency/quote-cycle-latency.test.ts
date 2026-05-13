@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { MetricsRecorder } from "../../../src/application/services/MetricsRecorder.ts";
 import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
-import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
+import { OrderReconciler } from "../../../src/application/services/OrderReconciler.ts";
 import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
 import { AvellanedaStoikovQuoteModel } from "../../../src/domain/quote-models/AvellanedaStoikovQuoteModel.ts";
 import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalculator.ts";
@@ -62,7 +62,7 @@ describe("quote-cycle latency", () => {
     });
     const marketFeed = new FixtureMarketFeed();
     const orderGateway = new FixtureOrderGateway();
-    const orderReconciler = new ManagedOrderReconciler(orderGateway, {
+    const orderReconciler = new OrderReconciler(orderGateway, {
       exchangeDropQuoteCooldownMs: 0,
       maxRestingMs: 0,
     });

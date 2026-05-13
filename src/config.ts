@@ -100,6 +100,7 @@ const commonConfigEntries = {
   bot: v.object({
     intervalMs: positiveIntegerSchema,
     maxRestingMs: v.optional(positiveIntegerSchema),
+    exchangeOpenOrderSyncIntervalMs: v.optional(positiveIntegerSchema),
   }),
   shutdown: shutdownSchema,
   paper: v.optional(

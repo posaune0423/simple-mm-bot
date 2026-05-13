@@ -15,7 +15,7 @@ flowchart LR
   Model["QuoteModel<br/>AvellanedaStoikovQuoteModel"]
   Quote["Quote VO<br/>bids / asks"]
   Builder["OrderIntentBuilder"]
-  Reconciler["ManagedOrderReconciler"]
+  Reconciler["OrderReconciler"]
 
   Snapshot --> Strategy
   Position --> Strategy
@@ -38,7 +38,7 @@ flowchart LR
 2. `SimplePmmStrategy.decide(...)` が markout feedback から side spec を作る
 3. `QuoteEngine.compute(...)` が fair price、volatility、QuoteModel 出力、ladder、inventory cap を合成して `Quote` を返す
 4. `OrderIntentBuilder.build(...)` が `Quote` を venue-neutral な `OrderIntent[]` に変換する
-5. `ManagedOrderReconciler.reconcile(...)` が active orders と target intents を収束させる
+5. `OrderReconciler.reconcile(...)` が active orders と target intents を収束させる
 
 ## QuoteModel と Strategy
 
@@ -56,12 +56,12 @@ flowchart LR
 
 ## Order Lifecycle
 
-現行の order reconcile は `ManagedOrderReconciler` に集約する。旧 `OrderManager` class と別立ての `OrderReconciler` interface/file は廃止済みで、reconcile の result/error contract も `ManagedOrderReconciler.ts` に colocate する。
+現行の order reconcile は `OrderReconciler` に集約する。旧 `OrderManager` class と別立ての reconciler interface は廃止済みで、reconcile の result/error contract も `OrderReconciler.ts` に colocate する。
 
 ```text
 Quote
   -> OrderIntent[]
-  -> ManagedOrderReconciler
+  -> OrderReconciler
   -> OrderGateway place/cancel
   -> VenueOrder
 ```

@@ -3,8 +3,8 @@ import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import {
   OrderReconcileFailedError,
-  type ManagedOrderReconciler,
-} from "../../../src/application/services/ManagedOrderReconciler.ts";
+  type OrderReconciler,
+} from "../../../src/application/services/OrderReconciler.ts";
 import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
 import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
 import { StrategyQuoteFailedError } from "../../../src/domain/errors/DomainError.ts";
@@ -47,7 +47,7 @@ describe("QuotingCycleService", () => {
       {
         reconcile: () => okAsync({ activeOrders: [] }),
         cancelAll: (reason) => okAsync({ reason }),
-      } satisfies Pick<ManagedOrderReconciler, "reconcile" | "cancelAll">,
+      } satisfies Pick<OrderReconciler, "reconcile" | "cancelAll">,
       { defaultTimeInForce: "ALO", postOnly: true },
       undefined,
       {
@@ -73,7 +73,7 @@ describe("QuotingCycleService", () => {
       {
         reconcile: () => errAsync(new OrderReconcileFailedError(new Error("cancel failed"))),
         cancelAll: (reason) => okAsync({ reason }),
-      } satisfies Pick<ManagedOrderReconciler, "reconcile" | "cancelAll">,
+      } satisfies Pick<OrderReconciler, "reconcile" | "cancelAll">,
       { defaultTimeInForce: "GTC", postOnly: false },
     );
 
@@ -98,7 +98,7 @@ describe("QuotingCycleService", () => {
           cancelReasons.push(reason);
           return okAsync({ reason });
         },
-      } satisfies Pick<ManagedOrderReconciler, "reconcile" | "cancelAll">,
+      } satisfies Pick<OrderReconciler, "reconcile" | "cancelAll">,
       { defaultTimeInForce: "GTC", postOnly: false },
     );
 
@@ -120,7 +120,7 @@ describe("QuotingCycleService", () => {
           return okAsync({ activeOrders: [] });
         },
         cancelAll: (reason) => okAsync({ reason }),
-      } satisfies Pick<ManagedOrderReconciler, "reconcile" | "cancelAll">,
+      } satisfies Pick<OrderReconciler, "reconcile" | "cancelAll">,
       { defaultTimeInForce: "GTC", postOnly: false, slideMarginThreshold: 0.12 },
     );
 
