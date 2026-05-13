@@ -75,7 +75,10 @@ export class DIContainer {
     });
     const metricsBuffer = this.buildMetricsBuffer();
     const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
-    const orderReconciler = new ManagedOrderReconciler(gateway, this.orderReconcilerOptions());
+    const managedOrderReconciler = new ManagedOrderReconciler(
+      gateway,
+      this.managedOrderReconcilerOptions(),
+    );
 
     return new Bot(
       {
@@ -84,7 +87,7 @@ export class DIContainer {
           positionRepository,
           strategy,
           new OrderIntentBuilder(),
-          orderReconciler,
+          managedOrderReconciler,
           {
             defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
             postOnly: this.config.quoteEngine.defaultTimeInForce === "ALO",
@@ -340,7 +343,7 @@ export class DIContainer {
     return secretKey;
   }
 
-  private orderReconcilerOptions(): Partial<ManagedOrderReconcilerOptions> {
+  private managedOrderReconcilerOptions(): Partial<ManagedOrderReconcilerOptions> {
     const options: Partial<ManagedOrderReconcilerOptions> = {};
     if (this.config.bot.maxRestingMs !== undefined) {
       options.maxRestingMs = this.config.bot.maxRestingMs;

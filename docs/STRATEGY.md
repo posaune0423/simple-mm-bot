@@ -56,7 +56,7 @@ flowchart LR
 
 ## Order Lifecycle
 
-`OrderManager` class は廃止し、`ManagedOrderReconciler` が `OrderReconciler` interface を直接実装する。
+`OrderManager` class と別立ての `OrderReconciler` interface/file は廃止する。現状は実装が1つだけなので、reconcile の result/error contract は `ManagedOrderReconciler.ts` に colocate する。
 
 ```text
 Quote

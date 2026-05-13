@@ -5,8 +5,8 @@ import {
   formatApplicationError,
   isApplicationError,
 } from "../../../src/application/errors/ApplicationError.ts";
+import { OrderReconcileFailedError } from "../../../src/application/services/ManagedOrderReconciler.ts";
 import { OrderIntentBuildFailedError } from "../../../src/application/services/OrderIntentBuilder.ts";
-import { OrderReconcileFailedError } from "../../../src/application/services/OrderReconciler.ts";
 
 describe("ApplicationError", () => {
   test("application service errors share a layer-owned Error base", () => {
@@ -16,7 +16,7 @@ describe("ApplicationError", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error).toBeInstanceOf(ApplicationError);
     expect(error.name).toBe("OrderReconcileFailedError");
-    expect(error.code).toBe("application.order_reconciler.reconcile_failed");
+    expect(error.code).toBe("application.managed_order_reconciler.reconcile_failed");
     expect(error.cause).toBe(cause);
     expect(isApplicationError(error)).toBe(true);
   });

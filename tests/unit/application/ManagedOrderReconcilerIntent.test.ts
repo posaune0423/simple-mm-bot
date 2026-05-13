@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler";
-import { OrderCancelAllFailedError } from "../../../src/application/services/OrderReconciler";
+import {
+  ManagedOrderReconciler,
+  OrderCancelAllFailedError,
+} from "../../../src/application/services/ManagedOrderReconciler";
 import type {
   IOrderGateway,
   OrderRequest,
@@ -55,7 +57,9 @@ describe("ManagedOrderReconciler intent mapping", () => {
 
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr()).toBeInstanceOf(OrderCancelAllFailedError);
-    expect(result._unsafeUnwrapErr().code).toBe("application.order_reconciler.cancel_all_failed");
+    expect(result._unsafeUnwrapErr().code).toBe(
+      "application.managed_order_reconciler.cancel_all_failed",
+    );
   });
 });
 

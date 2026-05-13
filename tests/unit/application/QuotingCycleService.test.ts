@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { ok, okAsync } from "neverthrow";
 
+import type { ManagedOrderReconciler } from "../../../src/application/services/ManagedOrderReconciler.ts";
 import type { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
-import type { OrderReconciler } from "../../../src/application/services/OrderReconciler.ts";
 import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
 import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type { Position } from "../../../src/domain/types/Position.ts";
@@ -38,7 +38,7 @@ describe("QuotingCycleService", () => {
       {
         reconcile: () => okAsync({ activeOrders: [] }),
         cancelAll: (reason) => okAsync({ reason }),
-      } satisfies OrderReconciler,
+      } satisfies Pick<ManagedOrderReconciler, "reconcile" | "cancelAll">,
       { defaultTimeInForce: "ALO", postOnly: true },
       undefined,
       {

@@ -161,7 +161,7 @@ Validation 責務:
 | `DIContainer`                 | venue × mode × DB の具象解決、use case と adapter の組み立て                                                         | tick 実行、trading 判断              |
 | `Bot`                         | 起動・接続・購読・tick loop・cleanup、event task drain                                                               | quote price 計算、venue payload 生成 |
 | `GuardRiskUseCase`            | snapshot の margin / risk state を `OK` / `PAUSE_QUOTING` / `EMERGENCY_STOP` に分類                                  | 注文発行                             |
-| `QuotingCycleService`         | snapshot / position / markout feedback を読み、Strategy、OrderIntentBuilder、OrderReconciler を順に呼ぶ              | venue SDK 直接操作、strategy 実装    |
+| `QuotingCycleService`         | snapshot / position / markout feedback を読み、Strategy、OrderIntentBuilder、ManagedOrderReconciler を順に呼ぶ       | venue SDK 直接操作、strategy 実装    |
 | `OrderIntentBuilder`          | `Quote` を venue-neutral な `OrderIntent[]` に変換し、execution policy を適用                                        | order reconcile、venue API 呼び出し  |
 | `ManagedOrderReconciler`      | 前回 order と今回 intent の差分 reconcile、必要な cancel / replace / reuse                                           | quote 価格計算、risk 判定            |
 | `ReduceInventoryUseCase`      | inventory / loss / adverse move が閾値を超えた時に reduce-only order を出す                                          | 通常 quote の維持                    |

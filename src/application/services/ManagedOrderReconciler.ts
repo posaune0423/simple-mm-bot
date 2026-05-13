@@ -1,16 +1,53 @@
+import type { ResultAsync } from "neverthrow";
 import type { OrderSide, OrderTimeInForce } from "../../domain/types/Order.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { OrderIntent } from "../../domain/value-objects/OrderIntent.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import { tryCatchAsync } from "../../utils/result.ts";
-import type {
-  CancelAllResult,
-  OrderReconciler,
-  OrderReconcilerError,
-  ReconcileResult,
-} from "./OrderReconciler.ts";
-import { OrderCancelAllFailedError, OrderReconcileFailedError } from "./OrderReconciler.ts";
+import { ApplicationError } from "../errors/ApplicationError.ts";
+
+export type ReconcileResult = Readonly<{
+  activeOrders: readonly {
+    key: string;
+    side: "buy" | "sell";
+    order: PlacedOrder;
+    replaced: boolean;
+  }[];
+}>;
+
+export type CancelAllResult = Readonly<{
+  reason: string;
+}>;
+
+export type ManagedOrderReconcilerError = OrderReconcileFailedError | OrderCancelAllFailedError;
+
+export abstract class ManagedOrderReconcilerBaseError extends ApplicationError {
+  abstract override readonly code: string;
+
+  protected constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message, options);
+  }
+}
+
+export class OrderReconcileFailedError extends ManagedOrderReconcilerBaseError {
+  readonly code = "application.managed_order_reconciler.reconcile_failed";
+
+  constructor(cause: unknown) {
+    super("order reconciliation failed", { cause });
+  }
+}
+
+export class OrderCancelAllFailedError extends ManagedOrderReconcilerBaseError {
+  readonly code = "application.managed_order_reconciler.cancel_all_failed";
+
+  constructor(
+    readonly reason: string,
+    cause: unknown,
+  ) {
+    super(`order cancel all failed: ${reason}`, { cause });
+  }
+}
 
 export interface ManagedOrderReconcilerOptions {
   priceReplaceThresholdBps: number;
@@ -63,7 +100,7 @@ const defaultOptions: ManagedOrderReconcilerOptions = {
   nowMs: Date.now,
 };
 
-export class ManagedOrderReconciler implements OrderReconciler {
+export class ManagedOrderReconciler {
   private readonly activeOrders = new Map<string, { order: PlacedOrder; placedAtMs: number }>();
   private readonly unknownOrders = new Map<string, { id: string }>();
   private readonly options: ManagedOrderReconcilerOptions;
@@ -90,10 +127,12 @@ export class ManagedOrderReconciler implements OrderReconciler {
     };
   }
 
-  reconcile(intents: readonly OrderIntent[]) {
+  reconcile(
+    intents: readonly OrderIntent[],
+  ): ResultAsync<ReconcileResult, ManagedOrderReconcilerError> {
     return tryCatchAsync(
       this.reconcileTargets(intents.map(toReconciliationTarget)),
-      (cause): OrderReconcilerError => new OrderReconcileFailedError(cause),
+      (cause): ManagedOrderReconcilerError => new OrderReconcileFailedError(cause),
     ).map(
       (activeOrders): ReconcileResult => ({
         activeOrders,
@@ -101,10 +140,10 @@ export class ManagedOrderReconciler implements OrderReconciler {
     );
   }
 
-  cancelAll(reason: string) {
+  cancelAll(reason: string): ResultAsync<CancelAllResult, ManagedOrderReconcilerError> {
     return tryCatchAsync(
       this.cancelAllTargets(reason),
-      (cause): OrderReconcilerError => new OrderCancelAllFailedError(reason, cause),
+      (cause): ManagedOrderReconcilerError => new OrderCancelAllFailedError(reason, cause),
     ).map(
       (): CancelAllResult => ({
         reason,

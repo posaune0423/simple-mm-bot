@@ -13,8 +13,8 @@ import type { OrderTimeInForce } from "../../domain/types/Order.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";
+import type { ManagedOrderReconciler, ReconcileResult } from "./ManagedOrderReconciler.ts";
 import type { OrderIntentBuilder, OrderIntentBuildResult } from "./OrderIntentBuilder.ts";
-import type { OrderReconciler, ReconcileResult } from "./OrderReconciler.ts";
 import { toLegacyQuoteForMetrics } from "./QuoteMetricsAdapter.ts";
 
 export type QuotingCycleExecutionConfig = Readonly<{
@@ -37,7 +37,10 @@ export class QuotingCycleService {
     private readonly positionRepository: IPositionRepository,
     private readonly strategy: Strategy,
     private readonly orderIntentBuilder: OrderIntentBuilder,
-    private readonly orderReconciler: OrderReconciler,
+    private readonly managedOrderReconciler: Pick<
+      ManagedOrderReconciler,
+      "reconcile" | "cancelAll"
+    >,
     private readonly execution: QuotingCycleExecutionConfig,
     private readonly metrics?: MetricsRecorder,
     private readonly markoutFeedbackRepository?: IMarkoutFeedbackRepository,
@@ -114,7 +117,7 @@ export class QuotingCycleService {
           },
           noQuote: async (noQuoteDecision) => {
             if (noQuoteDecision.cancelExisting) {
-              const cancelResult = await this.orderReconciler.cancelAll(
+              const cancelResult = await this.managedOrderReconciler.cancelAll(
                 noQuoteDecision.reasonTags.join(","),
               );
               await cancelResult.match(
@@ -210,7 +213,7 @@ export class QuotingCycleService {
     const submitObservedAt = Date.now();
     const submitMid = midPrice(submitSnapshot);
     const reconcileStartedAt = Date.now();
-    const reconcile = await this.orderReconciler.reconcile(buildResult.value.intents);
+    const reconcile = await this.managedOrderReconciler.reconcile(buildResult.value.intents);
     await reconcile.match(
       async (result) =>
         this.recordReconcileSuccess({

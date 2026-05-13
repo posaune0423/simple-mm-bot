@@ -34,6 +34,7 @@ const removedLegacyFiles = [
   "src/domain/positions/Position.ts",
   "src/domain/legacy/LegacyQuote.ts",
   "src/application/services/QuoteRefreshService.ts",
+  "src/application/services/OrderReconciler.ts",
 ];
 
 describe("refactor architecture boundaries", () => {
@@ -188,13 +189,33 @@ describe("refactor architecture boundaries", () => {
       join(root, "src/application/services/OrderIntentBuilder.ts"),
       "utf8",
     );
-    const orderReconciler = readFileSync(
-      join(root, "src/application/services/OrderReconciler.ts"),
+    const managedOrderReconciler = readFileSync(
+      join(root, "src/application/services/ManagedOrderReconciler.ts"),
       "utf8",
     );
 
     expect(orderIntentBuilder).toContain("ApplicationError");
-    expect(orderReconciler).toContain("ApplicationError");
+    expect(managedOrderReconciler).toContain("ApplicationError");
+  });
+
+  test("managed order reconciliation is a single application service boundary", () => {
+    const managedOrderReconciler = readFileSync(
+      join(root, "src/application/services/ManagedOrderReconciler.ts"),
+      "utf8",
+    );
+
+    expect(managedOrderReconciler).toContain("export class ManagedOrderReconciler");
+    expect(managedOrderReconciler).toContain("export type ReconcileResult");
+    expect(managedOrderReconciler).toContain("export class OrderReconcileFailedError");
+
+    for (const sourceRoot of sourceRoots) {
+      for (const file of tsFiles(join(root, sourceRoot))) {
+        const relative = file.replace(`${root}/`, "");
+        const source = readFileSync(file, "utf8");
+        expect(source, relative).not.toContain("services/OrderReconciler");
+        expect(source, relative).not.toContain("./OrderReconciler");
+      }
+    }
   });
 
   test("closed multi-way branches use ts-pattern instead of manual switches", () => {
