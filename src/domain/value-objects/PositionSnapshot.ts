@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "neverthrow";
+import { match } from "ts-pattern";
 import { InvalidPositionError, type DomainError } from "../errors/DomainError";
 import type { OrderSide, ExposureIntent } from "./QuoteLeg";
 
@@ -38,13 +39,10 @@ export const PositionSnapshot = {
 
   exposureIntentForOrderSide(position: PositionSnapshot, orderSide: OrderSide): ExposureIntent {
     const side = PositionSnapshot.side(position);
-    if (side === "short" && orderSide === "buy") {
-      return "reduce_exposure";
-    }
-    if (side === "long" && orderSide === "sell") {
-      return "reduce_exposure";
-    }
-    return "increase_exposure";
+    return match<[PositionSide, OrderSide], ExposureIntent>([side, orderSide])
+      .with(["short", "buy"], () => "reduce_exposure")
+      .with(["long", "sell"], () => "reduce_exposure")
+      .otherwise(() => "increase_exposure");
   },
 
   maxReduceQuantity(position: PositionSnapshot): number {

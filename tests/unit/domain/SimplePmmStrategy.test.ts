@@ -70,6 +70,22 @@ describe("SimplePmmStrategy", () => {
     ).toBe(true);
   });
 
+  test("matches no-quote decisions through the closed decision contract", () => {
+    const decision = StrategyDecision.noQuote({
+      cancelExisting: true,
+      reasonTags: ["markout_gate"],
+      diagnostics: { strategy: "simple-pmm" },
+    });
+
+    expect(
+      StrategyDecision.match(decision, {
+        quote: () => false,
+        noQuote: ({ cancelExisting, reasonTags }) =>
+          cancelExisting && reasonTags.includes("markout_gate"),
+      }),
+    ).toBe(true);
+  });
+
   test("failed buy quality disables bid increase exposure in QuoteEngineInput", () => {
     const quoteEngine = new StubQuoteEngine();
     const strategy = new SimplePmmStrategy(quoteEngine as never, {

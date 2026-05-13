@@ -1,4 +1,5 @@
 import type { ResultAsync } from "neverthrow";
+import { match } from "ts-pattern";
 import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
 
@@ -210,33 +211,34 @@ function assertConfigPathSegment(label: "venue" | "preset", value: string): void
 }
 
 function applyEnvOverrides(config: AppConfig): AppConfig {
-  if (config.venue === "bulk") {
-    return {
-      ...config,
-      mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
+  return match(config)
+    .with({ venue: "bulk" }, (bulkConfig) => ({
+      ...bulkConfig,
+      mode: (envValue("MODE") as AppMode | undefined) ?? bulkConfig.mode,
       connections: {
         bulk: {
-          ...config.connections.bulk,
-          privateKey: envValue("BULK_PRIVATE_KEY") ?? config.connections.bulk.privateKey,
+          ...bulkConfig.connections.bulk,
+          privateKey: envValue("BULK_PRIVATE_KEY") ?? bulkConfig.connections.bulk.privateKey,
         },
       },
-    };
-  }
-
-  return {
-    ...config,
-    mode: (envValue("MODE") as AppMode | undefined) ?? config.mode,
-    connections: {
-      hyperliquid: {
-        ...config.connections.hyperliquid,
-        wsUrl: envValue("HL_WS_URL") ?? config.connections.hyperliquid.wsUrl,
-        httpUrl: envValue("HL_HTTP_URL") ?? config.connections.hyperliquid.httpUrl,
-        secretKey: envValue("HL_SECRET_KEY") ?? config.connections.hyperliquid.secretKey,
-        accountAddress:
-          envValue("HL_ACCOUNT_ADDRESS") ?? config.connections.hyperliquid.accountAddress,
+    }))
+    .with({ venue: "hyperliquid" }, (hyperliquidConfig) => ({
+      ...hyperliquidConfig,
+      mode: (envValue("MODE") as AppMode | undefined) ?? hyperliquidConfig.mode,
+      connections: {
+        hyperliquid: {
+          ...hyperliquidConfig.connections.hyperliquid,
+          wsUrl: envValue("HL_WS_URL") ?? hyperliquidConfig.connections.hyperliquid.wsUrl,
+          httpUrl: envValue("HL_HTTP_URL") ?? hyperliquidConfig.connections.hyperliquid.httpUrl,
+          secretKey:
+            envValue("HL_SECRET_KEY") ?? hyperliquidConfig.connections.hyperliquid.secretKey,
+          accountAddress:
+            envValue("HL_ACCOUNT_ADDRESS") ??
+            hyperliquidConfig.connections.hyperliquid.accountAddress,
+        },
       },
-    },
-  };
+    }))
+    .exhaustive();
 }
 
 function normalizeConfig(config: AppConfig): LoadedAppConfig {
