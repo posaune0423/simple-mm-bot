@@ -1,5 +1,6 @@
-import type { Fill } from "../domain/entities/Fill.ts";
-import { isFlatPositionQty, type Position } from "../domain/entities/Position.ts";
+import { match, P } from "ts-pattern";
+import type { Fill } from "../domain/types/Fill.ts";
+import { isFlatPositionQty, type Position } from "../domain/types/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import { stringifyError } from "../utils/errors.ts";
@@ -532,37 +533,55 @@ export class Bot {
 }
 
 function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): BotStartOptions {
-  if (typeof maxTicksOrOptions === "number" || maxTicksOrOptions === undefined) {
-    return { maxTicks: maxTicksOrOptions };
-  }
-  return maxTicksOrOptions;
+  return match(maxTicksOrOptions)
+    .with(
+      P.union(
+        P.when((value): value is number => typeof value === "number"),
+        undefined,
+      ),
+      (maxTicks) => ({ maxTicks }),
+    )
+    .otherwise((options) => options);
 }
 
 function stopReasonFromSignal(signal: AbortSignal): string {
   const { reason } = signal;
-  if (typeof reason === "string") {
-    return reason;
-  }
-  if (reason instanceof Error) {
-    return reason.message;
-  }
-  if (reason === undefined) {
-    return "aborted";
-  }
-  return String(reason);
+  return match(reason)
+    .with(
+      P.when((reason): reason is string => typeof reason === "string"),
+      (reason) => reason,
+    )
+    .with(
+      P.when((reason): reason is Error => reason instanceof Error),
+      (reason) => reason.message,
+    )
+    .with(undefined, () => "aborted")
+    .otherwise((reason) => String(reason));
 }
 
 function riskStateOf(decision: RiskState | RiskDecision): RiskState {
-  return typeof decision === "string" ? decision : decision.state;
+  return match(decision)
+    .with(
+      P.when((decision): decision is RiskState => typeof decision === "string"),
+      (decision) => decision,
+    )
+    .otherwise((decision) => decision.state);
 }
 
 function riskRuntimeSummary(
   tick: number,
   decision: RiskState | RiskDecision,
 ): Record<string, unknown> {
-  if (typeof decision === "string") {
-    return { tick, riskState: decision };
-  }
-  const { state, ...details } = decision;
-  return { tick, riskState: state, ...details };
+  return match(decision)
+    .with(
+      P.when((decision): decision is RiskState => typeof decision === "string"),
+      (decision) => ({
+        tick,
+        riskState: decision,
+      }),
+    )
+    .otherwise((decision) => {
+      const { state, ...details } = decision;
+      return { tick, riskState: state, ...details };
+    });
 }

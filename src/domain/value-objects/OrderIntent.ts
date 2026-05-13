@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "neverthrow";
-import type { OrderTimeInForce } from "../entities/Quote";
 import { InvalidOrderIntentError, type DomainError } from "../errors/DomainError";
+import type { OrderTimeInForce } from "../types/Order";
 import type { Price } from "./Price";
 import type { Quantity } from "./Quantity";
 import type { ExposureIntent, OrderSide, QuoteSide } from "./QuoteLeg";

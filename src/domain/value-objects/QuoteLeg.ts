@@ -1,10 +1,11 @@
 import { err, ok, type Result } from "neverthrow";
 import { InvalidQuoteError, type DomainError } from "../errors/DomainError";
+import type { OrderSide } from "../types/Order";
 import type { Price } from "./Price";
 import type { Quantity } from "./Quantity";
 
 export type QuoteSide = "bid" | "ask";
-export type OrderSide = "buy" | "sell";
+export type { OrderSide };
 export type ExposureIntent = "increase_exposure" | "reduce_exposure";
 export type QuoteLevelIndex = number;
 

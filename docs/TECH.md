@@ -24,13 +24,13 @@ bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と 
 Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
 metrics fact contract と agent/operator tool logic は core market making domain から分離する。
 
-| 層             | 責務                                                               | 依存可能先                             |
-| -------------- | ------------------------------------------------------------------ | -------------------------------------- |
-| Domain         | 純粋なビジネスロジック、entity、port、strategy                     | 外部依存なし                           |
-| Application    | use case の実行順序、bot ループ、DI 構成                           | domain                                 |
-| Adapters       | venue / mode ごとの port 実装                                      | domain ports + venue SDK               |
-| Infrastructure | metrics fact contract、DB client、schema、repository 実装          | domain ports + storage library         |
-| Scripts        | 保存済み metrics facts / views の評価、YAML tuning、issue planning | domain entities + infrastructure types |
+| 層             | 責務                                                                 | 依存可能先                          |
+| -------------- | -------------------------------------------------------------------- | ----------------------------------- |
+| Domain         | 純粋なビジネスロジック、value object、plain contract、port、strategy | 外部依存なし                        |
+| Application    | use case の実行順序、bot ループ、DI 構成                             | domain                              |
+| Adapters       | venue / mode ごとの port 実装                                        | domain ports + venue SDK            |
+| Infrastructure | metrics fact contract、DB client、schema、repository 実装            | domain ports + storage library      |
+| Scripts        | 保存済み metrics facts / views の評価、YAML tuning、issue planning   | domain types + infrastructure types |
 
 ## ランタイム全体像
 
@@ -50,20 +50,20 @@ bot の 1 tick は以下の責務順で動作する。
 
 ## Domain 設計
 
-### Entities
+### Value Objects / Types
 
-- `Quote`
-  - bid / ask price
-  - bid / ask size
-  - order policy
-- `Position`
-  - qty
-  - avg entry
-  - unrealized PnL
-- `Fill`
-  - 約定イベントの正規化表現
-- `PerformanceMetrics`
-  - script / docs report 用の集計型
+- `value-objects/Quote`
+  - 新しい quote VO。bid/ask leg、reference/fair price、diagnostics を持ち、execution policy は持たない。
+- `value-objects/OrderIntent`
+  - submit 前の注文意図。time-in-force、post-only、reduce-only、client order id はここで扱う。
+- `types/Position`
+  - 現行 runtime の position contract。identity / lifecycle を持たないため Entity ではない。
+- `types/Fill`
+  - adapter が正規化して application へ渡す fill event contract。identity lifecycle を管理しないため Entity ではない。
+- `types/LegacyQuote`
+  - legacy metrics / adapter 互換用の旧 quote contract。一時的な型置き場であり、VO ではない。
+- `types/PerformanceMetrics`
+  - backtest / paper loop script の集計 contract。runtime domain entity ではない。
 
 ### Ports
 

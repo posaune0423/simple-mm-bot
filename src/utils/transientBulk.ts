@@ -1,3 +1,4 @@
+import { match, P } from "ts-pattern";
 import { stringifyError } from "./errors.ts";
 
 type ErrorLike = {
@@ -15,19 +16,25 @@ interface RetryOptions {
 }
 
 export function isTransientBulkError(error: unknown): boolean {
-  if (typeof error === "object" && error !== null) {
-    const errorLike = error as ErrorLike;
-    if (errorLike.name === "BulkTimeoutError") {
-      return true;
-    }
-    const status = toHttpStatus(errorLike);
-    if (status === 408) {
-      return true;
-    }
+  const structuredTransient = match(error)
+    .with(P.when(isErrorLike), (errorLike) =>
+      match({ name: errorLike.name, status: toHttpStatus(errorLike) })
+        .with({ name: "BulkTimeoutError" }, () => true)
+        .with({ status: 408 }, () => true)
+        .otherwise(() => false),
+    )
+    .otherwise(() => false);
+
+  if (structuredTransient) {
+    return true;
   }
 
   const message = stringifyError(error);
   return message.includes("HTTP error 408") || message.includes("HTTP request timed out");
+}
+
+function isErrorLike(error: unknown): error is ErrorLike {
+  return typeof error === "object" && error !== null;
 }
 
 function toHttpStatus(errorLike: ErrorLike): number | undefined {
@@ -42,21 +49,16 @@ function toHttpStatus(errorLike: ErrorLike): number | undefined {
     return undefined;
   };
 
-  const directStatus = maybeStatus(errorLike.status);
-  if (directStatus !== undefined) {
-    return directStatus;
-  }
-
-  if (
-    errorLike.response === undefined ||
-    errorLike.response === null ||
-    typeof errorLike.response !== "object"
-  ) {
-    return undefined;
-  }
-
-  const responseStatus = maybeStatus((errorLike.response as { status?: unknown }).status);
-  return responseStatus;
+  return match(maybeStatus(errorLike.status))
+    .with(
+      P.when((status): status is number => status !== undefined),
+      (status) => status,
+    )
+    .otherwise(() =>
+      match(errorLike.response)
+        .with(P.when(isErrorLike), (response) => maybeStatus(response.status))
+        .otherwise(() => undefined),
+    );
 }
 
 export async function retryTransientBulk<T>(

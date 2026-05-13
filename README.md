@@ -118,7 +118,7 @@ The main runtime stays thin:
 
 Repository split:
 
-- `src/domain`: pricing, analytics, entities, ports, strategy
+- `src/domain`: pricing, analytics, value objects, plain contracts, ports, strategy
 - `src/application`: bot loop, use cases, dependency injection
 - `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
 - `src/adapters/hyperliquid`: legacy compatibility

@@ -1,3 +1,5 @@
+import { match, P } from "ts-pattern";
+
 export const DEFAULT_DATABASE_URL = "file:data/mm.db";
 
 export type ResolvedDatabaseUrl =
@@ -7,37 +9,48 @@ export type ResolvedDatabaseUrl =
 export function resolveDatabaseUrl(databaseUrl: string | undefined): ResolvedDatabaseUrl {
   const value = databaseUrl?.trim() || DEFAULT_DATABASE_URL;
 
-  if (value.startsWith("postgres://") || value.startsWith("postgresql://")) {
-    return { kind: "postgres", url: value };
-  }
-
-  if (value.startsWith("file:")) {
-    return { kind: "sqlite", path: sqlitePathFromFileUrl(value) };
-  }
-
-  throw new Error("Unsupported DATABASE_URL scheme. Use file:<path> or postgres://...");
+  return match(value)
+    .with(
+      P.when((value) => value.startsWith("postgres://") || value.startsWith("postgresql://")),
+      (url) => ({ kind: "postgres" as const, url }),
+    )
+    .with(
+      P.when((value) => value.startsWith("file:")),
+      (url) => ({
+        kind: "sqlite" as const,
+        path: sqlitePathFromFileUrl(url),
+      }),
+    )
+    .otherwise(() => {
+      throw new Error("Unsupported DATABASE_URL scheme. Use file:<path> or postgres://...");
+    });
 }
 
 export function resolveSqliteDatabasePath(databaseUrl: string | undefined): string {
   const resolved = resolveDatabaseUrl(databaseUrl);
-  if (resolved.kind !== "sqlite") {
-    throw new Error("This script requires a SQLite DATABASE_URL such as file:data/mm.db");
-  }
-  return resolved.path;
+  return match(resolved)
+    .with({ kind: "sqlite" }, (resolved) => resolved.path)
+    .with({ kind: "postgres" }, () => {
+      throw new Error("This script requires a SQLite DATABASE_URL such as file:data/mm.db");
+    })
+    .exhaustive();
 }
 
 function sqlitePathFromFileUrl(databaseUrl: string): string {
   const rest = stripQueryAndHash(databaseUrl.slice("file:".length));
 
-  if (rest.startsWith("///")) {
-    return `/${rest.slice(3)}`;
-  }
-
-  if (rest.startsWith("//")) {
-    throw new Error("SQLite DATABASE_URL must use file:<path> or file:///absolute/path");
-  }
-
-  return rest;
+  return match(rest)
+    .with(
+      P.when((rest) => rest.startsWith("///")),
+      (rest) => `/${rest.slice(3)}`,
+    )
+    .with(
+      P.when((rest) => rest.startsWith("//")),
+      () => {
+        throw new Error("SQLite DATABASE_URL must use file:<path> or file:///absolute/path");
+      },
+    )
+    .otherwise((rest) => rest);
 }
 
 function stripQueryAndHash(value: string): string {

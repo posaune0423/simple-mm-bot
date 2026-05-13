@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { match } from "ts-pattern";
 
 import type {
   IMarkoutFeedbackRepository,
@@ -311,16 +312,11 @@ function aggregateHorizon(rows: MarkoutRow[], horizonSec: number) {
 }
 
 function markoutForHorizon(row: MarkoutRow, horizonSec: number): number | null {
-  switch (horizonSec) {
-    case 5:
-      return row.markout_5s_bps;
-    case 30:
-      return row.markout_30s_bps;
-    case 300:
-      return row.markout_300s_bps;
-    default:
-      return null;
-  }
+  return match(horizonSec)
+    .with(5, () => row.markout_5s_bps)
+    .with(30, () => row.markout_30s_bps)
+    .with(300, () => row.markout_300s_bps)
+    .otherwise(() => null);
 }
 
 function serializeRun(run: TradingRunFact): typeof tradingRunsTable.$inferInsert {

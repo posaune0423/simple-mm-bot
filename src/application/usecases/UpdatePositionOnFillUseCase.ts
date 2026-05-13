@@ -1,4 +1,4 @@
-import type { Fill } from "../../domain/entities/Fill.ts";
+import type { Fill } from "../../domain/types/Fill.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
 import { logger } from "../../utils/logger.ts";
 

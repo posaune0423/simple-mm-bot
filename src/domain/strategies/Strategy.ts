@@ -1,4 +1,5 @@
 import type { Result } from "neverthrow";
+import { match } from "ts-pattern";
 import type { StrategyError } from "../errors/DomainError";
 import type { MarketSnapshot } from "../ports/IMarketFeed";
 import type { PositionSnapshot } from "../value-objects/PositionSnapshot";
@@ -57,14 +58,10 @@ export const StrategyDecision = {
       noQuote: (decision: Extract<StrategyDecision, { kind: "no_quote" }>) => T;
     },
   ): T {
-    switch (decision.kind) {
-      case "quote":
-        return handlers.quote(decision);
-      case "no_quote":
-        return handlers.noQuote(decision);
-      default:
-        return assertNever(decision);
-    }
+    return match(decision)
+      .with({ kind: "quote" }, handlers.quote)
+      .with({ kind: "no_quote" }, handlers.noQuote)
+      .exhaustive();
   },
 };
 
@@ -78,8 +75,4 @@ export type StrategyInput = Readonly<{
 export interface Strategy {
   readonly name: string;
   decide(input: StrategyInput): Result<StrategyDecision, StrategyError>;
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unreachable strategy decision: ${JSON.stringify(value)}`);
 }

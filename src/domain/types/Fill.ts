@@ -1,4 +1,4 @@
-import type { OrderSide } from "./Quote.ts";
+import type { OrderSide } from "./Order";
 
 export interface Fill {
   id: string;

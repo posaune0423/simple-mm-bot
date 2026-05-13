@@ -1,9 +1,9 @@
 import type {
   ExposureIntent as LegacyExposureIntent,
-  OrderTimeInForce,
   Quote as LegacyQuote,
   QuoteLevel as LegacyQuoteLevel,
-} from "../../domain/entities/Quote.ts";
+} from "../../domain/types/LegacyQuote.ts";
+import type { OrderTimeInForce } from "../../domain/types/Order.ts";
 import type { Quote } from "../../domain/value-objects/Quote.ts";
 import type { QuoteLeg } from "../../domain/value-objects/QuoteLeg.ts";
 

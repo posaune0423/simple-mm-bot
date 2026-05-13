@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "neverthrow";
-import type { OrderTimeInForce } from "../../domain/entities/Quote";
+import { match, P } from "ts-pattern";
+import type { OrderTimeInForce } from "../../domain/types/Order";
 import type { MarketSnapshot } from "../../domain/ports/IMarketFeed";
 import type { DomainError } from "../../domain/errors/DomainError";
 import { OrderIntent } from "../../domain/value-objects/OrderIntent";
@@ -92,7 +93,10 @@ export class OrderIntentBuilder {
         continue;
       }
 
-      const orderSide = leg.side === "bid" ? "buy" : "sell";
+      const orderSide = match(leg.side)
+        .with("bid", () => "buy" as const)
+        .with("ask", () => "sell" as const)
+        .exhaustive();
       const price = Price.unsafe(
         guardedLimitPrice({
           side: orderSide,
@@ -135,19 +139,29 @@ export class OrderIntentBuilder {
     touch: MarketSnapshot,
     trendBps: number,
   ): OrderIntentSkip["reason"] | null {
-    if (leg.exposureIntent !== "increase_exposure") {
-      return null;
-    }
-    if (isStaleEpochSnapshot(touch, this.nowMs())) {
-      return "stale_touch";
-    }
-    if (leg.side === "bid" && trendBps <= -OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
-      return "downtrend_open_bid";
-    }
-    if (leg.side === "ask" && trendBps >= OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS) {
-      return "uptrend_open_ask";
-    }
-    return null;
+    return match({
+      exposureIntent: leg.exposureIntent,
+      side: leg.side,
+      isStale: isStaleEpochSnapshot(touch, this.nowMs()),
+      trendBps,
+    })
+      .with({ exposureIntent: P.when((intent) => intent !== "increase_exposure") }, () => null)
+      .with({ isStale: true }, () => "stale_touch" as const)
+      .with(
+        {
+          side: "bid",
+          trendBps: P.when((trend) => trend <= -OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS),
+        },
+        () => "downtrend_open_bid" as const,
+      )
+      .with(
+        {
+          side: "ask",
+          trendBps: P.when((trend) => trend >= OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS),
+        },
+        () => "uptrend_open_ask" as const,
+      )
+      .otherwise(() => null);
   }
 }
 
@@ -164,30 +178,36 @@ function guardedLimitPrice(input: {
   trendBps: number;
 }): number {
   const { side, price, policy, reduceOnly, snapshot, trendBps } = input;
-  if (policy === "IOC") {
-    return price;
-  }
-  if (policy === "ALO") {
-    return side === "buy" ? Math.min(price, snapshot.bestBid) : Math.max(price, snapshot.bestAsk);
-  }
+  return match({ policy, side })
+    .with({ policy: "IOC" }, () => price)
+    .with({ policy: "ALO", side: "buy" }, () => Math.min(price, snapshot.bestBid))
+    .with({ policy: "ALO", side: "sell" }, () => Math.max(price, snapshot.bestAsk))
+    .otherwise(() => {
+      const currentMid = (snapshot.bestBid + snapshot.bestAsk) / 2;
+      const passiveMarginBps = reduceOnly
+        ? REDUCE_PASSIVE_TOUCH_MARGIN_BPS
+        : NORMAL_PASSIVE_TOUCH_MARGIN_BPS;
+      const momentumGuard =
+        currentMid *
+        (Math.min(Math.abs(trendBps) * MOMENTUM_GUARD_MULTIPLIER, MAX_MOMENTUM_GUARD_BPS) / 10_000);
 
-  const currentMid = (snapshot.bestBid + snapshot.bestAsk) / 2;
-  const passiveMarginBps = reduceOnly
-    ? REDUCE_PASSIVE_TOUCH_MARGIN_BPS
-    : NORMAL_PASSIVE_TOUCH_MARGIN_BPS;
-  const momentumGuard =
-    currentMid *
-    (Math.min(Math.abs(trendBps) * MOMENTUM_GUARD_MULTIPLIER, MAX_MOMENTUM_GUARD_BPS) / 10_000);
-
-  if (side === "buy") {
-    const passiveBid = snapshot.bestBid * (1 - passiveMarginBps / 10_000);
-    const guardedPrice = Math.min(price, passiveBid);
-    return trendBps < -MOMENTUM_GUARD_THRESHOLD_BPS ? guardedPrice - momentumGuard : guardedPrice;
-  }
-
-  const passiveAsk = snapshot.bestAsk * (1 + passiveMarginBps / 10_000);
-  const guardedPrice = Math.max(price, passiveAsk);
-  return trendBps > MOMENTUM_GUARD_THRESHOLD_BPS ? guardedPrice + momentumGuard : guardedPrice;
+      return match(side)
+        .with("buy", () => {
+          const passiveBid = snapshot.bestBid * (1 - passiveMarginBps / 10_000);
+          const guardedPrice = Math.min(price, passiveBid);
+          return trendBps < -MOMENTUM_GUARD_THRESHOLD_BPS
+            ? guardedPrice - momentumGuard
+            : guardedPrice;
+        })
+        .with("sell", () => {
+          const passiveAsk = snapshot.bestAsk * (1 + passiveMarginBps / 10_000);
+          const guardedPrice = Math.max(price, passiveAsk);
+          return trendBps > MOMENTUM_GUARD_THRESHOLD_BPS
+            ? guardedPrice + momentumGuard
+            : guardedPrice;
+        })
+        .exhaustive();
+    });
 }
 
 function isStaleEpochSnapshot(snapshot: MarketSnapshot, nowMs: number): boolean {

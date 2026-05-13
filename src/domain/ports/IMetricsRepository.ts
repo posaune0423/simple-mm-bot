@@ -1,4 +1,4 @@
-import type { OrderSide, OrderTimeInForce } from "../entities/Quote.ts";
+import type { OrderSide, OrderTimeInForce } from "../types/Order.ts";
 
 type TradingRunMode = "live" | "paper" | "backtest";
 export type CapitalMode = "beta_mock" | "paper" | "backtest" | "real";

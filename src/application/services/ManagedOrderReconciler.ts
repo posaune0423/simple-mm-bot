@@ -1,4 +1,4 @@
-import type { OrderSide, OrderTimeInForce } from "../../domain/entities/Quote.ts";
+import type { OrderSide, OrderTimeInForce } from "../../domain/types/Order.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { OrderIntent } from "../../domain/value-objects/OrderIntent.ts";
 import { stringifyError } from "../../utils/errors.ts";

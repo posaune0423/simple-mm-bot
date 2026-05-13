@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { match, P } from "ts-pattern";
 
-import type { Fill } from "../../domain/entities/Fill.ts";
-import type { Position } from "../../domain/entities/Position.ts";
+import type { Fill } from "../../domain/types/Fill.ts";
+import type { Position } from "../../domain/types/Position.ts";
 import type {
   FillListener,
   IOrderGateway,
@@ -164,22 +165,21 @@ function rejectReasonFrom(status: BulkStatus): string | undefined {
 
 function placedStatusFrom(status: BulkStatus): PlacedOrder["status"] {
   const key = statusKey(status);
-  if (!key) {
-    return "rejected";
-  }
-  if (openStatusKeys.has(key)) {
-    return "open";
-  }
-  if (filledStatusKeys.has(key)) {
-    return "filled";
-  }
-  if (key === "partiallyFilled") {
-    return "partially_filled";
-  }
-  if (cancelledStatusKeys.has(key)) {
-    return "cancelled";
-  }
-  return "rejected";
+  return match(key)
+    .with(
+      P.when((value) => value !== undefined && openStatusKeys.has(value)),
+      () => "open" as const,
+    )
+    .with(
+      P.when((value) => value !== undefined && filledStatusKeys.has(value)),
+      () => "filled" as const,
+    )
+    .with("partiallyFilled", () => "partially_filled" as const)
+    .with(
+      P.when((value) => value !== undefined && cancelledStatusKeys.has(value)),
+      () => "cancelled" as const,
+    )
+    .otherwise(() => "rejected" as const);
 }
 
 function isCrossPosition(entry: BulkPositionEntry, market: string): boolean {
@@ -760,23 +760,17 @@ function normalizeOpenOrder(order: BulkOpenOrder): OpenOrder | null {
 }
 
 function normalizeOpenOrderStatus(status: string | undefined): OpenOrder["status"] | null {
-  if (status === "partiallyFilled") {
-    return "partially_filled";
-  }
-  if (status === "resting" || status === "working" || status === "placed" || status === "pending") {
-    return "open";
-  }
-  return null;
+  return match(status)
+    .with("partiallyFilled", () => "partially_filled" as const)
+    .with(P.union("resting", "working", "placed", "pending"), () => "open" as const)
+    .otherwise(() => null);
 }
 
 function normalizeTimeInForce(timeInForce: string | undefined): OpenOrder["timeInForce"] {
-  if (timeInForce === "ioc") {
-    return "IOC";
-  }
-  if (timeInForce === "postOnly") {
-    return "ALO";
-  }
-  return "GTC";
+  return match(timeInForce)
+    .with("ioc", () => "IOC" as const)
+    .with("postOnly", () => "ALO" as const)
+    .otherwise(() => "GTC" as const);
 }
 
 function summarizeResponse(response: BulkOrderResponse | undefined): unknown {

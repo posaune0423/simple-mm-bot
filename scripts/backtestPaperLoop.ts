@@ -4,7 +4,7 @@ import { ResultAsync } from "neverthrow";
 
 import { DIContainer } from "../src/application/di.ts";
 import { ConfigLoader } from "../src/config.ts";
-import type { PerformanceMetrics } from "../src/domain/entities/PerformanceMetrics.ts";
+import type { PerformanceMetrics } from "../src/domain/types/PerformanceMetrics.ts";
 import { resolveSqliteDatabasePath } from "../src/utils/databaseUrl.ts";
 import { createSqliteClient } from "../src/infrastructure/db/sqlite/client.ts";
 import { ScriptError } from "./errors/ScriptError.ts";

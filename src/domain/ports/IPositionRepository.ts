@@ -1,5 +1,5 @@
-import type { Fill } from "../entities/Fill.ts";
-import type { Position } from "../entities/Position.ts";
+import type { Fill } from "../types/Fill.ts";
+import type { Position } from "../types/Position.ts";
 
 export interface IPositionRepository {
   get(): Promise<Position>;

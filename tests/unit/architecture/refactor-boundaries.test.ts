@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 const root = process.cwd();
+const sourceRoots = ["src", "scripts"];
 
 const removedLegacyFiles = [
   "src/application/QuotingStrategyFactory.ts",
@@ -24,6 +25,14 @@ const removedLegacyFiles = [
   "src/application/services/OrderManagerReconciler.ts",
   "src/application/MetricsRecorder.ts",
   "src/application/shutdown.ts",
+  "src/domain/entities/Fill.ts",
+  "src/domain/entities/PerformanceMetrics.ts",
+  "src/domain/entities/Position.ts",
+  "src/domain/entities/Quote.ts",
+  "src/domain/events/Fill.ts",
+  "src/domain/orders/OrderTypes.ts",
+  "src/domain/positions/Position.ts",
+  "src/domain/legacy/LegacyQuote.ts",
 ];
 
 describe("refactor architecture boundaries", () => {
@@ -82,6 +91,19 @@ describe("refactor architecture boundaries", () => {
   test("domain does not keep ambiguous market or quote quality buckets", () => {
     expect(existsSync(join(root, "src/domain/market"))).toBe(false);
     expect(existsSync(join(root, "src/domain/value-objects/QuoteQuality.ts"))).toBe(false);
+  });
+
+  test("domain plain contracts are kept in types instead of pseudo-entity buckets", () => {
+    expect(existsSync(join(root, "src/domain/entities"))).toBe(false);
+    expect(existsSync(join(root, "src/domain/events"))).toBe(false);
+    expect(existsSync(join(root, "src/domain/orders"))).toBe(false);
+    expect(existsSync(join(root, "src/domain/positions"))).toBe(false);
+    expect(existsSync(join(root, "src/domain/legacy"))).toBe(false);
+    expect(existsSync(join(root, "src/domain/types/Fill.ts"))).toBe(true);
+    expect(existsSync(join(root, "src/domain/types/Order.ts"))).toBe(true);
+    expect(existsSync(join(root, "src/domain/types/Position.ts"))).toBe(true);
+    expect(existsSync(join(root, "src/domain/types/LegacyQuote.ts"))).toBe(true);
+    expect(existsSync(join(root, "src/domain/types/PerformanceMetrics.ts"))).toBe(true);
   });
 
   test("process shutdown is handled at the main boundary", () => {
@@ -170,4 +192,37 @@ describe("refactor architecture boundaries", () => {
     expect(orderIntentBuilder).toContain("ApplicationError");
     expect(orderReconciler).toContain("ApplicationError");
   });
+
+  test("closed multi-way branches use ts-pattern instead of manual switches", () => {
+    const filesWithSwitch = sourceRoots
+      .flatMap((sourceRoot) => tsFiles(join(root, sourceRoot)))
+      .filter((file) => /\bswitch\s*\(/.test(readFileSync(file, "utf8")));
+
+    expect(filesWithSwitch.map((file) => file.replace(`${root}/`, ""))).toEqual([]);
+
+    for (const file of [
+      "src/domain/strategies/Strategy.ts",
+      "src/application/di.ts",
+      "src/application/services/MetricsRecorder.ts",
+      "src/adapters/bulk/BulkOrderGateway.ts",
+      "src/infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts",
+    ]) {
+      const source = readFileSync(join(root, file), "utf8");
+      expect(source, file).toContain("ts-pattern");
+      expect(source, file).toContain("match(");
+    }
+  });
 });
+
+function tsFiles(path: string): string[] {
+  if (!existsSync(path)) {
+    return [];
+  }
+
+  const stats = statSync(path);
+  if (stats.isFile()) {
+    return path.endsWith(".ts") ? [path] : [];
+  }
+
+  return readdirSync(path).flatMap((entry) => tsFiles(join(path, entry)));
+}

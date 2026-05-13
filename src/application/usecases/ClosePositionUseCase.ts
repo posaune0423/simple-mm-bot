@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { match } from "ts-pattern";
 
 import type { IMarketFeed } from "../../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
 import type { IPositionRepository } from "../../domain/ports/IPositionRepository.ts";
-import type { Position } from "../../domain/entities/Position.ts";
-import { isFlatPositionQty } from "../../domain/entities/Position.ts";
+import type { Position } from "../../domain/types/Position.ts";
+import { isFlatPositionQty } from "../../domain/types/Position.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
@@ -28,7 +29,10 @@ function closePriceOffsetBps(attempt: number): number {
 
 function closePrice(bestBid: number, bestAsk: number, side: CloseSide, attempt: number): number {
   const offset = closePriceOffsetBps(attempt) / 10_000;
-  return normalizeClosePrice(side === "sell" ? bestBid * (1 - offset) : bestAsk * (1 + offset));
+  return match(side)
+    .with("sell", () => normalizeClosePrice(bestBid * (1 - offset)))
+    .with("buy", () => normalizeClosePrice(bestAsk * (1 + offset)))
+    .exhaustive();
 }
 
 export class ClosePositionUseCase {
@@ -84,7 +88,10 @@ export class ClosePositionUseCase {
   private closeAttempt(position: Position, attempt: number): CloseAttempt {
     return {
       attempt,
-      side: position.qty > 0 ? "sell" : "buy",
+      side: match(position.qty > 0)
+        .with(true, () => "sell" as const)
+        .with(false, () => "buy" as const)
+        .exhaustive(),
       qty: Math.abs(position.qty),
     };
   }
@@ -214,16 +221,16 @@ export class ClosePositionUseCase {
     closeAttempt: CloseAttempt,
     recordStatus: (status: string) => void,
   ): CloseResult {
-    if (placed?.status === "filled") {
-      return "filled";
-    }
-    if (placed !== undefined) {
-      recordStatus(placed.status);
-      logger.warn(
-        `[application] ClosePosition | ORDER_NOT_FILLED | market=${this.market} side=${closeAttempt.side} qty=${closeAttempt.qty} status=${placed.status} attempt=${closeAttempt.attempt}/${closeMaxAttempts}`,
-      );
-    }
-    return "not_filled";
+    return match(placed)
+      .with({ status: "filled" }, () => "filled" as const)
+      .with(undefined, () => "not_filled" as const)
+      .otherwise((placed) => {
+        recordStatus(placed.status);
+        logger.warn(
+          `[application] ClosePosition | ORDER_NOT_FILLED | market=${this.market} side=${closeAttempt.side} qty=${closeAttempt.qty} status=${placed.status} attempt=${closeAttempt.attempt}/${closeMaxAttempts}`,
+        );
+        return "not_filled" as const;
+      });
   }
 
   private async waitBeforeRetry(): Promise<void> {

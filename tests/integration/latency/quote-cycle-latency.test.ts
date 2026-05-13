@@ -11,8 +11,8 @@ import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalcu
 import { QuoteEngine } from "../../../src/domain/services/QuoteEngine.ts";
 import { VolatilityEstimator } from "../../../src/domain/services/VolatilityEstimator.ts";
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
-import type { Fill } from "../../../src/domain/entities/Fill.ts";
-import type { Position } from "../../../src/domain/entities/Position.ts";
+import type { Fill } from "../../../src/domain/types/Fill.ts";
+import type { Position } from "../../../src/domain/types/Position.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
 import type {
   FillListener,

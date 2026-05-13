@@ -58,7 +58,7 @@ flowchart LR
         Fair["FairPriceCalculator"]
         Vol["VolatilityEstimator"]
         Values["Value objects\nQuote / QuoteLeg / OrderIntent\nPrice / Quantity"]
-        Entities["Entities\nQuote / Position / Fill"]
+        Types["Plain contracts\nFill / Position / LegacyQuote\nOrder side / TIF"]
         Ports["Ports\nIMarketFeed\nIOrderGateway\nIPositionRepository\nIOhlcvRepository\nIMarkoutFeedbackRepository\nIMetricsRepository"]
     end
 
@@ -98,7 +98,7 @@ flowchart LR
     QE --> QuoteModel
     QE --> Fair
     QE --> Vol
-    QE --> Entities
+    QE --> Types
     QE --> Values
 
     BulkAdapter -. implements .-> Ports
@@ -124,13 +124,13 @@ flowchart LR
 
 ## 3. レイヤー責務
 
-| Layer             | 主な責務                                                                                             | 依存可能先                                           | 代表ファイル                                                                                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Domain            | quote 計算、quote model、strategy、fair price、volatility、value object、entity、port、fact contract | domain 内のみ                                        | `src/domain/services/QuoteEngine.ts`, `src/domain/quote-models/*`, `src/domain/strategies/*`, `src/domain/value-objects/*`, `src/domain/ports/*` |
-| Application       | bot lifecycle、tick 順序、use case orchestration、DI、order reconcile、metrics fact recording        | domain。`src/application/di.ts` のみ外側を組み立てる | `src/application/Bot.ts`, `src/application/usecases/*`, `src/application/services/*`, `src/application/di.ts`                                    |
-| Adapters          | Bulk / Hyperliquid / paper の外部 protocol を domain port へ変換                                     | domain ports、venue SDK / local replay               | `src/adapters/bulk/*`, `src/adapters/hyperliquid/*`, `src/adapters/paper/*`                                                                      |
-| Infrastructure    | DB client、schema、domain port 実装、git metadata                                                    | domain ports、storage library                        | `src/infrastructure/*`, `src/infrastructure/db/*`                                                                                                |
-| Tools / Reporting | 保存済み metrics の評価、report 生成、config tuning、issue planning                                  | source runtime から分離                              | `scripts/*`, `src/lib/reporting/*`                                                                                                               |
+| Layer             | 主な責務                                                                                                     | 依存可能先                                           | 代表ファイル                                                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain            | quote 計算、quote model、strategy、fair price、volatility、value object、plain contract、port、fact contract | domain 内のみ                                        | `src/domain/services/QuoteEngine.ts`, `src/domain/quote-models/*`, `src/domain/strategies/*`, `src/domain/value-objects/*`, `src/domain/types/*`, `src/domain/ports/*` |
+| Application       | bot lifecycle、tick 順序、use case orchestration、DI、order reconcile、metrics fact recording                | domain。`src/application/di.ts` のみ外側を組み立てる | `src/application/Bot.ts`, `src/application/usecases/*`, `src/application/services/*`, `src/application/di.ts`                                                          |
+| Adapters          | Bulk / Hyperliquid / paper の外部 protocol を domain port へ変換                                             | domain ports、venue SDK / local replay               | `src/adapters/bulk/*`, `src/adapters/hyperliquid/*`, `src/adapters/paper/*`                                                                                            |
+| Infrastructure    | DB client、schema、domain port 実装、git metadata                                                            | domain ports、storage library                        | `src/infrastructure/*`, `src/infrastructure/db/*`                                                                                                                      |
+| Tools / Reporting | 保存済み metrics の評価、report 生成、config tuning、issue planning                                          | source runtime から分離                              | `scripts/*`, `src/lib/reporting/*`                                                                                                                                     |
 
 ### Lint-Enforced Dependency Matrix
 

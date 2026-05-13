@@ -5,7 +5,7 @@ import {
   MetricsFlushLoop,
   MetricsRecorder,
 } from "../../../src/application/services/MetricsRecorder.ts";
-import type { Fill } from "../../../src/domain/entities/Fill.ts";
+import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type {
   AccountStateObservationFact,
   OrderLifecycleEventFact,

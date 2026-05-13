@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { match, P } from "ts-pattern";
 
-import type { Fill } from "../../domain/entities/Fill.ts";
-import type { OrderSide, Quote, ExposureIntent } from "../../domain/entities/Quote.ts";
+import type { Fill } from "../../domain/types/Fill.ts";
+import type { ExposureIntent, Quote } from "../../domain/types/LegacyQuote.ts";
+import type { OrderSide } from "../../domain/types/Order.ts";
 import type { MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
 import type {
   CapitalMode,
@@ -830,65 +832,47 @@ function quoteDecisionFacts(input: {
 }
 
 function quoteDecisionIntent(intent: ExposureIntent | undefined): "quote" | "reduce" | "disabled" {
-  if (intent === "reduce_exposure") {
-    return "reduce";
-  }
-  if (intent === "disabled") {
-    return "disabled";
-  }
-  return "quote";
+  return match(intent)
+    .with("reduce_exposure", () => "reduce" as const)
+    .with("disabled", () => "disabled" as const)
+    .otherwise(() => "quote" as const);
 }
 
 function finalStatus(
   payload: OrderGatewayEvent,
 ): "submitted" | "accepted" | "rejected" | "canceled" | "filled" {
   const venueStatus = normalizeVenueStatus(payload.status);
-  if (venueStatus === "filled") {
-    return "filled";
-  }
-  if (venueStatus === "canceled") {
-    return "canceled";
-  }
-  if (venueStatus === "rejected") {
-    return "rejected";
-  }
-  if (payload.action === "submit") {
-    return "submitted";
-  }
-  if (payload.action === "reject") {
-    return "rejected";
-  }
-  if (payload.action === "cancel") {
-    return "canceled";
-  }
-  if (payload.action === "fill" || payload.status === "filled") {
-    return "filled";
-  }
-  return "accepted";
+  return match({ venueStatus, action: payload.action })
+    .with({ venueStatus: "filled" }, () => "filled" as const)
+    .with({ venueStatus: "canceled" }, () => "canceled" as const)
+    .with({ venueStatus: "rejected" }, () => "rejected" as const)
+    .with({ action: "submit" }, () => "submitted" as const)
+    .with({ action: "reject" }, () => "rejected" as const)
+    .with({ action: "cancel" }, () => "canceled" as const)
+    .with({ action: "fill" }, () => "filled" as const)
+    .otherwise(() => "accepted" as const);
 }
 
 function normalizeVenueStatus(
   status: string | undefined,
 ): "filled" | "canceled" | "rejected" | null {
-  if (status === undefined) {
-    return null;
-  }
-  const normalized = status.toLowerCase();
-  if (normalized === "filled") {
-    return "filled";
-  }
-  if (normalized === "rejected") {
-    return "rejected";
-  }
-  if (
-    normalized === "cancelled" ||
-    normalized === "canceled" ||
-    normalized.startsWith("cancelled") ||
-    normalized.startsWith("canceled")
-  ) {
-    return "canceled";
-  }
-  return null;
+  const normalized = status?.toLowerCase();
+  return match(normalized)
+    .with(undefined, () => null)
+    .with("filled", () => "filled" as const)
+    .with("rejected", () => "rejected" as const)
+    .with(
+      P.when(
+        (value): value is string =>
+          typeof value === "string" &&
+          (value === "cancelled" ||
+            value === "canceled" ||
+            value.startsWith("cancelled") ||
+            value.startsWith("canceled")),
+      ),
+      () => "canceled" as const,
+    )
+    .otherwise(() => null);
 }
 
 function rawSummary(payload: OrderGatewayEvent, cancelSource?: "cancelAll"): unknown {

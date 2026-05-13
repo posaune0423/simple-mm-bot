@@ -32,7 +32,6 @@ simple-mm-bot/
 │   │       ├── ReduceInventoryUseCase.ts
 │   │       └── UpdatePositionOnFillUseCase.ts
 │   ├── domain/
-│   │   ├── entities/
 │   │   ├── ports/
 │   │   ├── quote-models/
 │   │   │   ├── AvellanedaStoikovQuoteModel.ts
@@ -45,6 +44,12 @@ simple-mm-bot/
 │   │   ├── strategies/
 │   │   │   ├── SimplePmmStrategy.ts
 │   │   │   └── Strategy.ts
+│   │   ├── types/
+│   │   │   ├── Fill.ts
+│   │   │   ├── LegacyQuote.ts
+│   │   │   ├── Order.ts
+│   │   │   ├── PerformanceMetrics.ts
+│   │   │   └── Position.ts
 │   │   └── value-objects/
 │   │       ├── BasisPoints.ts
 │   │       ├── OrderIntent.ts
@@ -138,11 +143,12 @@ simple-mm-bot/
 - venue SDK を import しない
 - DB 実装を import しない
 - env を直接読まない
-- adapter payload を entity に持ち込まない
+- adapter payload を domain type / value object に持ち込まない
 
 `QuoteEngine` は quote model、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
 `MarketContextBuilder` は component freshness、外部価格差、LOB/risk context など venue 非依存の market context を構築する純粋 domain service。`MarketContext` 型は builder の出力型として同じ file に置き、`domain/market` のような曖昧な bucket は作らない。
 quote model は `src/domain/quote-models/*`、bot behavior strategy は `src/domain/strategies/*` に pure domain code として置く。`QuoteModelInput` / `ModelQuote` は quote model contract、`StrategyDecision` / `SideMarkoutFeedback` は strategy contract として colocate し、`value-objects/` には validation / 不変条件 / domain helper を持つ型だけを置く。
+`Fill` / `OrderSide` / `OrderTimeInForce` / legacy quote / current position のような identity や lifecycle を持たない plain contract は `src/domain/types/*` に置く。現時点では DDD Entity として扱うべき domain object はないため、`src/domain/entities/` は作らない。
 Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
 
 metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
@@ -325,7 +331,7 @@ runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.
 - Bulk SDK import は `src/adapters/bulk/` に閉じる
 - Hyperliquid SDK import は `src/lib/hyperliquid/` と `src/adapters/hyperliquid/` に閉じる
 - infrastructure は domain ports / metrics repository contract と storage library に依存する
-- scripts は domain entities と infrastructure metrics contract を読めるが、bot runtime からは参照しない
+- scripts は domain types と infrastructure metrics contract を読めるが、bot runtime からは参照しない
 - secret env は `src/env.ts` と config expansion 以外で直接読まない
 
 ## テスト構成

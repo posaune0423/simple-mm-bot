@@ -1,6 +1,6 @@
-import type { Fill } from "../entities/Fill.ts";
-import type { Position } from "../entities/Position.ts";
-import type { OrderSide, OrderTimeInForce } from "../entities/Quote.ts";
+import type { Fill } from "../types/Fill.ts";
+import type { Position } from "../types/Position.ts";
+import type { OrderSide, OrderTimeInForce } from "../types/Order.ts";
 
 export interface OrderRequest {
   market: string;

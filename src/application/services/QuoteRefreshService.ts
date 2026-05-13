@@ -9,7 +9,7 @@ import {
 } from "../../domain/strategies/Strategy.ts";
 import type { Quote } from "../../domain/value-objects/Quote.ts";
 import { PositionSnapshot } from "../../domain/value-objects/PositionSnapshot.ts";
-import type { OrderTimeInForce } from "../../domain/entities/Quote.ts";
+import type { OrderTimeInForce } from "../../domain/types/Order.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";

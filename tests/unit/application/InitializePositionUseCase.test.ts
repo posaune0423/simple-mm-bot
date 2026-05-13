@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { InitializePositionUseCase } from "../../../src/application/usecases/InitializePositionUseCase.ts";
-import type { Position } from "../../../src/domain/entities/Position.ts";
+import type { Position } from "../../../src/domain/types/Position.ts";
 import type { IOrderGateway } from "../../../src/domain/ports/IOrderGateway.ts";
 import { InMemoryPositionRepository } from "../../../src/infrastructure/InMemoryPositionRepository.ts";
 
