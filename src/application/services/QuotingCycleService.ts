@@ -20,6 +20,12 @@ import { toLegacyQuoteForMetrics } from "./QuoteMetricsAdapter.ts";
 type QuotingCycleExecutionConfig = Readonly<{
   defaultTimeInForce: OrderTimeInForce;
   postOnly: boolean;
+  slideMarginThreshold?: number;
+}>;
+
+type ResolvedExecutionPolicy = Readonly<{
+  defaultTimeInForce: OrderTimeInForce;
+  postOnly: boolean;
 }>;
 
 type QuotingCycleMarkoutFeedbackConfig = Readonly<{
@@ -97,52 +103,47 @@ export class QuotingCycleService {
     });
     const quoteComputeMs = Date.now() - quoteComputeStartedAt;
 
-    await decision.match(
-      async (strategyDecision) =>
-        StrategyDecision.match(strategyDecision, {
-          quote: async (quoteDecision) => {
-            await this.handleQuoteDecision({
-              quote: quoteDecision.quote,
-              quoteCycleId,
-              snapshot,
-              positionQty: position.qty,
-              markoutFeedback,
-              cycleStartedAt,
-              qualityGateMs,
-              quoteComputeMs,
-              bookAgeMsAtDecision,
-              tickerAgeMsAtDecision,
-              decisionMid,
-            });
-          },
-          noQuote: async (noQuoteDecision) => {
-            if (noQuoteDecision.cancelExisting) {
-              const cancelResult = await this.managedOrderReconciler.cancelAll(
-                noQuoteDecision.reasonTags.join(","),
-              );
-              await cancelResult.match(
-                async () => undefined,
-                async (error) =>
-                  this.recordRuntimeHealth(
-                    "error",
-                    "quote_cancel_all_failed",
-                    stringifyError(error),
-                  ),
-              );
-            }
-            await this.recordRuntimeHealth(
-              "info",
-              "strategy_no_quote",
-              "Strategy returned no_quote",
-              {
-                reasonTags: noQuoteDecision.reasonTags,
-              },
+    if (decision.isErr()) {
+      await this.handleStrategyDecisionFailure(decision.error);
+    } else {
+      await StrategyDecision.match(decision.value, {
+        quote: async (quoteDecision) => {
+          await this.handleQuoteDecision({
+            quote: quoteDecision.quote,
+            quoteCycleId,
+            snapshot,
+            positionQty: position.qty,
+            markoutFeedback,
+            cycleStartedAt,
+            qualityGateMs,
+            quoteComputeMs,
+            bookAgeMsAtDecision,
+            tickerAgeMsAtDecision,
+            decisionMid,
+          });
+        },
+        noQuote: async (noQuoteDecision) => {
+          if (noQuoteDecision.cancelExisting) {
+            const cancelResult = await this.managedOrderReconciler.cancelAll(
+              noQuoteDecision.reasonTags.join(","),
             );
-          },
-        }),
-      async (error) =>
-        this.recordRuntimeHealth("error", "strategy_decision_failed", stringifyError(error), error),
-    );
+            await cancelResult.match(
+              async () => undefined,
+              async (error) =>
+                this.recordRuntimeHealth("error", "quote_cancel_all_failed", stringifyError(error)),
+            );
+          }
+          await this.recordRuntimeHealth(
+            "info",
+            "strategy_no_quote",
+            "Strategy returned no_quote",
+            {
+              reasonTags: noQuoteDecision.reasonTags,
+            },
+          );
+        },
+      });
+    }
   }
 
   private async handleQuoteDecision(input: {
@@ -158,8 +159,9 @@ export class QuotingCycleService {
     tickerAgeMsAtDecision: number;
     decisionMid: number;
   }): Promise<void> {
+    const execution = this.executionForSnapshot(input.snapshot);
     logger.info(
-      `[application] QuotingCycle | QUOTE_CREATED | market=${input.snapshot.market} bid=${input.quote.bids[0]?.price ?? "none"} ask=${input.quote.asks[0]?.price ?? "none"} bidSize=${input.quote.bids[0]?.size ?? 0} askSize=${input.quote.asks[0]?.size ?? 0} bidIntent=${input.quote.bids[0]?.exposureIntent ?? "disabled"} askIntent=${input.quote.asks[0]?.exposureIntent ?? "disabled"} levelCount=${Math.max(input.quote.bids.length, input.quote.asks.length)} policy=${this.execution.defaultTimeInForce} positionQty=${input.positionQty}`,
+      `[application] QuotingCycle | QUOTE_CREATED | market=${input.snapshot.market} bid=${input.quote.bids[0]?.price ?? "none"} ask=${input.quote.asks[0]?.price ?? "none"} bidSize=${input.quote.bids[0]?.size ?? 0} askSize=${input.quote.asks[0]?.size ?? 0} bidIntent=${input.quote.bids[0]?.exposureIntent ?? "disabled"} askIntent=${input.quote.asks[0]?.exposureIntent ?? "disabled"} levelCount=${Math.max(input.quote.bids.length, input.quote.asks.length)} policy=${execution.defaultTimeInForce} positionQty=${input.positionQty}`,
     );
     await this.recordRuntimeHealth("info", "quote_build_summary", "Quote build summary captured", {
       market: input.snapshot.market,
@@ -173,7 +175,7 @@ export class QuotingCycleService {
     await this.metrics?.recordQuote(
       input.snapshot,
       input.positionQty,
-      toLegacyQuoteForMetrics(input.quote, this.execution.defaultTimeInForce),
+      toLegacyQuoteForMetrics(input.quote, execution.defaultTimeInForce),
       input.quoteCycleId,
     );
     const recordQuoteMs = Date.now() - recordQuoteStartedAt;
@@ -190,7 +192,7 @@ export class QuotingCycleService {
     const buildResult = this.orderIntentBuilder.build({
       quote: input.quote,
       quoteCycleId: input.quoteCycleId,
-      execution: this.execution,
+      execution,
       placement: {
         trendBps,
         touchByLegKey: await this.collectPlacementContext(input.quote),
@@ -214,36 +216,75 @@ export class QuotingCycleService {
     const submitMid = midPrice(submitSnapshot);
     const reconcileStartedAt = Date.now();
     const reconcile = await this.managedOrderReconciler.reconcile(buildResult.value.intents);
-    await reconcile.match(
-      async (result) =>
-        this.recordReconcileSuccess({
-          result,
-          snapshot: input.snapshot,
-          targetOrderCount: buildResult.value.intents.length,
-          skippedCount: buildResult.value.skipped.length,
-          reconcileMs: Date.now() - reconcileStartedAt,
-          totalCycleMs: Date.now() - input.cycleStartedAt,
-          qualityGateMs: input.qualityGateMs,
-          quoteComputeMs: input.quoteComputeMs,
-          recordQuoteMs,
-          buildOrdersMs,
-          bookAgeMsAtDecision: input.bookAgeMsAtDecision,
-          tickerAgeMsAtDecision: input.tickerAgeMsAtDecision,
-          bookAgeMsAtSubmit: Math.max(
-            0,
-            submitObservedAt - (submitSnapshot.bookUpdatedAt ?? submitSnapshot.timestamp),
-          ),
-          decisionMid: input.decisionMid,
-          submitMid,
-          midMoveDuringCycleBps:
-            input.decisionMid > 0
-              ? ((submitMid - input.decisionMid) / input.decisionMid) * 10_000
-              : 0,
-          quoteCycleId: input.quoteCycleId,
-        }),
-      async (error) =>
-        this.recordRuntimeHealth("error", "order_reconcile_failed", stringifyError(error), error),
+    if (reconcile.isErr()) {
+      await this.recordRuntimeHealth(
+        "error",
+        "order_reconcile_failed",
+        stringifyError(reconcile.error),
+        reconcile.error,
+      );
+      throw reconcile.error;
+    }
+
+    await this.recordReconcileSuccess({
+      result: reconcile.value,
+      snapshot: input.snapshot,
+      targetOrderCount: buildResult.value.intents.length,
+      skippedCount: buildResult.value.skipped.length,
+      reconcileMs: Date.now() - reconcileStartedAt,
+      totalCycleMs: Date.now() - input.cycleStartedAt,
+      qualityGateMs: input.qualityGateMs,
+      quoteComputeMs: input.quoteComputeMs,
+      recordQuoteMs,
+      buildOrdersMs,
+      bookAgeMsAtDecision: input.bookAgeMsAtDecision,
+      tickerAgeMsAtDecision: input.tickerAgeMsAtDecision,
+      bookAgeMsAtSubmit: Math.max(
+        0,
+        submitObservedAt - (submitSnapshot.bookUpdatedAt ?? submitSnapshot.timestamp),
+      ),
+      decisionMid: input.decisionMid,
+      submitMid,
+      midMoveDuringCycleBps:
+        input.decisionMid > 0 ? ((submitMid - input.decisionMid) / input.decisionMid) * 10_000 : 0,
+      quoteCycleId: input.quoteCycleId,
+    });
+  }
+
+  private async handleStrategyDecisionFailure(error: unknown): Promise<never> {
+    await this.recordRuntimeHealth(
+      "error",
+      "strategy_decision_failed",
+      stringifyError(error),
+      error,
     );
+    const cancelResult = await this.managedOrderReconciler.cancelAll("strategy_decision_failed");
+    if (cancelResult.isErr()) {
+      await this.recordRuntimeHealth(
+        "error",
+        "quote_cancel_all_failed",
+        stringifyError(cancelResult.error),
+      );
+      throw cancelResult.error;
+    }
+    throw error;
+  }
+
+  private executionForSnapshot(snapshot: MarketSnapshot): ResolvedExecutionPolicy {
+    if (
+      snapshot.marginRatio !== null &&
+      this.execution.slideMarginThreshold !== undefined &&
+      snapshot.marginRatio < this.execution.slideMarginThreshold
+    ) {
+      return {
+        defaultTimeInForce: "IOC",
+        postOnly: false,
+      };
+    }
+    return {
+      defaultTimeInForce: this.execution.defaultTimeInForce,
+      postOnly: this.execution.postOnly,
+    };
   }
 
   private async readMarkoutFeedback(

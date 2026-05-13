@@ -91,6 +91,7 @@ export class DIContainer {
           {
             defaultTimeInForce: this.config.quoteEngine.defaultTimeInForce,
             postOnly: this.config.quoteEngine.defaultTimeInForce === "ALO",
+            slideMarginThreshold: this.config.quoteEngine.slideMarginThreshold,
           },
           metrics,
           repositories.markoutFeedbackRepository,
