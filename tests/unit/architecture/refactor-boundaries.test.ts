@@ -117,11 +117,13 @@ describe("refactor architecture boundaries", () => {
 
   test("process shutdown is handled at the main boundary", () => {
     const main = readFileSync(join(root, "src/main.ts"), "utf8");
+    const shutdownSignals = readFileSync(join(root, "src/utils/shutdownSignals.ts"), "utf8");
 
     expect(main).not.toContain("registerShutdownHandlers");
     expect(main).not.toContain("let stopRequested");
-    expect(main).toContain("SIGINT");
-    expect(main).toContain("SIGTERM");
+    expect(main).toContain("installShutdownSignalHandlers");
+    expect(shutdownSignals).toContain("SIGINT");
+    expect(shutdownSignals).toContain("SIGTERM");
     expect(main).toContain("AbortController");
     expect(main).not.toContain("bot.stop");
   });

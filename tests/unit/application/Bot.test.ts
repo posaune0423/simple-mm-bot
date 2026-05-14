@@ -2304,6 +2304,10 @@ describe("Bot", () => {
       expect(logs.messages).toContain("[application] Bot | MARKET_FEED_CONNECTED |");
       expect(logs.messages).toContain("[application] Bot | TICK | tick=1 riskState=OK");
       expect(logs.messages).toContain("[application] Bot | STOPPING | reason=max_ticks tick=1");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CANCEL_ALL_STARTED |");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CANCEL_ALL_COMPLETE |");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CLOSE_POSITION_STARTED |");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CLOSE_POSITION_COMPLETE |");
       expect(logs.messages).toContain("[application] Bot | CLEANUP_COMPLETE | quotedCount=2");
     } finally {
       logs.restore();

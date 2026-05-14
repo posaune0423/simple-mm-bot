@@ -373,6 +373,7 @@ export class Bot {
     this.running = false;
     logger.info("[application] Bot | CLEANUP_STARTED |");
     await this.orderGateway.stopBackgroundSync?.();
+    logger.info("[application] Bot | CLEANUP_CANCEL_ALL_STARTED |");
     await this.orderGateway
       .cancelAll()
       .catch((err) =>
@@ -380,15 +381,24 @@ export class Bot {
           `[application] Bot | CLEANUP_CANCEL_ALL_FAILED | error=${stringifyError(err)}`,
         ),
       );
+    logger.info("[application] Bot | CLEANUP_CANCEL_ALL_COMPLETE |");
     await this.syncCleanupFills("after_cancel_all");
     if (this.shouldClosePositionOnCleanup()) {
+      logger.info("[application] Bot | CLEANUP_CLOSE_POSITION_STARTED |");
       await this.useCases.closePosition.execute().catch((err) => {
         closePositionError = err;
         logger.error(
           `[application] Bot | CLEANUP_CLOSE_POSITION_FAILED | error=${stringifyError(err)}`,
         );
       });
+      if (closePositionError === undefined) {
+        logger.info("[application] Bot | CLEANUP_CLOSE_POSITION_COMPLETE |");
+      }
       await this.syncCleanupFills("after_close_position");
+    } else {
+      logger.info(
+        `[application] Bot | CLEANUP_CLOSE_POSITION_SKIPPED | policy=${this.options.closePositionPolicy} emergencyStop=${this.emergencyStopRequested}`,
+      );
     }
     await this.marketFeed.disconnect();
     this.marketFeedConnected = false;
