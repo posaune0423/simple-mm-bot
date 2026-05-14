@@ -23,13 +23,13 @@ describe("ConfigLoader", () => {
   test("loads quote sizing from committed config", async () => {
     const config = await ConfigLoader.load({ configPath: DEFAULT_BULK_BETA_CONFIG_PATH });
 
-    expect(config.quoteEngine.sizing.positionSize).toBe(1);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(45_000);
+    expect(config.quoteEngine.sizing.positionSize).toBe(0.02);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(1_000);
     expect(config.risk.maxBookAgeMs).toBe(2500);
     expect(config.risk.maxTickerAgeMs).toBe(2500);
   });
 
-  test("loads committed Bulk beta config tuned to deploy the daily mock balance", async () => {
+  test("loads committed Bulk beta config tuned for the tight-spread canary", async () => {
     const rawConfig = parseYaml(await Bun.file(DEFAULT_BULK_BETA_CONFIG_PATH).text()) as {
       mode?: string;
     };
@@ -55,12 +55,11 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.defaultTimeInForce).toBe("ALO");
     expect(config.quoteEngine.markWeight).toBe(0.25);
     expect(config.quoteEngine.bookPriceSource).toBe("micro");
-    expect(config.quoteEngine.minSpreadBps).toBe(4);
-    expect(config.quoteEngine.sizing.budgetUsd).toBe(45_000);
+    expect(config.quoteEngine.minSpreadBps).toBe(1.6);
+    expect(config.quoteEngine.sizing.budgetUsd).toBe(1_000);
     expect(config.quoteEngine.levels).toEqual([
-      { halfSpreadBps: 4, sizeUsd: 15_000 },
-      { halfSpreadBps: 6.4, sizeUsd: 15_000 },
-      { halfSpreadBps: 9.6, sizeUsd: 15_000 },
+      { halfSpreadBps: 0.8, sizeUsd: 500 },
+      { halfSpreadBps: 1.8, sizeUsd: 500 },
     ]);
     expect(config.quoteEngine.strategy).toEqual({
       type: "avellaneda-stoikov",
@@ -73,26 +72,26 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.qualityGate).toEqual({
       enabled: true,
       minAverageMarkoutBps: 0,
-      minSamples: 20,
-      lookbackFills: 100,
-      maxFillAgeMs: 900_000,
+      minSamples: 8,
+      lookbackFills: 40,
+      maxFillAgeMs: 600_000,
       horizonsSec: [5, 30, 300],
     });
-    expect(config.quoteEngine.inventoryScale).toBe(0.22);
-    expect(config.quoteEngine.sizing.positionSize).toBe(1);
+    expect(config.quoteEngine.inventoryScale).toBe(0.025);
+    expect(config.quoteEngine.sizing.positionSize).toBe(0.02);
     expect(config.quoteEngine.sizing.bidSizeMultiplier).toBeUndefined();
-    expect(config.quoteEngine.sizing.askSizeMultiplier).toBe(0.45);
-    expect(config.quoteEngine.sizing.bidDistanceMultiplier).toBe(1.25);
-    expect(config.quoteEngine.sizing.askDistanceMultiplier).toBeUndefined();
-    expect(config.risk.maxPositionQty).toBe(1.25);
-    expect(config.risk.reduceTargetQty).toBe(0.25);
-    expect(config.risk.reduceTriggerQty).toBe(1.05);
-    expect(config.risk.maxUnrealizedLossUsd).toBe(650);
-    expect(config.risk.maxAdverseMoveBps).toBe(220);
+    expect(config.quoteEngine.sizing.askSizeMultiplier).toBe(1);
+    expect(config.quoteEngine.sizing.bidDistanceMultiplier).toBe(1.2);
+    expect(config.quoteEngine.sizing.askDistanceMultiplier).toBe(0.9);
+    expect(config.risk.maxPositionQty).toBe(0.025);
+    expect(config.risk.reduceTargetQty).toBe(0.003);
+    expect(config.risk.reduceTriggerQty).toBe(0.012);
+    expect(config.risk.maxUnrealizedLossUsd).toBe(15);
+    expect(config.risk.maxAdverseMoveBps).toBe(35);
     expect(config.risk.maxBookAgeMs).toBe(2500);
     expect(config.risk.maxTickerAgeMs).toBe(2500);
     expect(config.bot.intervalMs).toBe(150);
-    expect(config.bot.maxRestingMs).toBe(3_000);
+    expect(config.bot.maxRestingMs).toBe(700);
     expect(config.shutdown.closePositionPolicy).toBe("always");
   });
 
@@ -110,10 +109,10 @@ describe("ConfigLoader", () => {
         throw new Error("Expected bulk config");
       }
       expect(config.connections.bulk.environment).toBe("beta");
-      expect(config.quoteEngine.sizing.budgetUsd).toBe(45_000);
+      expect(config.quoteEngine.sizing.budgetUsd).toBe(1_000);
       expect(config.quoteEngine.bookPriceSource).toBe("micro");
       expect(config.quoteEngine.strategy.type).toBe("avellaneda-stoikov");
-      expect(config.quoteEngine.levels).toHaveLength(3);
+      expect(config.quoteEngine.levels).toHaveLength(2);
     } finally {
       if (previousMode === undefined) {
         delete Bun.env.MODE;

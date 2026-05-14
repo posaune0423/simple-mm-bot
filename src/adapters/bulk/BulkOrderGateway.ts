@@ -239,6 +239,7 @@ export class BulkOrderGateway implements IOrderGateway {
   private pollInFlight: Promise<void> | null = null;
   private leverageChecked = false;
   private fillTimer: Timer | null = null;
+  private readonly submittedOrderIds = new Set<string>();
 
   constructor(
     private readonly client: BulkOrderGatewayClient,
@@ -320,6 +321,7 @@ export class BulkOrderGateway implements IOrderGateway {
     if (status === "rejected") {
       logger.warn(reason === undefined ? resultMessage : `${resultMessage} reason=${reason}`);
     } else {
+      this.submittedOrderIds.add(orderId);
       logger.info(resultMessage);
     }
     await this.publishOrderEvent({
@@ -587,20 +589,29 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async pollFillsOnce(): Promise<void> {
+    const observedAtMs = Date.now();
     const fills = await this.client.account.fills(this.params.accountId);
     logger.debug(
       `[adapter] BulkOrderGateway | FILLS_POLLED | market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
     );
     for (const fill of fills) {
-      const normalized = this.normalizeFill(fill);
+      let normalized = this.normalizeFill(fill);
       if (normalized === null || this.seenFillIds.has(normalized.id)) {
         continue;
       }
+      const belongsToSubmittedOrder =
+        normalized.quoteId !== undefined && this.submittedOrderIds.has(normalized.quoteId);
       if (
         this.params.ignoreFillsBeforeMs !== undefined &&
         normalized.filledAt < this.params.ignoreFillsBeforeMs
       ) {
-        continue;
+        if (!belongsToSubmittedOrder) {
+          continue;
+        }
+        normalized = {
+          ...normalized,
+          filledAt: Math.max(observedAtMs, this.params.ignoreFillsBeforeMs),
+        };
       }
       if (this.isFillOutsideSeenWindow(normalized)) {
         continue;

@@ -1325,6 +1325,78 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("keeps fills for orders submitted by this gateway even when Bulk timestamps are stale", async () => {
+    const client = {
+      trade: {
+        async placeLimitOrder() {
+          return {
+            status: "ok",
+            response: { data: { statuses: [{ resting: { oid: "current-maker" } }] } },
+          };
+        },
+      },
+      account: {
+        async fills() {
+          return [
+            {
+              maker: "account",
+              taker: "other",
+              orderIdMaker: "historical-maker",
+              orderIdTaker: "historical-taker",
+              isBuy: true,
+              symbol: "ETH-USD",
+              amount: 0.1,
+              price: 100,
+              timestamp: 1_700_000_000_000 * 1_000_000,
+            },
+            {
+              maker: "account",
+              taker: "other",
+              orderIdMaker: "current-maker",
+              orderIdTaker: "current-taker",
+              isBuy: true,
+              symbol: "ETH-USD",
+              amount: 0.2,
+              price: 101,
+              timestamp: 1_700_000_000_000 * 1_000_000,
+            },
+          ];
+        },
+      },
+    };
+    const gateway = new BulkOrderGateway(client, {
+      market: "ETH-USD",
+      accountId: "account",
+      ignoreFillsBeforeMs: 1_700_000_000_500,
+    });
+    const fills: unknown[] = [];
+    gateway.subscribeFills((fill) => {
+      fills.push(fill);
+    });
+
+    await gateway.place({
+      market: "ETH-USD",
+      side: "sell",
+      price: 101,
+      qty: 0.2,
+      reduceOnly: false,
+      timeInForce: "GTC",
+    });
+    const beforePoll = Date.now();
+    await gateway.pollFillsOnce();
+    const afterPoll = Date.now();
+
+    expect(fills).toMatchObject([
+      {
+        quoteId: "current-maker",
+        qty: 0.2,
+      },
+    ]);
+    const currentFill = fills[0] as { filledAt: number };
+    expect(currentFill.filledAt).toBeGreaterThanOrEqual(beforePoll);
+    expect(currentFill.filledAt).toBeLessThanOrEqual(afterPoll);
+  });
+
   test("does not retain ignored historical fill ids in the long-running dedupe cache", async () => {
     const oldTimestamp = 1_700_000_000_000;
     const gateway = new BulkOrderGateway(
