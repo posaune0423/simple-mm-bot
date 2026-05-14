@@ -257,6 +257,55 @@ describe("BulkOrderGateway", () => {
     ]);
   });
 
+  test("submits orders without local normalization when exchangeInfo is empty", async () => {
+    const calls: unknown[] = [];
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            return [];
+          },
+        },
+        trade: {
+          async placeLimitOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ resting: { oid: "limit-1" } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    const placed = await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "ALO",
+    });
+
+    expect(placed).toMatchObject({ id: "limit-1", status: "open" });
+    expect(calls).toEqual([
+      {
+        symbol: "BTC-USD",
+        side: "buy",
+        price: 81_532.123456,
+        size: 0.003066279427,
+        tif: "ALO",
+        reduceOnly: false,
+      },
+    ]);
+  });
+
   test("allows ALO even when exchangeInfo omits it from timeInForces", async () => {
     const calls: unknown[] = [];
     const gateway = new BulkOrderGateway(

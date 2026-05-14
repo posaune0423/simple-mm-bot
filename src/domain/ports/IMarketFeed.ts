@@ -13,6 +13,9 @@ export interface MarketSnapshot extends CandleLike {
   vampPrice?: number;
   orderBookLevels?: ReadonlyArray<OrderBookLevel>;
   markPrice: number;
+  oraclePrice?: number | null;
+  indexPrice?: number | null;
+  fundingRateBps?: number | null;
   timestamp: number;
   bookUpdatedAt?: number;
   tickerUpdatedAt?: number;

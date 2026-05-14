@@ -9,6 +9,8 @@
 
 - Runtime: Bun
 - Language: TypeScript
+- Error handling: `neverthrow` `Result` / `ResultAsync`
+- Pattern matching: `ts-pattern`
 - Validation: Valibot
 - linter / formatter: vite plus
 - ORM / Migration: Drizzle ORM
@@ -21,7 +23,7 @@ bot 本体は Bulk API payload を直接構築せず、`src/adapters/bulk/` と 
 
 ## アーキテクチャ方針
 
-Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
+DDD / Clean Architecture を採用し、core trading runtime の依存方向は内側の domain に向かう。
 metrics fact contract と agent/operator tool logic は core market making domain から分離する。
 
 | 層             | 責務                                                                 | 依存可能先                          |
@@ -31,6 +33,32 @@ metrics fact contract と agent/operator tool logic は core market making domai
 | Adapters       | venue / mode ごとの port 実装                                        | domain ports + venue SDK            |
 | Infrastructure | metrics fact contract、DB client、schema、repository 実装            | domain ports + storage library      |
 | Scripts        | 保存済み metrics facts / views の評価、YAML tuning、issue planning   | domain types + infrastructure types |
+
+設計原則:
+
+- TypeScript の型を先に設計し、domain type、value object、port、use case contract で層間の境界を表現する
+- domain は venue SDK、DB、HTTP、WS、logger、config loader を import しない
+- application は use case orchestration と port 利用に集中し、SDK payload や SQL schema を直接扱わない
+- adapter / infrastructure は外部 payload と domain contract の変換を担当し、外側の都合を内側へ漏らさない
+
+## 型安全なエラー処理と分岐
+
+Expected failure は `neverthrow` の `Result` / `ResultAsync` で表現する。
+
+- value object factory、domain service、strategy、quote model は validation / calculation failure を `Result<T, DomainError>` で返す
+- application use case / service は recoverable な domain failure、order reconciliation failure、position sync failure などを layer-owned error として `Result` で返す
+- adapter / infrastructure は venue rejection、timeout、DB write failure など caller が判断できる failure を typed error に正規化し、可能な範囲で `Result` に載せる
+- startup failure、process boundary の fatal error、invariant violation のように継続不能なものは throw してよい
+- `try/catch` は外部 API / DB / process boundary の変換点に寄せ、business rule の分岐には使わない
+
+閉じた union / state / routing の分岐には `ts-pattern` を使う。
+
+- venue / mode / DB scheme の解決
+- risk state、strategy decision、position side、order side、exposure intent の組み合わせ
+- transient error policy、runtime policy、report period など exhaustive に扱うべき設定分岐
+
+単純な null guard、数値 validation、短い早期 return は通常の `if` を優先する。
+`ts-pattern` を使う場合は `.exhaustive()` で union の追加漏れを型で検出し、該当テストも同じ変更で更新する。
 
 ## ランタイム全体像
 

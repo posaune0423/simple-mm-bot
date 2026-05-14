@@ -24,6 +24,7 @@ interface UseCases {
 type TickResult = "continue" | "stop";
 type RiskTickAction = "quote" | "pause_quoting" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
+type RuntimeDisposable = { start?: () => void; stop: () => void };
 
 interface BotStartOptions {
   maxTicks?: number;
@@ -34,6 +35,7 @@ interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
   eventTaskDrainTimeoutMs?: number;
   positionSyncIntervalMs?: number;
+  runtimeDisposables?: readonly RuntimeDisposable[];
 }
 
 export class Bot {
@@ -44,6 +46,7 @@ export class Bot {
   private eventTasks: Promise<void> = Promise.resolve();
   private pauseQuoteCancelCompleted = false;
   private lastPositionSyncAtMs = 0;
+  private marketFeedConnected = false;
   private readonly unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -69,8 +72,9 @@ export class Bot {
     try {
       await this.metrics?.start(Date.now());
       if (!this.wasStopRequested()) {
-        shouldCleanup = true;
         await this.connectAndSubscribe();
+        shouldCleanup = true;
+        this.startRuntimeDisposables();
         await this.runLoop(startOptions.maxTicks, startOptions.signal);
       }
     } catch (err) {
@@ -84,9 +88,10 @@ export class Bot {
       }
     } finally {
       removeAbortListener();
-      if (shouldCleanup) {
+      if (shouldCleanup || this.marketFeedConnected) {
         closePositionError = await this.cleanup();
       } else {
+        this.stopRuntimeDisposables();
         this.running = false;
       }
       const metricsWithDrain = this.metrics as
@@ -116,6 +121,7 @@ export class Bot {
     this.emergencyStopRequested = false;
     this.pauseQuoteCancelCompleted = false;
     this.lastPositionSyncAtMs = 0;
+    this.marketFeedConnected = false;
     this.eventTasks = Promise.resolve();
     this.unsubscribers.splice(0);
   }
@@ -162,6 +168,7 @@ export class Bot {
 
   private async connectAndSubscribe(): Promise<void> {
     await this.marketFeed.connect();
+    this.marketFeedConnected = true;
     logger.info("[application] Bot | MARKET_FEED_CONNECTED |");
     await this.syncInitialFills();
     await this.useCases.initializePosition?.execute();
@@ -384,6 +391,8 @@ export class Bot {
       await this.syncCleanupFills("after_close_position");
     }
     await this.marketFeed.disconnect();
+    this.marketFeedConnected = false;
+    this.stopRuntimeDisposables();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
       unsubscribe();
     }
@@ -401,6 +410,18 @@ export class Bot {
 
   private shouldClosePositionOnCleanup(): boolean {
     return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
+  }
+
+  private startRuntimeDisposables(): void {
+    for (const disposable of this.options.runtimeDisposables ?? []) {
+      disposable.start?.();
+    }
+  }
+
+  private stopRuntimeDisposables(): void {
+    for (const disposable of this.options.runtimeDisposables ?? []) {
+      disposable.stop();
+    }
   }
 
   private async cancelOpenOrdersForPause(

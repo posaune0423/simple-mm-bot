@@ -58,52 +58,38 @@ export class SimplePmmStrategy implements Strategy {
   }
 
   private buildSideSpecs(quality: readonly SideMarkoutFeedback[]): QuoteSideSpecs {
-    const bid = defaultSideSpec();
-    const ask = defaultSideSpec();
-    const gate = this.config.markoutFeedbackGate;
-    if (gate === undefined || !gate.enabled) {
-      return { bid, ask };
-    }
-
-    for (const sideQuality of quality) {
-      const reasonTags = this.qualityFailureReasons(sideQuality, gate);
-      if (reasonTags.length === 0) {
-        continue;
-      }
-      if (sideQuality.side === "buy") {
-        bid.disableIncreaseExposure = true;
-        bid.reasonTags = [...reasonTags];
-      } else {
-        ask.disableIncreaseExposure = true;
-        ask.reasonTags = [...reasonTags];
-      }
-    }
-    return { bid, ask };
-  }
-
-  private qualityFailureReasons(
-    sideQuality: SideMarkoutFeedback,
-    gate: MarkoutFeedbackGateConfig,
-  ): readonly string[] {
-    return gate.horizonsSec.flatMap((horizonSec) => {
-      const horizon = sideQuality.horizons.find((entry) => entry.horizonSec === horizonSec);
-      if (
-        horizon === undefined ||
-        horizon.averageMarkoutBps === null ||
-        horizon.sampleCount < gate.minSamples ||
-        horizon.averageMarkoutBps >= gate.minAverageMarkoutBps
-      ) {
-        return [];
-      }
-      return [
-        `quality_gate:${sideQuality.side}:${horizonSec}s_markout_below_${gate.minAverageMarkoutBps}bps`,
-      ];
-    });
+    return buildQualityGatedSideSpecs(quality, this.config.markoutFeedbackGate);
   }
 
   private quoteEngineError(error: QuoteEngineError): StrategyError {
     return new StrategyQuoteFailedError(this.name, error.message, { cause: error });
   }
+}
+
+export function buildQualityGatedSideSpecs(
+  quality: readonly SideMarkoutFeedback[],
+  gate: MarkoutFeedbackGateConfig | undefined,
+): QuoteSideSpecs {
+  const bid = defaultSideSpec();
+  const ask = defaultSideSpec();
+  if (gate === undefined || !gate.enabled) {
+    return { bid, ask };
+  }
+
+  for (const sideQuality of quality) {
+    const reasonTags = qualityFailureReasons(sideQuality, gate);
+    if (reasonTags.length === 0) {
+      continue;
+    }
+    if (sideQuality.side === "buy") {
+      bid.disableIncreaseExposure = true;
+      bid.reasonTags = [...reasonTags];
+    } else {
+      ask.disableIncreaseExposure = true;
+      ask.reasonTags = [...reasonTags];
+    }
+  }
+  return { bid, ask };
 }
 
 function defaultSideSpec() {
@@ -114,4 +100,24 @@ function defaultSideSpec() {
     disableIncreaseExposure: false,
     reasonTags: [] as string[],
   };
+}
+
+function qualityFailureReasons(
+  sideQuality: SideMarkoutFeedback,
+  gate: MarkoutFeedbackGateConfig,
+): readonly string[] {
+  return gate.horizonsSec.flatMap((horizonSec) => {
+    const horizon = sideQuality.horizons.find((entry) => entry.horizonSec === horizonSec);
+    if (
+      horizon === undefined ||
+      horizon.averageMarkoutBps === null ||
+      horizon.sampleCount < gate.minSamples ||
+      horizon.averageMarkoutBps >= gate.minAverageMarkoutBps
+    ) {
+      return [];
+    }
+    return [
+      `quality_gate:${sideQuality.side}:${horizonSec}s_markout_below_${gate.minAverageMarkoutBps}bps`,
+    ];
+  });
 }

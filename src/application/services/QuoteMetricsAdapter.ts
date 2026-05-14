@@ -23,6 +23,12 @@ export function toLegacyQuoteForMetrics(quote: Quote, policy: OrderTimeInForce):
     policy,
     fairPrice: quote.fairPrice,
     sigma: quote.sigma,
+    alphaDriftBps: quote.diagnostics.alphaDriftBps,
+    fundingRateBps: quote.diagnostics.fundingRateBps,
+    expectedFundingBps: quote.diagnostics.expectedFundingBps,
+    basisBps: quote.diagnostics.basisBps,
+    targetInventoryQty: quote.diagnostics.targetInventoryQty,
+    inventoryErrorQty: quote.diagnostics.inventoryErrorQty,
   };
 }
 

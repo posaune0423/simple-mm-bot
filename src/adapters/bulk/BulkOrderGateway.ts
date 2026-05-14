@@ -389,6 +389,12 @@ export class BulkOrderGateway implements IOrderGateway {
       return null;
     }
     const markets = await this.client.market.exchangeInfo();
+    if (markets.length === 0) {
+      logger.warn(
+        `[adapter] BulkOrderGateway | MARKET_RULES_UNAVAILABLE | market=${this.params.market} reason=empty_exchange_info`,
+      );
+      return null;
+    }
     const market = markets.find((entry) => entry.symbol === this.params.market);
     if (market === undefined) {
       throw new Error(`Bulk exchangeInfo does not include market=${this.params.market}`);

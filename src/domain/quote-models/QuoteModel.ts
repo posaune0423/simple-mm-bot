@@ -16,14 +16,29 @@ export type QuoteModelInput = Readonly<{
   inventoryScale: number;
   timeHorizonSec: number;
   minSpreadBps?: BasisPoints;
+  signals?: QuoteModelSignals;
 }>;
 
-type ModelQuoteDiagnostics = Readonly<{
+export type QuoteModelSignals = Readonly<{
+  alphaDriftBps?: number | null;
+  fundingRateBps?: number | null;
+  expectedFundingBps?: number | null;
+  basisBps?: number | null;
+  targetInventoryQty?: number | null;
+}>;
+
+export type ModelQuoteDiagnostics = Readonly<{
   modelName: string;
   volatilitySigma: number;
   inventorySkew?: number;
   gamma?: number;
   kappa?: number;
+  alphaDriftBps?: number;
+  fundingRateBps?: number;
+  expectedFundingBps?: number;
+  basisBps?: number;
+  targetInventoryQty?: number;
+  inventoryErrorQty?: number;
 }>;
 
 export type ModelQuote = Readonly<{

@@ -6,6 +6,12 @@ import type { QuoteLeg } from "./QuoteLeg";
 type QuoteDiagnostics = Readonly<{
   quoteModel: string;
   reasonTags: readonly string[];
+  alphaDriftBps?: number;
+  fundingRateBps?: number;
+  expectedFundingBps?: number;
+  basisBps?: number;
+  targetInventoryQty?: number;
+  inventoryErrorQty?: number;
 }>;
 
 export type Quote = Readonly<{

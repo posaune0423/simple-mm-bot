@@ -402,6 +402,12 @@ class BufferedMetricsRecorder {
         askSize: quote.askSize,
         levels: quote.levels,
         policy: quote.policy,
+        alphaDriftBps: quote.alphaDriftBps,
+        fundingRateBps: quote.fundingRateBps,
+        expectedFundingBps: quote.expectedFundingBps,
+        basisBps: quote.basisBps,
+        targetInventoryQty: quote.targetInventoryQty,
+        inventoryErrorQty: quote.inventoryErrorQty,
         quotedSpreadBps: distanceBps(quote.ask, quote.bid),
         bidDistanceBps: distanceBps(quote.fairPrice, quote.bid),
         askDistanceBps: distanceBps(quote.ask, quote.fairPrice),
@@ -815,7 +821,7 @@ function quoteDecisionFacts(input: {
       price: level.bid,
       quantity: level.bidSize,
       controlReasons: level.bidControlReasons ?? [],
-      rawJson: { halfSpreadBps: "halfSpreadBps" in level ? level.halfSpreadBps : undefined },
+      rawJson: quoteSignalDiagnostics(input.quote, halfSpreadBpsOrUndefined(level)),
     },
     {
       ...base,
@@ -826,9 +832,31 @@ function quoteDecisionFacts(input: {
       price: level.ask,
       quantity: level.askSize,
       controlReasons: level.askControlReasons ?? [],
-      rawJson: { halfSpreadBps: "halfSpreadBps" in level ? level.halfSpreadBps : undefined },
+      rawJson: quoteSignalDiagnostics(input.quote, halfSpreadBpsOrUndefined(level)),
     },
   ]);
+}
+
+function quoteSignalDiagnostics(
+  quote: Quote,
+  halfSpreadBps: number | undefined,
+): Record<string, number | undefined> {
+  return {
+    halfSpreadBps,
+    alphaDriftBps: quote.alphaDriftBps,
+    fundingRateBps: quote.fundingRateBps,
+    expectedFundingBps: quote.expectedFundingBps,
+    basisBps: quote.basisBps,
+    targetInventoryQty: quote.targetInventoryQty,
+    inventoryErrorQty: quote.inventoryErrorQty,
+  };
+}
+
+function halfSpreadBpsOrUndefined(level: unknown): number | undefined {
+  if (level !== null && typeof level === "object" && "halfSpreadBps" in level) {
+    return level.halfSpreadBps as number | undefined;
+  }
+  return undefined;
 }
 
 function quoteDecisionIntent(intent: ExposureIntent | undefined): "quote" | "reduce" | "disabled" {

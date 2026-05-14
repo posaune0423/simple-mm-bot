@@ -105,6 +105,36 @@ describe("QuoteEngine", () => {
     expect(quote.bids).toHaveLength(0);
     expect(Number(quote.asks[0]?.size)).toBeCloseTo(0.95);
   });
+
+  test("passes model signals through to QuoteModel", () => {
+    let receivedAlpha: number | undefined;
+    const model: QuoteModel = {
+      name: "signal_test_model",
+      compute(input) {
+        receivedAlpha = input.signals?.alphaDriftBps ?? undefined;
+        return fixedModel().compute(input);
+      },
+    };
+    const engine = new QuoteEngine(model, new FairPriceCalculator(1), new VolatilityEstimator(), {
+      inventoryScale: 1,
+      timeHorizonSec: 1,
+      minSpreadBps: 2,
+      positionSize: 1,
+    });
+
+    const result = engine.compute({
+      snapshot: snapshot(),
+      position: position(0),
+      sideSpecs: {
+        bid: sideSpec(),
+        ask: sideSpec(),
+      },
+      modelSignals: { alphaDriftBps: 1.5 },
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(receivedAlpha).toBe(1.5);
+  });
 });
 
 function createEngine(): QuoteEngine {

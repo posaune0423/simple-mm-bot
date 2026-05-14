@@ -4,7 +4,7 @@ import {
   QuoteModelFailedError,
   type QuoteEngineError,
 } from "../errors/DomainError.ts";
-import type { QuoteModel } from "../quote-models/QuoteModel.ts";
+import type { QuoteModel, QuoteModelSignals } from "../quote-models/QuoteModel.ts";
 import type { MarketSnapshot } from "../ports/IMarketFeed.ts";
 import type { ExposureIntent, OrderSide, QuoteSide } from "../value-objects/QuoteLeg.ts";
 import { QuoteLeg } from "../value-objects/QuoteLeg.ts";
@@ -33,6 +33,7 @@ export type QuoteEngineInput = Readonly<{
   snapshot: MarketSnapshot;
   position: PositionSnapshot;
   sideSpecs: QuoteSideSpecs;
+  modelSignals?: QuoteModelSignals;
 }>;
 
 type QuoteEngineConfig = Readonly<{
@@ -115,6 +116,7 @@ export class QuoteEngine {
       inventoryScale: this.config.inventoryScale,
       timeHorizonSec: this.config.timeHorizonSec,
       minSpreadBps,
+      signals: input.modelSignals,
     });
     if (modelQuote.isErr()) {
       return err(new QuoteModelFailedError(this.quoteModel.name, modelQuote.error));
@@ -181,6 +183,12 @@ export class QuoteEngine {
       diagnostics: {
         quoteModel: modelQuote.value.diagnostics.modelName,
         reasonTags: [...collectReasonTags(bids), ...collectReasonTags(asks)],
+        alphaDriftBps: modelQuote.value.diagnostics.alphaDriftBps,
+        fundingRateBps: modelQuote.value.diagnostics.fundingRateBps,
+        expectedFundingBps: modelQuote.value.diagnostics.expectedFundingBps,
+        basisBps: modelQuote.value.diagnostics.basisBps,
+        targetInventoryQty: modelQuote.value.diagnostics.targetInventoryQty,
+        inventoryErrorQty: modelQuote.value.diagnostics.inventoryErrorQty,
       },
     });
   }

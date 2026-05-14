@@ -249,6 +249,70 @@ describe("Bot", () => {
     expect(calls).toEqual([]);
   });
 
+  test("does not run destructive cleanup when market feed connect fails", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+          throw new Error("connect failed");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          throw new Error("should not read snapshot");
+        },
+        subscribe() {
+          calls.push("subscribe");
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          calls.push("subscribeFills");
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    await bot.start(1).then(
+      () => {
+        throw new Error("Expected connect failure");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("connect failed");
+      },
+    );
+
+    expect(calls).toEqual(["connect"]);
+  });
+
   test("does not build or persist a legacy report after a successful run", async () => {
     const bot = new Bot(
       {

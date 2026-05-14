@@ -17,7 +17,9 @@ import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
 import type { IMarkoutFeedbackRepository } from "../domain/ports/IMarkoutFeedbackRepository.ts";
 import type { CapitalMode, IMetricsRepository } from "../domain/ports/IMetricsRepository.ts";
+import type { AlphaDriftProvider } from "../domain/ports/IAlphaDriftProvider.ts";
 import { getGitMetadata } from "../infrastructure/GitMetadata.ts";
+import { createAlloraPredictionCache } from "../infrastructure/allora/AlloraPredictionCache.ts";
 import { VolatilityEstimator } from "../domain/services/VolatilityEstimator.ts";
 import { InMemoryPositionRepository } from "../infrastructure/InMemoryPositionRepository.ts";
 import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
@@ -57,6 +59,8 @@ interface ResolvedAdapters {
   gateway: IOrderGateway;
 }
 
+type RuntimeDisposable = { start?: () => void; stop: () => void };
+
 export class DIContainer {
   constructor(private readonly config: LoadedAppConfig) {}
 
@@ -65,11 +69,9 @@ export class DIContainer {
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
     const quoteEngine = this.buildQuoteEngine();
-    const strategy = buildStrategy({
-      kind: "simple_pmm",
-      quoteEngine,
-      markoutFeedbackGate: this.config.quoteEngine.qualityGate,
-    });
+    const runtimeDisposables: RuntimeDisposable[] = [];
+    const alphaProvider = this.buildAlphaProvider(feed, runtimeDisposables);
+    const strategy = this.buildStrategy(quoteEngine, alphaProvider);
     const metricsBuffer = this.buildMetricsBuffer();
     const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
     const orderReconciler = new OrderReconciler(gateway, this.orderReconcilerOptions());
@@ -127,7 +129,10 @@ export class DIContainer {
       gateway,
       this.config.bot.intervalMs,
       metrics,
-      { closePositionPolicy: this.config.shutdown.closePositionPolicy },
+      {
+        closePositionPolicy: this.config.shutdown.closePositionPolicy,
+        runtimeDisposables,
+      },
     );
   }
 
@@ -156,6 +161,71 @@ export class DIContainer {
         levels: this.config.quoteEngine.levels,
       },
     );
+  }
+
+  private buildStrategy(
+    quoteEngine: Pick<QuoteEngine, "compute">,
+    alphaProvider?: AlphaDriftProvider,
+  ) {
+    const { strategy } = this.config.quoteEngine;
+    if (strategy.type === "funding-aware") {
+      return buildStrategy({
+        kind: "funding_aware_pmm",
+        quoteEngine,
+        markoutFeedbackGate: this.config.quoteEngine.qualityGate,
+        fundingAware: {
+          alpha: {
+            enabled: strategy.params.alpha.enabled,
+            source: strategy.params.alpha.source,
+          },
+          targetInventory: strategy.params.targetInventory,
+          funding: {
+            rateHorizonSec: strategy.params.funding.rateHorizonSec,
+            holdingHorizonSec: strategy.params.funding.holdingHorizonSec,
+          },
+        },
+        alphaProvider,
+      });
+    }
+
+    return buildStrategy({
+      kind: "simple_pmm",
+      quoteEngine,
+      markoutFeedbackGate: this.config.quoteEngine.qualityGate,
+    });
+  }
+
+  private buildAlphaProvider(
+    feed: IMarketFeed,
+    runtimeDisposables: RuntimeDisposable[],
+  ): AlphaDriftProvider | undefined {
+    const { strategy } = this.config.quoteEngine;
+    if (
+      strategy.type !== "funding-aware" ||
+      !strategy.params.alpha.enabled ||
+      strategy.params.alpha.source !== "allora"
+    ) {
+      return undefined;
+    }
+
+    const cache = createAlloraPredictionCache({
+      apiKey: env.ALLORA_API_KEY,
+      chainSlug: strategy.params.alpha.chainSlug,
+      fairPrice: async () => (await feed.getSnapshot()).markPrice,
+      config: {
+        asset: strategy.params.alpha.asset,
+        timeframe: strategy.params.alpha.timeframe,
+        pollIntervalMs: strategy.params.alpha.pollIntervalMs,
+        staleMs: strategy.params.alpha.staleMs,
+        calibrationWeight: strategy.params.alpha.calibrationWeight,
+        minAlphaDriftBps: strategy.params.alpha.minAlphaDriftBps,
+        maxAlphaDriftBps: strategy.params.alpha.maxAlphaDriftBps,
+        maxRawDriftBps: strategy.params.alpha.maxRawDriftBps,
+        maxCiWidthBps: strategy.params.alpha.maxCiWidthBps,
+      },
+    });
+    runtimeDisposables.push(cache);
+    return cache;
   }
 
   private createRepositories(): Repositories {

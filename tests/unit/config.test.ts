@@ -16,6 +16,7 @@ describe("ConfigLoader", () => {
     const envExample = await Bun.file(".env.example").text();
 
     expect(envExample).toContain(`DATABASE_URL=${DEFAULT_DATABASE_URL}`);
+    expect(envExample).toContain("ALLORA_API_KEY=");
     expect(envExample).not.toContain("DB_PATH=");
   });
 
@@ -130,6 +131,39 @@ describe("ConfigLoader", () => {
     expect(config.bot.maxRestingMs).toBe(900);
     expect(config.bot.exchangeOpenOrderSyncIntervalMs).toBe(1_500);
     expect(config.shutdown.closePositionPolicy).toBe("emergency_only");
+  });
+
+  test("loads committed funding-aware Bulk presets", async () => {
+    const baseline = await ConfigLoader.load({ configPath: "config/bulk/beta-pmm.yml" });
+    const fundingAware = await ConfigLoader.load({
+      configPath: "config/bulk/beta-funding-aware.yml",
+    });
+    const fundingAwareAllora = await ConfigLoader.load({
+      configPath: "config/bulk/beta-funding-aware-allora.yml",
+    });
+
+    expect(baseline.quoteEngine.strategy.type).toBe("avellaneda-stoikov");
+    expect(fundingAware.quoteEngine.strategy.type).toBe("funding-aware");
+    expect(fundingAwareAllora.quoteEngine.strategy.type).toBe("funding-aware");
+    if (fundingAware.quoteEngine.strategy.type !== "funding-aware") {
+      throw new Error("Expected funding-aware config");
+    }
+    if (fundingAwareAllora.quoteEngine.strategy.type !== "funding-aware") {
+      throw new Error("Expected funding-aware Allora config");
+    }
+    expect(fundingAware.quoteEngine.strategy.params.alpha).toMatchObject({
+      enabled: false,
+      source: "none",
+    });
+    expect(fundingAwareAllora.quoteEngine.strategy.params.alpha).toMatchObject({
+      enabled: true,
+      source: "allora",
+    });
+    expect(fundingAware.quoteEngine.strategy.params.funding).toMatchObject({
+      rateHorizonSec: 3600,
+      holdingHorizonSec: 300,
+      spreadWideningBpsPerAbsFundingBps: 0.1,
+    });
   });
 
   test("resolves configs by venue and preset when CONFIG_PATH is not set", async () => {

@@ -171,6 +171,37 @@ describe("refactor architecture boundaries", () => {
     }
   });
 
+  test("funding-aware domain stays SDK-free and uses value-object quote boundaries", () => {
+    const fundingModel = readFileSync(
+      join(root, "src/domain/quote-models/FundingAwareQuoteModel.ts"),
+      "utf8",
+    );
+    const fundingStrategy = readFileSync(
+      join(root, "src/domain/strategies/FundingAwarePmmStrategy.ts"),
+      "utf8",
+    );
+    const alloraCache = readFileSync(
+      join(root, "src/infrastructure/allora/AlloraPredictionCache.ts"),
+      "utf8",
+    );
+
+    for (const [file, source] of [
+      ["FundingAwareQuoteModel.ts", fundingModel],
+      ["FundingAwarePmmStrategy.ts", fundingStrategy],
+    ] as const) {
+      expect(source, file).not.toContain("@alloralabs/allora-sdk");
+      expect(source, file).not.toContain("AlloraAPIClient");
+      expect(source, file).not.toContain("src/infrastructure");
+      expect(source, file).not.toContain("../../infrastructure");
+    }
+
+    expect(fundingModel).toContain("Price.unsafe");
+    expect(fundingModel).toContain("BasisPoints.unsafe");
+    expect(fundingModel).toContain("ModelQuote.create");
+    expect(fundingStrategy).toContain("AlphaDriftProvider");
+    expect(alloraCache).toContain("@alloralabs/allora-sdk");
+  });
+
   test("error classes are defined at their owning layer boundaries", () => {
     expect(existsSync(join(root, "src/utils/cliError.ts"))).toBe(false);
     expect(existsSync(join(root, "src/application/errors/ApplicationError.ts"))).toBe(true);
