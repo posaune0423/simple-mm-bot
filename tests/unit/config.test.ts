@@ -52,6 +52,7 @@ describe("ConfigLoader", () => {
     expect("marketRestRefreshAfterMs" in config.connections.bulk).toBe(false);
     expect("marketStaleRefreshIntervalMs" in config.connections.bulk).toBe(false);
     expect(config.connections.bulk.marketWsReconnectAfterMs).toBe(5_000);
+    expect(config.connections.bulk.fillPollIntervalMs).toBe(2_000);
     expect(config.quoteEngine.defaultTimeInForce).toBe("ALO");
     expect(config.quoteEngine.markWeight).toBe(0.25);
     expect(config.quoteEngine.bookPriceSource).toBe("micro");

@@ -66,6 +66,12 @@ export class InvalidQuoteError extends DomainError {
   }
 }
 
+export class EmptyQuoteError extends InvalidQuoteError {
+  constructor(options: { cause?: unknown } = {}) {
+    super("quote must contain at least one bid or ask leg", options);
+  }
+}
+
 export class InvalidPositionError extends DomainError {
   readonly code = "domain.invalid_position";
 

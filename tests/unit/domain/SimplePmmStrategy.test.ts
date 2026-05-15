@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "neverthrow";
 
-import { InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
+import { EmptyQuoteError, InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
 import { StrategyDecision } from "../../../src/domain/strategies/Strategy.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
@@ -51,7 +51,13 @@ class StubQuoteEngine {
 
 class EmptyQuoteEngine {
   compute() {
-    return err(new InvalidQuoteError("quote must contain at least one bid or ask leg"));
+    return err(new EmptyQuoteError());
+  }
+}
+
+class InvalidQuoteEngine {
+  compute() {
+    return err(new InvalidQuoteError("crossed quote: bid=101, ask=100"));
   }
 }
 
@@ -111,6 +117,20 @@ describe("SimplePmmStrategy", () => {
           cancelExisting && reasonTags.includes("empty_quote"),
       }),
     ).toBe(true);
+  });
+
+  test("keeps non-empty invalid quote errors as strategy failures", () => {
+    const strategy = new SimplePmmStrategy(new InvalidQuoteEngine() as never);
+
+    const result = strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [],
+      nowMs: 1,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().cause).toBeInstanceOf(InvalidQuoteError);
   });
 
   test("failed buy quality disables bid increase exposure in QuoteEngineInput", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "neverthrow";
 
-import { InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
+import { EmptyQuoteError, InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
 import type { QuoteEngineInput } from "../../../src/domain/services/QuoteEngine.ts";
 import { FundingAwarePmmStrategy } from "../../../src/domain/strategies/FundingAwarePmmStrategy.ts";
 import { StrategyDecision } from "../../../src/domain/strategies/Strategy.ts";
@@ -53,7 +53,13 @@ class StubQuoteEngine {
 
 class EmptyQuoteEngine {
   compute() {
-    return err(new InvalidQuoteError("quote must contain at least one bid or ask leg"));
+    return err(new EmptyQuoteError());
+  }
+}
+
+class InvalidQuoteEngine {
+  compute() {
+    return err(new InvalidQuoteError("crossed quote: bid=101, ask=100"));
   }
 }
 
@@ -130,6 +136,20 @@ describe("FundingAwarePmmStrategy", () => {
           cancelExisting && reasonTags.includes("empty_quote"),
       }),
     ).toBe(true);
+  });
+
+  test("keeps non-empty invalid quote errors as strategy failures", () => {
+    const strategy = new FundingAwarePmmStrategy(new InvalidQuoteEngine() as never, config());
+
+    const result = strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [],
+      nowMs: 1,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().cause).toBeInstanceOf(InvalidQuoteError);
   });
 
   test("preserves markout quality gate behavior and reason tags", () => {

@@ -25,6 +25,9 @@ connections:
     # Reconnect when quote-critical WS streams stop delivering messages.
     # Book state is seeded from REST and then maintained from l2Snapshot.
     marketWsReconnectAfterMs: 5000
+    # Bulk account fills are still polled until the account WS path is wired.
+    # Keep this conservative because Bulk does not publish account.fills limits.
+    fillPollIntervalMs: 2000
 
 quoteEngine:
   markWeight: 0.25

@@ -393,7 +393,7 @@ export class DIContainer {
                 market: config.market,
                 accountId,
                 maxLeverage: bulk.maxLeverage,
-                pollIntervalMs: 250,
+                pollIntervalMs: bulk.fillPollIntervalMs,
                 ignoreFillsBeforeMs: Date.now(),
               }),
             };

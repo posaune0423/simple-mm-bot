@@ -29,6 +29,7 @@ function config(
         market: "ETH-USD",
         environment: "beta",
         maxLeverage: 5,
+        fillPollIntervalMs: 2_000,
         privateKey: mode === "live" ? "11111111111111111111111111111111" : undefined,
       },
     },
@@ -147,7 +148,7 @@ describe("DIContainer Bulk venue", () => {
     ).toBe(5);
     expect(
       (internals.orderGateway as { params: { pollIntervalMs?: number } }).params.pollIntervalMs,
-    ).toBe(250);
+    ).toBe(2_000);
     await (internals.orderGateway as BulkOrderGateway).dispose();
   });
 

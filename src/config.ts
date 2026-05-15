@@ -228,6 +228,7 @@ const appConfigSchema = v.variant("venue", [
         timeoutMs: v.optional(positiveIntegerSchema),
         maxLeverage: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(50))),
         marketWsReconnectAfterMs: v.optional(positiveIntegerSchema),
+        fillPollIntervalMs: v.optional(positiveIntegerSchema, 2_000),
         privateKey: v.optional(v.string()),
       }),
     }),
