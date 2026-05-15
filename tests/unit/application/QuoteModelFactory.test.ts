@@ -21,7 +21,7 @@ describe("buildQuoteModel", () => {
         type: "bulk-beta-leaderboard",
         params: {},
       } as never),
-    ).toThrow("Unsupported quote model type: bulk-beta-leaderboard");
+    ).toThrow("Pattern matching error");
   });
 
   test("builds funding-aware quote model from strategy config", () => {

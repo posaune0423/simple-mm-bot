@@ -91,7 +91,7 @@ export class Bot {
       if (shouldCleanup || this.marketFeedConnected) {
         closePositionError = await this.cleanup();
       } else {
-        this.stopRuntimeDisposables();
+        closePositionError = this.stopRuntimeDisposables();
         this.running = false;
       }
       const metricsWithDrain = this.metrics as
@@ -402,7 +402,7 @@ export class Bot {
     }
     await this.marketFeed.disconnect();
     this.marketFeedConnected = false;
-    this.stopRuntimeDisposables();
+    closePositionError ??= this.stopRuntimeDisposables();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
       unsubscribe();
     }
@@ -428,10 +428,19 @@ export class Bot {
     }
   }
 
-  private stopRuntimeDisposables(): void {
+  private stopRuntimeDisposables(): unknown {
+    let firstError: unknown;
     for (const disposable of this.options.runtimeDisposables ?? []) {
-      disposable.stop();
+      try {
+        disposable.stop();
+      } catch (error) {
+        firstError ??= error;
+        logger.error(
+          `[application] Bot | RUNTIME_DISPOSABLE_STOP_FAILED | error=${stringifyError(error)}`,
+        );
+      }
     }
+    return firstError;
   }
 
   private async cancelOpenOrdersForPause(

@@ -29,6 +29,7 @@ const quoteSizingSchema = v.object({
   askSizeMultiplier: v.optional(nonNegativeNumberSchema),
   bidDistanceMultiplier: v.optional(positiveNumberSchema),
   askDistanceMultiplier: v.optional(positiveNumberSchema),
+  reduceQuoteMinPositionQty: v.optional(nonNegativeNumberSchema),
 });
 const quoteLevelSchema = v.object({
   halfSpreadBps: positiveNumberSchema,
@@ -37,11 +38,18 @@ const quoteLevelSchema = v.object({
 const markoutFeedbackGateSchema = v.optional(
   v.object({
     enabled: v.optional(v.boolean(), false),
+    action: v.optional(v.picklist(["disable", "tag", "rebalance"]), "disable"),
     minAverageMarkoutBps: v.optional(v.number(), 0),
+    maxAdverseSelectionRate: v.optional(zeroToOneNumberSchema),
     minSamples: v.optional(positiveIntegerSchema, 20),
     lookbackFills: v.optional(positiveIntegerSchema, 100),
     maxFillAgeMs: v.optional(positiveIntegerSchema),
     horizonsSec: v.optional(v.pipe(v.array(positiveIntegerSchema), v.minLength(1)), [5, 30, 300]),
+    toxicDistanceMultiplier: v.optional(positiveNumberSchema),
+    toxicSizeMultiplier: v.optional(nonNegativeNumberSchema),
+    disableToxicIncreaseExposure: v.optional(v.boolean()),
+    compensatingDistanceMultiplier: v.optional(positiveNumberSchema),
+    compensatingSizeMultiplier: v.optional(nonNegativeNumberSchema),
   }),
   {
     enabled: false,
@@ -176,6 +184,7 @@ const commonConfigEntries = {
     intervalMs: positiveIntegerSchema,
     maxRestingMs: v.optional(positiveIntegerSchema),
     exchangeOpenOrderSyncIntervalMs: v.optional(positiveIntegerSchema),
+    postCancelOpenOrderSyncMode: v.optional(v.picklist(["blocking", "interval"]), "blocking"),
   }),
   shutdown: shutdownSchema,
   paper: v.optional(

@@ -922,6 +922,110 @@ describe("Bot", () => {
     ]);
   });
 
+  test("continues cleanup when a runtime disposable stop fails", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const stopError = new Error("alpha cache stop failed");
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          calls.push("subscribe");
+          return () => {
+            calls.push("unsubscribe");
+          };
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+        async dispose() {
+          calls.push("dispose");
+        },
+      },
+      1,
+      undefined,
+      {
+        closePositionPolicy: "always",
+        runtimeDisposables: [
+          {
+            start() {
+              calls.push("disposableStart");
+            },
+            stop() {
+              calls.push("badDisposableStop");
+              throw stopError;
+            },
+          },
+          {
+            stop() {
+              calls.push("goodDisposableStop");
+            },
+          },
+        ],
+      },
+    );
+
+    try {
+      let startError: unknown;
+      try {
+        await bot.start(1);
+      } catch (error) {
+        startError = error;
+      }
+
+      expect(startError).toBe(stopError);
+      expect(calls).toEqual([
+        "connect",
+        "subscribe",
+        "disposableStart",
+        "cancelAll",
+        "disconnect",
+        "badDisposableStop",
+        "goodDisposableStop",
+        "unsubscribe",
+        "dispose",
+      ]);
+      expect(logs.messages).toContain(
+        "[application] Bot | RUNTIME_DISPOSABLE_STOP_FAILED | error=alpha cache stop failed",
+      );
+    } finally {
+      logs.restore();
+    }
+  });
+
   test("skips normal-stop market close when shutdown policy is emergency only", async () => {
     const calls: string[] = [];
     const bot = new Bot(

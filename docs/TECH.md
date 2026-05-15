@@ -230,6 +230,20 @@ Bulk の現行 exchange info は `GTC` と `IOC` を扱う前提のため、Bulk
 - 切り替え条件は `DATABASE_URL` の scheme に一本化する
 - `file:<path>` は SQLite、`postgres://` / `postgresql://` は PostgreSQL
 
+### Low-cost data foundation target
+
+常時 market-data collection と replay backtest の次世代設計は `docs/DATABASE.md` と
+`docs/DATA_FOUNDATION.md` に置く。現行 `data/mm.db` は run-centric metrics DB として維持し、
+target design では public market data と run/accounting facts を分離する。
+
+- market data: `data/market/<venue>/<yyyy-mm>.sqlite`
+- run/accounting facts: `data/runs/<venue>.sqlite`
+- replay dataset metadata: `data/strategy-runs/<timestamp>-<label>/manifest.json`
+
+funding-aware PnL は `trade_pnl - fee` だけで評価しない。target design では
+`funding_accruals` と `ledger_entries` を accounting source of truth にし、
+trade PnL、fee/rebate、funding PnL、inventory PnL を分解して集計する。
+
 ### Metrics tables
 
 core metrics DB は「後から評価できる fact」だけを保存する。

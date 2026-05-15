@@ -113,8 +113,11 @@ type BulkMarketRules = {
 const openStatusKeys = new Set(["resting", "working", "placed", "pending"]);
 const DEFAULT_MAX_SEEN_FILL_IDS = 20_000;
 const DEFAULT_SEEN_FILL_TTL_MS = 24 * 60 * 60 * 1_000;
+const DEFAULT_MAX_SUBMITTED_ORDER_IDS = 20_000;
+const DEFAULT_SUBMITTED_ORDER_TTL_MS = DEFAULT_SEEN_FILL_TTL_MS;
 const SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS = 100;
 const SEEN_FILL_FULL_PRUNE_INTERVAL_MS = 60_000;
+const MAX_FILL_FUTURE_CLOCK_SKEW_MS = 5_000;
 const filledStatusKeys = new Set(["filled"]);
 const cancelledStatusKeys = new Set([
   "cancelled",
@@ -239,7 +242,7 @@ export class BulkOrderGateway implements IOrderGateway {
   private pollInFlight: Promise<void> | null = null;
   private leverageChecked = false;
   private fillTimer: Timer | null = null;
-  private readonly submittedOrderIds = new Set<string>();
+  private readonly submittedOrderIds = new Map<string, number>();
 
   constructor(
     private readonly client: BulkOrderGatewayClient,
@@ -321,7 +324,7 @@ export class BulkOrderGateway implements IOrderGateway {
     if (status === "rejected") {
       logger.warn(reason === undefined ? resultMessage : `${resultMessage} reason=${reason}`);
     } else {
-      this.submittedOrderIds.add(orderId);
+      this.rememberSubmittedOrder(orderId, submittedAt);
       logger.info(resultMessage);
     }
     await this.publishOrderEvent({
@@ -381,7 +384,18 @@ export class BulkOrderGateway implements IOrderGateway {
 
   private async marketRules(): Promise<BulkMarketRules | null> {
     if (this.rulesPromise === null) {
-      this.rulesPromise = this.loadMarketRules();
+      this.rulesPromise = this.loadMarketRules().then(
+        (rules) => {
+          if (rules === null) {
+            this.rulesPromise = null;
+          }
+          return rules;
+        },
+        (error: unknown) => {
+          this.rulesPromise = null;
+          throw error;
+        },
+      );
     }
     return await this.rulesPromise;
   }
@@ -599,8 +613,10 @@ export class BulkOrderGateway implements IOrderGateway {
       if (normalized === null || this.seenFillIds.has(normalized.id)) {
         continue;
       }
+      normalized = this.clampFutureFillTimestamp(normalized, observedAtMs);
       const belongsToSubmittedOrder =
-        normalized.quoteId !== undefined && this.submittedOrderIds.has(normalized.quoteId);
+        normalized.quoteId !== undefined &&
+        this.hasSubmittedOrder(normalized.quoteId, observedAtMs);
       if (
         this.params.ignoreFillsBeforeMs !== undefined &&
         normalized.filledAt < this.params.ignoreFillsBeforeMs
@@ -642,6 +658,39 @@ export class BulkOrderGateway implements IOrderGateway {
     this.maxObservedFillTimestamp = Math.max(this.maxObservedFillTimestamp, fill.filledAt);
     this.fillsSinceLastSeenFillPrune += 1;
     this.pruneSeenFillIds();
+  }
+
+  private rememberSubmittedOrder(orderId: string, submittedAtMs: number): void {
+    this.submittedOrderIds.set(orderId, submittedAtMs);
+    this.pruneSubmittedOrderIds(submittedAtMs);
+  }
+
+  private hasSubmittedOrder(orderId: string, observedAtMs: number): boolean {
+    this.pruneSubmittedOrderIds(observedAtMs);
+    return this.submittedOrderIds.has(orderId);
+  }
+
+  private pruneSubmittedOrderIds(observedAtMs: number): void {
+    const minSubmittedAtMs = observedAtMs - DEFAULT_SUBMITTED_ORDER_TTL_MS;
+    for (const [orderId, submittedAtMs] of this.submittedOrderIds) {
+      if (submittedAtMs < minSubmittedAtMs) {
+        this.submittedOrderIds.delete(orderId);
+      }
+    }
+    while (this.submittedOrderIds.size > DEFAULT_MAX_SUBMITTED_ORDER_IDS) {
+      const oldestOrderId = this.submittedOrderIds.keys().next().value;
+      if (oldestOrderId === undefined) {
+        return;
+      }
+      this.submittedOrderIds.delete(oldestOrderId);
+    }
+  }
+
+  private clampFutureFillTimestamp(fill: Fill, observedAtMs: number): Fill {
+    if (fill.filledAt - observedAtMs <= MAX_FILL_FUTURE_CLOCK_SKEW_MS) {
+      return fill;
+    }
+    return { ...fill, filledAt: observedAtMs };
   }
 
   private isFillOutsideSeenWindow(fill: Fill): boolean {

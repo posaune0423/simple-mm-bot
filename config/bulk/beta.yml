@@ -46,11 +46,12 @@ quoteEngine:
     bidDistanceMultiplier: 1.2
     askDistanceMultiplier: 0.9
     askSizeMultiplier: 1.0
+    # Treat single-fill dust as flat for passive reduce quoting; shutdown still
+    # force-closes residual inventory.
+    reduceQuoteMinPositionQty: 0.0065
   levels:
     - halfSpreadBps: 0.8
-      sizeUsd: 500
-    - halfSpreadBps: 1.8
-      sizeUsd: 500
+      sizeUsd: 1000
   qualityGate:
     enabled: true
     minAverageMarkoutBps: 0
@@ -82,6 +83,9 @@ bot:
   intervalMs: 150
   maxRestingMs: 700
   exchangeOpenOrderSyncIntervalMs: 1500
+  # Keep quote placement on the hot path; accepted cancels are scrubbed by the
+  # periodic exchange-open-order sync instead of a blocking post-cancel sync.
+  postCancelOpenOrderSyncMode: interval
 
 shutdown:
   closePositionPolicy: always

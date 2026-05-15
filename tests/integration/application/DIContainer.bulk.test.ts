@@ -42,6 +42,7 @@ function config(
       sizing: { positionSize: 0.01, budgetUsd: 100 },
       qualityGate: {
         enabled: false,
+        action: "disable",
         minAverageMarkoutBps: 0,
         minSamples: 20,
         lookbackFills: 100,
@@ -50,7 +51,7 @@ function config(
       strategy,
     },
     risk: { imrBuffer: 0.15, mmrBuffer: 0.08, maxPositionQty: 0.05 },
-    bot: { intervalMs: 1000 },
+    bot: { intervalMs: 1000, postCancelOpenOrderSyncMode: "blocking" },
     shutdown: { closePositionPolicy: "always" },
     paper: { touchFillRatio: 0.5 },
     backtest: {
@@ -144,6 +145,9 @@ describe("DIContainer Bulk venue", () => {
     expect(
       (internals.orderGateway as { params: { maxLeverage?: number } }).params.maxLeverage,
     ).toBe(5);
+    expect(
+      (internals.orderGateway as { params: { pollIntervalMs?: number } }).params.pollIntervalMs,
+    ).toBe(250);
     await (internals.orderGateway as BulkOrderGateway).dispose();
   });
 

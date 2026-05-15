@@ -428,9 +428,152 @@ describe("OrderReconciler", () => {
       "sync",
       "place:quote-1",
       "cancel:quote-1",
+      "sync",
       "place:quote-2",
+      "cancel:quote-2",
       "sync",
       "place:quote-3",
+    ]);
+  });
+
+  test("scrubs lingering exchange orders after cancellation before placing replacements", async () => {
+    const calls: string[] = [];
+    let nowMs = 1_000;
+    let syncCount = 0;
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      async getOpenOrders() {
+        calls.push("sync");
+        syncCount += 1;
+        if (syncCount === 1) {
+          return [];
+        }
+        return [
+          {
+            id: "quote-1",
+            market: "BTC-USD",
+            side: "buy",
+            price: 100,
+            qty: 1,
+            reduceOnly: false,
+            timeInForce: "GTC",
+            status: "open",
+          },
+        ];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const reconciler = new OrderReconciler(gateway, {
+      exchangeOpenOrderSyncIntervalMs: 1_500,
+      maxRestingMs: 1_000,
+      nowMs: () => nowMs,
+    });
+
+    await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
+    nowMs = 2_100;
+    await activeOrders(
+      reconciler.reconcile([quoteOrder({ price: Price.unsafe(101), clientOrderId: "quote-2" })]),
+    );
+
+    expect(calls).toEqual([
+      "sync",
+      "place:quote-1",
+      "cancel:quote-1",
+      "sync",
+      "cancel:quote-1",
+      "place:quote-2",
+    ]);
+  });
+
+  test("uses interval exchange sync instead of blocking post-cancel scrub when configured", async () => {
+    const calls: string[] = [];
+    let nowMs = 1_000;
+    let syncCount = 0;
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+      },
+      async cancelAll() {},
+      async getOpenOrders() {
+        calls.push("sync");
+        syncCount += 1;
+        if (syncCount === 1) {
+          return [];
+        }
+        return [
+          {
+            id: "quote-1",
+            market: "BTC-USD",
+            side: "buy",
+            price: 100,
+            qty: 1,
+            reduceOnly: false,
+            timeInForce: "GTC",
+            status: "open",
+          },
+          {
+            id: "quote-2",
+            market: "BTC-USD",
+            side: "buy",
+            price: 101,
+            qty: 1,
+            reduceOnly: false,
+            timeInForce: "GTC",
+            status: "open",
+          },
+        ];
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const reconciler = new OrderReconciler(gateway, {
+      exchangeOpenOrderSyncIntervalMs: 1_500,
+      maxRestingMs: 10_000,
+      nowMs: () => nowMs,
+      postCancelOpenOrderSyncMode: "interval",
+    });
+
+    await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
+    nowMs = 2_100;
+    await activeOrders(
+      reconciler.reconcile([quoteOrder({ price: Price.unsafe(101), clientOrderId: "quote-2" })]),
+    );
+    nowMs = 3_700;
+    await activeOrders(
+      reconciler.reconcile([quoteOrder({ price: Price.unsafe(101), clientOrderId: "quote-2" })]),
+    );
+
+    expect(calls).toEqual([
+      "sync",
+      "place:quote-1",
+      "cancel:quote-1",
+      "place:quote-2",
+      "sync",
+      "cancel:quote-1",
     ]);
   });
 

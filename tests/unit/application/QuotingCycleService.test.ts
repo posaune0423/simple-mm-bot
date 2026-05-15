@@ -6,7 +6,10 @@ import {
   type OrderReconciler,
 } from "../../../src/application/services/OrderReconciler.ts";
 import { OrderIntentBuilder } from "../../../src/application/services/OrderIntentBuilder.ts";
-import { QuotingCycleService } from "../../../src/application/services/QuotingCycleService.ts";
+import {
+  computePlacementTrendBps,
+  QuotingCycleService,
+} from "../../../src/application/services/QuotingCycleService.ts";
 import { StrategyQuoteFailedError } from "../../../src/domain/errors/DomainError.ts";
 import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type { OrderIntent } from "../../../src/domain/value-objects/OrderIntent.ts";
@@ -25,6 +28,43 @@ import { Quote } from "../../../src/domain/value-objects/Quote.ts";
 import { QuoteLeg } from "../../../src/domain/value-objects/QuoteLeg.ts";
 
 describe("QuotingCycleService", () => {
+  test("computes placement trend across the configured lookback window", () => {
+    const result = computePlacementTrendBps(
+      [
+        { mid: 100, observedAt: 1_000 },
+        { mid: 100.01, observedAt: 3_000 },
+        { mid: 100.03, observedAt: 6_000 },
+      ],
+      { mid: 100.05, observedAt: 6_100 },
+      5_000,
+    );
+
+    expect(result.trendBps).toBeCloseTo(3.999600039995204);
+    expect(result.samples).toEqual([
+      { mid: 100.01, observedAt: 3_000 },
+      { mid: 100.03, observedAt: 6_000 },
+      { mid: 100.05, observedAt: 6_100 },
+    ]);
+  });
+
+  test("drops stale placement samples before computing trend", () => {
+    const result = computePlacementTrendBps(
+      [
+        { mid: 99, observedAt: 500 },
+        { mid: 100, observedAt: 1_000 },
+        { mid: 100.05, observedAt: 6_500 },
+      ],
+      { mid: 100.06, observedAt: 6_600 },
+      5_000,
+    );
+
+    expect(result.trendBps).toBeCloseTo(0.9995002498750176);
+    expect(result.samples).toEqual([
+      { mid: 100.05, observedAt: 6_500 },
+      { mid: 100.06, observedAt: 6_600 },
+    ]);
+  });
+
   test("treats markout feedback repository failures as an empty non-fatal signal", async () => {
     const strategyInputs: StrategyInput[] = [];
     const service = new QuotingCycleService(
@@ -62,6 +102,44 @@ describe("QuotingCycleService", () => {
 
     expect(strategyInputs).toHaveLength(1);
     expect(strategyInputs[0]?.markoutFeedback).toEqual([]);
+  });
+
+  test("caps markout feedback reads to the current local clock plus tolerated skew", async () => {
+    type MarkoutFeedbackQuery = Parameters<
+      IMarkoutFeedbackRepository["getRecentSideMarkoutFeedback"]
+    >[0];
+    let capturedQuery: MarkoutFeedbackQuery | undefined;
+    const service = new QuotingCycleService(
+      new FixtureMarketFeed(),
+      new FixturePositionRepository(),
+      quoteStrategy(),
+      new OrderIntentBuilder(),
+      {
+        reconcile: () => okAsync({ activeOrders: [] }),
+        cancelAll: (reason) => okAsync({ reason }),
+      } satisfies Pick<OrderReconciler, "reconcile" | "cancelAll">,
+      { defaultTimeInForce: "ALO", postOnly: true },
+      undefined,
+      {
+        getRecentSideMarkoutFeedback: async (query) => {
+          capturedQuery = query;
+          return [];
+        },
+      } satisfies IMarkoutFeedbackRepository,
+      { enabled: true, lookbackFills: 40, maxFillAgeMs: 60_000, horizonsSec: [5, 30, 300] },
+    );
+
+    const before = Date.now();
+    await service.execute();
+    const after = Date.now();
+
+    expect(capturedQuery).toBeDefined();
+    expect(capturedQuery?.market).toBe("BTC-USD");
+    expect(capturedQuery?.lookbackFills).toBe(40);
+    expect(capturedQuery?.minFilledAt).toBeGreaterThanOrEqual(before - 60_000);
+    expect(capturedQuery?.minFilledAt).toBeLessThanOrEqual(after - 60_000);
+    expect(capturedQuery?.maxFilledAt).toBeGreaterThanOrEqual(before + 5_000);
+    expect(capturedQuery?.maxFilledAt).toBeLessThanOrEqual(after + 5_000);
   });
 
   test("propagates reconcile failures so the bot fails closed", async () => {

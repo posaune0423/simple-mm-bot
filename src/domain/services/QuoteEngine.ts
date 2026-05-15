@@ -46,6 +46,7 @@ type QuoteEngineConfig = Readonly<{
   askSizeMultiplier?: number;
   bidDistanceMultiplier?: number;
   askDistanceMultiplier?: number;
+  reduceQuoteMinPositionQty?: number;
   maxLeverage?: number;
   levels?: readonly QuoteLadderLevelConfig[];
 }>;
@@ -64,6 +65,7 @@ type LevelDraft = Readonly<{
 }>;
 
 const OPEN_NOTIONAL_SAFETY_BUFFER = 0.95;
+const POSITION_QTY_EPSILON = 1e-12;
 
 export class QuoteEngine {
   constructor(
@@ -137,8 +139,8 @@ export class QuoteEngine {
     const asks = [];
 
     for (const level of levels) {
-      const bidIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "buy");
-      const askIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "sell");
+      const bidIntent = this.exposureIntentForOrderSide(input, "buy");
+      const askIntent = this.exposureIntentForOrderSide(input, "sell");
       const bid = this.quoteLeg(
         "bid",
         "buy",
@@ -207,6 +209,13 @@ export class QuoteEngine {
       return ok(undefined);
     }
     if (spec.disableIncreaseExposure && exposureIntent === "increase_exposure") {
+      return ok(undefined);
+    }
+    if (
+      exposureIntent === "reduce_exposure" &&
+      Math.abs(input.position.signedQuantity) <=
+        (this.config.reduceQuoteMinPositionQty ?? 0) + POSITION_QTY_EPSILON
+    ) {
       return ok(undefined);
     }
     if (sizeValue <= 0) {
@@ -306,8 +315,8 @@ export class QuoteEngine {
   private withReduceCaps(levels: readonly LevelDraft[], input: QuoteEngineInput): LevelDraft[] {
     let remainingReduceQty = PositionSnapshot.maxReduceQuantity(input.position);
     return levels.map((level) => {
-      const bidIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "buy");
-      const askIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "sell");
+      const bidIntent = this.exposureIntentForOrderSide(input, "buy");
+      const askIntent = this.exposureIntentForOrderSide(input, "sell");
       let bidSize = level.bidSize;
       let askSize = level.askSize;
 
@@ -357,8 +366,8 @@ export class QuoteEngine {
       return [...levels];
     }
 
-    const bidIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "buy");
-    const askIntent = PositionSnapshot.exposureIntentForOrderSide(input.position, "sell");
+    const bidIntent = this.exposureIntentForOrderSide(input, "buy");
+    const askIntent = this.exposureIntentForOrderSide(input, "sell");
     const bidIncreaseAllowed = isIncreaseAllowed(input.sideSpecs.bid, bidIntent);
     const askIncreaseAllowed = isIncreaseAllowed(input.sideSpecs.ask, askIntent);
     const totalBidOpenQty = levels.reduce(
@@ -391,6 +400,19 @@ export class QuoteEngine {
       return this.config.positionSize;
     }
     return Math.min(this.config.positionSize, this.config.budgetUsd / fairPrice);
+  }
+
+  private exposureIntentForOrderSide(
+    input: QuoteEngineInput,
+    orderSide: OrderSide,
+  ): ExposureIntent {
+    if (
+      Math.abs(input.position.signedQuantity) <=
+      (this.config.reduceQuoteMinPositionQty ?? 0) + POSITION_QTY_EPSILON
+    ) {
+      return "increase_exposure";
+    }
+    return PositionSnapshot.exposureIntentForOrderSide(input.position, orderSide);
   }
 }
 

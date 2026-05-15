@@ -4,6 +4,7 @@ export interface MarkoutFeedbackQuery {
   market: string;
   lookbackFills: number;
   minFilledAt?: number;
+  maxFilledAt?: number;
   horizonsSec: number[];
 }
 

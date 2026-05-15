@@ -516,9 +516,140 @@ describe("SqliteMetricsRepository", () => {
       {
         side: "buy",
         horizons: [
-          { horizonSec: 5, sampleCount: 1, averageMarkoutBps: -100 },
-          { horizonSec: 30, sampleCount: 1, averageMarkoutBps: -200 },
-          { horizonSec: 300, sampleCount: 1, averageMarkoutBps: 200 },
+          {
+            horizonSec: 5,
+            sampleCount: 1,
+            averageMarkoutBps: -100,
+            weightedAverageMarkoutBps: -100,
+            adverseSelectionRate: 1,
+          },
+          {
+            horizonSec: 30,
+            sampleCount: 1,
+            averageMarkoutBps: -200,
+            weightedAverageMarkoutBps: -200,
+            adverseSelectionRate: 1,
+          },
+          {
+            horizonSec: 300,
+            sampleCount: 1,
+            averageMarkoutBps: 200,
+            weightedAverageMarkoutBps: 200,
+            adverseSelectionRate: 0,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("excludes fills beyond maxFilledAt from side markout feedback", async () => {
+    const client = createSqliteClient(dbPath);
+    const repository = new SqliteMetricsRepository(client.db);
+
+    await repository.startRun({
+      id: "run-side-quality-max-filled-at",
+      mode: "live",
+      venue: "bulk",
+      market: "BTC-USD",
+      capitalMode: "beta_mock",
+      strategyName: "avellaneda-stoikov",
+      configJson: {},
+      gitDirty: false,
+      startedAt: 0,
+      status: "running",
+    });
+    for (const snapshot of [
+      { id: "max-filled-at-valid-5s", observedAt: 6_000, midPrice: 99 },
+      { id: "max-filled-at-future-5s", observedAt: 66_000, midPrice: 80 },
+    ]) {
+      await repository.recordOrderbookSnapshot({
+        id: snapshot.id,
+        runId: "run-side-quality-max-filled-at",
+        venue: "bulk",
+        market: "BTC-USD",
+        observedAt: snapshot.observedAt,
+        bestBid: snapshot.midPrice - 1,
+        bestAsk: snapshot.midPrice + 1,
+        midPrice: snapshot.midPrice,
+        microPrice: snapshot.midPrice,
+        markPrice: snapshot.midPrice,
+        spreadBps: 200,
+        stalenessMs: 0,
+      });
+    }
+    for (const order of [
+      { id: "max-filled-at-valid-order", venueOrderId: "max-filled-at-valid-venue" },
+      { id: "max-filled-at-future-order", venueOrderId: "max-filled-at-future-venue" },
+    ]) {
+      await repository.recordSubmittedOrder({
+        id: order.id,
+        runId: "run-side-quality-max-filled-at",
+        venue: "bulk",
+        market: "BTC-USD",
+        clientOrderId: order.id,
+        venueOrderId: order.venueOrderId,
+        intent: "quote",
+        side: "buy",
+        orderType: "limit",
+        limitPrice: 100,
+        quantity: 1,
+        timeInForce: "ALO",
+        submittedAt: 500,
+        finalStatus: "filled",
+      });
+    }
+    await repository.recordTradeFill({
+      id: "max-filled-at-valid-fill",
+      runId: "run-side-quality-max-filled-at",
+      submittedOrderId: "max-filled-at-valid-order",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "max-filled-at-valid-fill",
+      venueOrderId: "max-filled-at-valid-venue",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 1_000,
+    });
+    await repository.recordTradeFill({
+      id: "max-filled-at-future-fill",
+      runId: "run-side-quality-max-filled-at",
+      submittedOrderId: "max-filled-at-future-order",
+      venue: "bulk",
+      market: "BTC-USD",
+      venueFillId: "max-filled-at-future-fill",
+      venueOrderId: "max-filled-at-future-venue",
+      side: "buy",
+      price: 100,
+      quantity: 1,
+      fee: 0,
+      tradePnl: 0,
+      makerTaker: "maker",
+      filledAt: 60_000,
+    });
+
+    const quality = await repository.getRecentSideMarkoutFeedback({
+      market: "BTC-USD",
+      lookbackFills: 100,
+      minFilledAt: 0,
+      maxFilledAt: 10_000,
+      horizonsSec: [5],
+    });
+
+    expect(quality).toEqual([
+      {
+        side: "buy",
+        horizons: [
+          {
+            horizonSec: 5,
+            sampleCount: 1,
+            averageMarkoutBps: -100,
+            weightedAverageMarkoutBps: -100,
+            adverseSelectionRate: 1,
+          },
         ],
       },
     ]);
@@ -725,9 +856,27 @@ describe("SqliteMetricsRepository", () => {
       {
         side: "buy",
         horizons: [
-          { horizonSec: 5, sampleCount: 1, averageMarkoutBps: -100 },
-          { horizonSec: 30, sampleCount: 1, averageMarkoutBps: -200 },
-          { horizonSec: 300, sampleCount: 1, averageMarkoutBps: -300 },
+          {
+            horizonSec: 5,
+            sampleCount: 1,
+            averageMarkoutBps: -100,
+            weightedAverageMarkoutBps: -100,
+            adverseSelectionRate: 1,
+          },
+          {
+            horizonSec: 30,
+            sampleCount: 1,
+            averageMarkoutBps: -200,
+            weightedAverageMarkoutBps: -200,
+            adverseSelectionRate: 1,
+          },
+          {
+            horizonSec: 300,
+            sampleCount: 1,
+            averageMarkoutBps: -300,
+            weightedAverageMarkoutBps: -300,
+            adverseSelectionRate: 1,
+          },
         ],
       },
     ]);

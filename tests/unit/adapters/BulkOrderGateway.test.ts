@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { BulkOrderGateway } from "../../../src/adapters/bulk/BulkOrderGateway.ts";
 import { logger } from "../../../src/utils/logger.ts";
@@ -304,6 +304,69 @@ describe("BulkOrderGateway", () => {
         reduceOnly: false,
       },
     ]);
+  });
+
+  test("retries exchange rules after an empty exchangeInfo response", async () => {
+    const calls: unknown[] = [];
+    let exchangeInfoCalls = 0;
+    const gateway = new BulkOrderGateway(
+      {
+        market: {
+          async exchangeInfo() {
+            exchangeInfoCalls += 1;
+            if (exchangeInfoCalls === 1) {
+              return [];
+            }
+            return [
+              {
+                symbol: "BTC-USD",
+                pricePrecision: 3,
+                sizePrecision: 6,
+                tickSize: 0.001,
+                lotSize: 0.000001,
+                timeInForces: ["GTC", "IOC"],
+              },
+            ];
+          },
+        },
+        trade: {
+          async placeLimitOrder(params: unknown) {
+            calls.push(params);
+            return {
+              status: "ok",
+              response: { data: { statuses: [{ resting: { oid: `limit-${calls.length}` } }] } },
+            };
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "ALO",
+    });
+    await gateway.place({
+      market: "BTC-USD",
+      side: "buy",
+      price: 81_532.123456,
+      qty: 0.003066279427,
+      reduceOnly: false,
+      timeInForce: "GTC",
+    });
+
+    expect(exchangeInfoCalls).toBe(2);
+    expect(calls[0]).toMatchObject({ price: 81_532.123456, size: 0.003066279427 });
+    expect(calls[1]).toMatchObject({ price: 81_532.123, size: 0.003066 });
   });
 
   test("allows ALO even when exchangeInfo omits it from timeInForces", async () => {
@@ -1395,6 +1458,52 @@ describe("BulkOrderGateway", () => {
     const currentFill = fills[0] as { filledAt: number };
     expect(currentFill.filledAt).toBeGreaterThanOrEqual(beforePoll);
     expect(currentFill.filledAt).toBeLessThanOrEqual(afterPoll);
+  });
+
+  test("clamps Bulk fill timestamps that are ahead of the local observation clock", async () => {
+    const observedAt = 1_700_000_000_000;
+    const now = spyOn(Date, "now").mockReturnValue(observedAt);
+    const client = {
+      trade: {},
+      account: {
+        async fills() {
+          return [
+            {
+              maker: "account",
+              taker: "other",
+              orderIdMaker: "future-maker",
+              orderIdTaker: "future-taker",
+              isBuy: true,
+              symbol: "ETH-USD",
+              amount: 0.1,
+              price: 100,
+              timestamp: (observedAt + 11 * 60_000) * 1_000_000,
+            },
+          ];
+        },
+      },
+    };
+    const gateway = new BulkOrderGateway(client, {
+      market: "ETH-USD",
+      accountId: "account",
+    });
+    const fills: unknown[] = [];
+    gateway.subscribeFills((fill) => {
+      fills.push(fill);
+    });
+
+    try {
+      await gateway.pollFillsOnce();
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(fills).toMatchObject([
+      {
+        quoteId: "future-maker",
+        filledAt: observedAt,
+      },
+    ]);
   });
 
   test("does not retain ignored historical fill ids in the long-running dedupe cache", async () => {

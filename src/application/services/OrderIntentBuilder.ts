@@ -14,7 +14,8 @@ const EPOCH_MS_LOWER_BOUND = 1_000_000_000_000;
 const NORMAL_PASSIVE_TOUCH_MARGIN_BPS = 0.25;
 const REDUCE_PASSIVE_TOUCH_MARGIN_BPS = 0.05;
 const MOMENTUM_GUARD_THRESHOLD_BPS = 0.05;
-const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 2;
+const OPEN_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 0.8;
+const REDUCE_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS = 0.8;
 const MOMENTUM_GUARD_MULTIPLIER = 1;
 const MAX_MOMENTUM_GUARD_BPS = 8;
 
@@ -33,7 +34,12 @@ export class OrderIntentBuildFailedError extends ApplicationError {
 
 type OrderIntentSkip = Readonly<{
   key: string;
-  reason: "stale_touch" | "downtrend_open_bid" | "uptrend_open_ask";
+  reason:
+    | "stale_touch"
+    | "downtrend_open_bid"
+    | "uptrend_open_ask"
+    | "downtrend_reduce_bid"
+    | "uptrend_reduce_ask";
   sourceQuoteSide: "bid" | "ask";
   sourceQuoteLevel: number;
 }>;
@@ -145,6 +151,22 @@ export class OrderIntentBuilder {
       isStale: isStaleEpochSnapshot(touch, this.nowMs()),
       trendBps,
     })
+      .with(
+        {
+          exposureIntent: "reduce_exposure",
+          side: "bid",
+          trendBps: P.when((trend) => trend <= -REDUCE_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS),
+        },
+        () => "downtrend_reduce_bid" as const,
+      )
+      .with(
+        {
+          exposureIntent: "reduce_exposure",
+          side: "ask",
+          trendBps: P.when((trend) => trend >= REDUCE_SIDE_MOMENTUM_SKIP_THRESHOLD_BPS),
+        },
+        () => "uptrend_reduce_ask" as const,
+      )
       .with({ exposureIntent: P.when((intent) => intent !== "increase_exposure") }, () => null)
       .with({ isStale: true }, () => "stale_touch" as const)
       .with(
@@ -178,18 +200,24 @@ function guardedLimitPrice(input: {
   trendBps: number;
 }): number {
   const { side, price, policy, reduceOnly, snapshot, trendBps } = input;
+  const currentMid = (snapshot.bestBid + snapshot.bestAsk) / 2;
+  const momentumGuard =
+    currentMid *
+    (Math.min(Math.abs(trendBps) * MOMENTUM_GUARD_MULTIPLIER, MAX_MOMENTUM_GUARD_BPS) / 10_000);
   return match({ policy, side })
     .with({ policy: "IOC" }, () => price)
-    .with({ policy: "ALO", side: "buy" }, () => Math.min(price, snapshot.bestBid))
-    .with({ policy: "ALO", side: "sell" }, () => Math.max(price, snapshot.bestAsk))
+    .with({ policy: "ALO", side: "buy" }, () => {
+      const passiveBid = Math.min(price, snapshot.bestBid);
+      return trendBps < -MOMENTUM_GUARD_THRESHOLD_BPS ? passiveBid - momentumGuard : passiveBid;
+    })
+    .with({ policy: "ALO", side: "sell" }, () => {
+      const passiveAsk = Math.max(price, snapshot.bestAsk);
+      return trendBps > MOMENTUM_GUARD_THRESHOLD_BPS ? passiveAsk + momentumGuard : passiveAsk;
+    })
     .otherwise(() => {
-      const currentMid = (snapshot.bestBid + snapshot.bestAsk) / 2;
       const passiveMarginBps = reduceOnly
         ? REDUCE_PASSIVE_TOUCH_MARGIN_BPS
         : NORMAL_PASSIVE_TOUCH_MARGIN_BPS;
-      const momentumGuard =
-        currentMid *
-        (Math.min(Math.abs(trendBps) * MOMENTUM_GUARD_MULTIPLIER, MAX_MOMENTUM_GUARD_BPS) / 10_000);
 
       return match(side)
         .with("buy", () => {

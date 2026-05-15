@@ -57,10 +57,7 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.bookPriceSource).toBe("micro");
     expect(config.quoteEngine.minSpreadBps).toBe(1.6);
     expect(config.quoteEngine.sizing.budgetUsd).toBe(1_000);
-    expect(config.quoteEngine.levels).toEqual([
-      { halfSpreadBps: 0.8, sizeUsd: 500 },
-      { halfSpreadBps: 1.8, sizeUsd: 500 },
-    ]);
+    expect(config.quoteEngine.levels).toEqual([{ halfSpreadBps: 0.8, sizeUsd: 1000 }]);
     expect(config.quoteEngine.strategy).toEqual({
       type: "avellaneda-stoikov",
       params: {
@@ -71,6 +68,7 @@ describe("ConfigLoader", () => {
     });
     expect(config.quoteEngine.qualityGate).toEqual({
       enabled: true,
+      action: "disable",
       minAverageMarkoutBps: 0,
       minSamples: 8,
       lookbackFills: 40,
@@ -83,6 +81,7 @@ describe("ConfigLoader", () => {
     expect(config.quoteEngine.sizing.askSizeMultiplier).toBe(1);
     expect(config.quoteEngine.sizing.bidDistanceMultiplier).toBe(1.2);
     expect(config.quoteEngine.sizing.askDistanceMultiplier).toBe(0.9);
+    expect(config.quoteEngine.sizing.reduceQuoteMinPositionQty).toBe(0.0065);
     expect(config.risk.maxPositionQty).toBe(0.025);
     expect(config.risk.reduceTargetQty).toBe(0.003);
     expect(config.risk.reduceTriggerQty).toBe(0.012);
@@ -92,6 +91,8 @@ describe("ConfigLoader", () => {
     expect(config.risk.maxTickerAgeMs).toBe(2500);
     expect(config.bot.intervalMs).toBe(150);
     expect(config.bot.maxRestingMs).toBe(700);
+    expect(config.bot.exchangeOpenOrderSyncIntervalMs).toBe(1500);
+    expect(config.bot.postCancelOpenOrderSyncMode).toBe("interval");
     expect(config.shutdown.closePositionPolicy).toBe("always");
   });
 
@@ -112,7 +113,7 @@ describe("ConfigLoader", () => {
       expect(config.quoteEngine.sizing.budgetUsd).toBe(1_000);
       expect(config.quoteEngine.bookPriceSource).toBe("micro");
       expect(config.quoteEngine.strategy.type).toBe("avellaneda-stoikov");
-      expect(config.quoteEngine.levels).toHaveLength(2);
+      expect(config.quoteEngine.levels).toHaveLength(1);
     } finally {
       if (previousMode === undefined) {
         delete Bun.env.MODE;
@@ -129,6 +130,7 @@ describe("ConfigLoader", () => {
 
     expect(config.bot.maxRestingMs).toBe(900);
     expect(config.bot.exchangeOpenOrderSyncIntervalMs).toBe(1_500);
+    expect(config.bot.postCancelOpenOrderSyncMode).toBe("blocking");
     expect(config.shutdown.closePositionPolicy).toBe("emergency_only");
   });
 

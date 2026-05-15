@@ -155,6 +155,7 @@ export class DIContainer {
         askSizeMultiplier: this.config.quoteEngine.sizing.askSizeMultiplier,
         bidDistanceMultiplier: this.config.quoteEngine.sizing.bidDistanceMultiplier,
         askDistanceMultiplier: this.config.quoteEngine.sizing.askDistanceMultiplier,
+        reduceQuoteMinPositionQty: this.config.quoteEngine.sizing.reduceQuoteMinPositionQty,
         maxLeverage: match(this.config)
           .with({ venue: "bulk" }, (config) => config.connections.bulk.maxLeverage)
           .otherwise(() => undefined),
@@ -392,7 +393,7 @@ export class DIContainer {
                 market: config.market,
                 accountId,
                 maxLeverage: bulk.maxLeverage,
-                pollIntervalMs: 1000,
+                pollIntervalMs: 250,
                 ignoreFillsBeforeMs: Date.now(),
               }),
             };
@@ -416,6 +417,7 @@ export class DIContainer {
     if (this.config.bot.exchangeOpenOrderSyncIntervalMs !== undefined) {
       options.exchangeOpenOrderSyncIntervalMs = this.config.bot.exchangeOpenOrderSyncIntervalMs;
     }
+    options.postCancelOpenOrderSyncMode = this.config.bot.postCancelOpenOrderSyncMode;
     return options;
   }
 }
