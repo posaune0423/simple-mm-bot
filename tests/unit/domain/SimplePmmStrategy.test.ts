@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 
+import { InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
 import { StrategyDecision } from "../../../src/domain/strategies/Strategy.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
@@ -48,6 +49,12 @@ class StubQuoteEngine {
   }
 }
 
+class EmptyQuoteEngine {
+  compute() {
+    return err(new InvalidQuoteError("quote must contain at least one bid or ask leg"));
+  }
+}
+
 describe("SimplePmmStrategy", () => {
   test("returns quote decision from QuoteEngine result", () => {
     const quoteEngine = new StubQuoteEngine();
@@ -82,6 +89,26 @@ describe("SimplePmmStrategy", () => {
         quote: () => false,
         noQuote: ({ cancelExisting, reasonTags }) =>
           cancelExisting && reasonTags.includes("markout_gate"),
+      }),
+    ).toBe(true);
+  });
+
+  test("treats an empty quote as no-quote instead of a strategy failure", () => {
+    const strategy = new SimplePmmStrategy(new EmptyQuoteEngine() as never);
+
+    const result = strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [],
+      nowMs: 1,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(
+      StrategyDecision.match(result._unsafeUnwrap(), {
+        quote: () => false,
+        noQuote: ({ cancelExisting, reasonTags }) =>
+          cancelExisting && reasonTags.includes("empty_quote"),
       }),
     ).toBe(true);
   });

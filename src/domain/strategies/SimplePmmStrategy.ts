@@ -1,4 +1,4 @@
-import type { Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import {
   StrategyQuoteFailedError,
   type QuoteEngineError,
@@ -11,6 +11,7 @@ import {
   type Strategy,
   type StrategyInput,
 } from "./Strategy";
+import { emptyQuoteNoQuoteDecision } from "./emptyQuoteDecision";
 
 export type MarkoutFeedbackGateConfig = Readonly<{
   enabled: boolean;
@@ -42,19 +43,25 @@ export class SimplePmmStrategy implements Strategy {
       sideSpecs: this.buildSideSpecs(input.markoutFeedback),
     };
 
-    return this.quoteEngine
-      .compute(quoteInput)
-      .mapErr((error) => this.quoteEngineError(error))
-      .map((quote) =>
-        StrategyDecision.quote({
-          quote,
-          reasonTags: quote.diagnostics.reasonTags,
-          diagnostics: {
-            strategy: this.name,
-            quoteModel: quote.diagnostics.quoteModel,
-          },
-        }),
-      );
+    const quoteResult = this.quoteEngine.compute(quoteInput);
+    if (quoteResult.isErr()) {
+      const noQuote = emptyQuoteNoQuoteDecision(this.name, quoteResult.error);
+      if (noQuote !== null) {
+        return ok(noQuote);
+      }
+      return err(this.quoteEngineError(quoteResult.error));
+    }
+
+    return ok(
+      StrategyDecision.quote({
+        quote: quoteResult.value,
+        reasonTags: quoteResult.value.diagnostics.reasonTags,
+        diagnostics: {
+          strategy: this.name,
+          quoteModel: quoteResult.value.diagnostics.quoteModel,
+        },
+      }),
+    );
   }
 
   private buildSideSpecs(quality: readonly SideMarkoutFeedback[]): QuoteSideSpecs {

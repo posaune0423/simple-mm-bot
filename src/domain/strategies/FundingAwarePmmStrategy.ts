@@ -1,8 +1,9 @@
-import type { Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 
 import type { AlphaDriftProvider } from "../ports/IAlphaDriftProvider.ts";
 import type { QuoteModelSignals } from "../quote-models/QuoteModel.ts";
 import type { QuoteEngine, QuoteEngineInput } from "../services/QuoteEngine.ts";
+import { emptyQuoteNoQuoteDecision } from "./emptyQuoteDecision.ts";
 import { buildQualityGatedSideSpecs, type MarkoutFeedbackGateConfig } from "./SimplePmmStrategy.ts";
 import { StrategyDecision, type Strategy, type StrategyInput } from "./Strategy.ts";
 import {
@@ -46,19 +47,25 @@ export class FundingAwarePmmStrategy implements Strategy {
       modelSignals: this.buildModelSignals(input),
     };
 
-    return this.quoteEngine
-      .compute(quoteInput)
-      .mapErr((error) => this.quoteEngineError(error))
-      .map((quote) =>
-        StrategyDecision.quote({
-          quote,
-          reasonTags: quote.diagnostics.reasonTags,
-          diagnostics: {
-            strategy: this.name,
-            quoteModel: quote.diagnostics.quoteModel,
-          },
-        }),
-      );
+    const quoteResult = this.quoteEngine.compute(quoteInput);
+    if (quoteResult.isErr()) {
+      const noQuote = emptyQuoteNoQuoteDecision(this.name, quoteResult.error);
+      if (noQuote !== null) {
+        return ok(noQuote);
+      }
+      return err(this.quoteEngineError(quoteResult.error));
+    }
+
+    return ok(
+      StrategyDecision.quote({
+        quote: quoteResult.value,
+        reasonTags: quoteResult.value.diagnostics.reasonTags,
+        diagnostics: {
+          strategy: this.name,
+          quoteModel: quoteResult.value.diagnostics.quoteModel,
+        },
+      }),
+    );
   }
 
   private buildModelSignals(input: StrategyInput): QuoteModelSignals {
