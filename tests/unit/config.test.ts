@@ -163,6 +163,13 @@ describe("ConfigLoader", () => {
       holdingHorizonSec: 300,
       spreadWideningBpsPerAbsFundingBps: 0.1,
     });
+    expect(fundingAware.quoteEngine.minSpreadBps).toBe(1.6);
+    expect(fundingAware.quoteEngine.sizing.budgetUsd).toBe(1_000);
+    expect(fundingAware.quoteEngine.levels).toEqual([
+      { halfSpreadBps: 0.8, sizeUsd: 500 },
+      { halfSpreadBps: 1.8, sizeUsd: 500 },
+    ]);
+    expect(fundingAware.risk.maxPositionQty).toBe(0.025);
   });
 
   test("resolves configs by venue and preset when CONFIG_PATH is not set", async () => {

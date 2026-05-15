@@ -927,6 +927,9 @@ function snapshotPayload(snapshot: MarketSnapshot): Record<string, unknown> {
     positionUpdatedAt: snapshot.positionUpdatedAt,
     positionQty: snapshot.positionQty,
     marginRatio: snapshot.marginRatio,
+    indexPrice: snapshot.indexPrice,
+    oraclePrice: snapshot.oraclePrice,
+    fundingRateBps: snapshot.fundingRateBps,
     vampPrice: snapshot.vampPrice,
     orderBookLevels: snapshot.orderBookLevels,
     ohlcvPresent:

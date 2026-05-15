@@ -374,6 +374,9 @@ describe("MetricsRecorder", () => {
       bestAsk: 101,
       microPrice: 100.25,
       markPrice: 100,
+      indexPrice: 100.5,
+      oraclePrice: 99.5,
+      fundingRateBps: 3.6,
       timestamp: 1000,
       marginRatio: 0.9,
       unrealizedPnl: 12.25,
@@ -403,6 +406,11 @@ describe("MetricsRecorder", () => {
       bestBid: 99,
       bestAsk: 101,
       midPrice: 100,
+    });
+    expect(repository.snapshots[0]?.rawJson).toMatchObject({
+      indexPrice: 100.5,
+      oraclePrice: 99.5,
+      fundingRateBps: 3.6,
     });
     expect(repository.snapshots[0]?.spreadBps).toBeCloseTo(202.0202, 4);
     expect(repository.accounts).toEqual([

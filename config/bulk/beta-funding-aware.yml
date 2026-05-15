@@ -15,29 +15,28 @@ connections:
 quoteEngine:
   markWeight: 0.25
   bookPriceSource: micro
-  inventoryScale: 0.22
-  timeHorizonSec: 10
-  minSpreadBps: 4.0
-  slideMarginThreshold: 0.06
+  inventoryScale: 0.025
+  timeHorizonSec: 3
+  minSpreadBps: 1.6
+  slideMarginThreshold: 0.02
   defaultTimeInForce: ALO
   sizing:
-    positionSize: 1.0
-    budgetUsd: 45000
-    bidDistanceMultiplier: 1.25
-    askSizeMultiplier: 0.45
+    positionSize: 0.02
+    budgetUsd: 1000
+    bidDistanceMultiplier: 1.2
+    askDistanceMultiplier: 0.9
+    askSizeMultiplier: 1.0
   levels:
-    - halfSpreadBps: 4.0
-      sizeUsd: 15000
-    - halfSpreadBps: 6.4
-      sizeUsd: 15000
-    - halfSpreadBps: 9.6
-      sizeUsd: 15000
+    - halfSpreadBps: 0.8
+      sizeUsd: 500
+    - halfSpreadBps: 1.8
+      sizeUsd: 500
   qualityGate:
     enabled: true
     minAverageMarkoutBps: 0
-    minSamples: 20
-    lookbackFills: 100
-    maxFillAgeMs: 900000
+    minSamples: 8
+    lookbackFills: 40
+    maxFillAgeMs: 600000
     horizonsSec: [5, 30, 300]
   strategy:
     type: funding-aware
@@ -59,7 +58,7 @@ quoteEngine:
         maxRawDriftBps: 200
         maxCiWidthBps: 250
       targetInventory:
-        maxQty: 0.35
+        maxQty: 0.025
         alphaQtyPerBps: 0.025
       funding:
         rateHorizonSec: 3600
@@ -71,15 +70,16 @@ risk:
   mmrBuffer: 0.03
   maxBookAgeMs: 2500
   maxTickerAgeMs: 2500
-  maxPositionQty: 1.25
-  reduceTriggerQty: 1.05
-  reduceTargetQty: 0.25
-  maxUnrealizedLossUsd: 650
-  maxAdverseMoveBps: 220
+  maxPositionQty: 0.025
+  reduceTriggerQty: 0.012
+  reduceTargetQty: 0.003
+  maxUnrealizedLossUsd: 15
+  maxAdverseMoveBps: 35
 
 bot:
   intervalMs: 150
-  maxRestingMs: 3000
+  maxRestingMs: 700
+  exchangeOpenOrderSyncIntervalMs: 1500
 
 shutdown:
   closePositionPolicy: always
