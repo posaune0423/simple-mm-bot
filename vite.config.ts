@@ -42,6 +42,7 @@ export default {
       "@typescript-eslint/no-for-in-array": "error",
       "@typescript-eslint/no-import-type-side-effects": "error",
       "@typescript-eslint/no-misused-promises": "error",
+      "typescript/no-deprecated": "error",
       "@typescript-eslint/no-require-imports": "error",
       "@typescript-eslint/no-unnecessary-condition": "error",
       "@typescript-eslint/no-unnecessary-type-assertion": "error",
@@ -84,7 +85,6 @@ export default {
               paths: [
                 { name: "zod", message: "Use valibot" },
                 { name: "valibot", message: "Keep runtime validation outside the domain layer" },
-                { name: "bun:sqlite", message: "Keep DB access outside the domain layer" },
                 { name: "postgres", message: "Keep DB access outside the domain layer" },
                 { name: "bulk-ts-sdk", message: "Keep SDK imports in adapters" },
                 { name: "@nktkas/hyperliquid", message: "Keep SDK imports in adapters or lib" },

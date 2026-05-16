@@ -1,724 +1,538 @@
 # Database
 
+`simple-mm-bot` uses PostgreSQL with TimescaleDB as the primary runtime database.
+The local repository only keeps the Docker PGDATA volume under `data/timescaledb/`.
+Venue market facts and bot execution facts are stored separately.
+
 ## Database 一覧
 
-| DB                | Path                                   | Owner                       | 内容                                  |
-| ----------------- | -------------------------------------- | --------------------------- | ------------------------------------- |
-| Market DB         | `data/market/<venue>/<yyyy-mm>.sqlite` | `market-data-collector`     | public market facts                   |
-| Run DB            | `data/runs/<venue>.sqlite`             | bot runtime / replay runner | private run facts and accounting      |
-| Legacy metrics DB | `data/mm.db`                           | current runtime             | 現行 metrics schema。移行完了まで維持 |
+| DB            | Path / URL                | Owner                           | 内容                                                               |
+| ------------- | ------------------------- | ------------------------------- | ------------------------------------------------------------------ |
+| Primary DB    | `postgresql://.../mm_bot` | bot runtime, recorder, backtest | TimescaleDB/PostgreSQL primary store for market data and bot facts |
+| Docker volume | `data/timescaledb/`       | `docker compose` `timescaledb`  | Local PGDATA for the development TimescaleDB container             |
+| Analytics     | `analytics_*` SQL views   | PostgreSQL view definitions     | Markout views derived from `market_data_*` and `bot_*` fact tables |
+
+`DATABASE_URL` must start with `postgres://` or `postgresql://`.
+All time columns are epoch milliseconds stored as `BIGINT`.
 
 ## Folder Structure
 
 ```text
 data/
-  market/
-    <venue>/
-      <yyyy-mm>.sqlite
-      <yyyy-mm>.manifest.json
-  runs/
-    <venue>.sqlite
-  strategy-runs/
-    <timestamp>-<label>/
-      manifest.json
-      evaluation.json
-      report.md
-  metrics/
-    <run_id>/
+  timescaledb/
+    pgdata/
 ```
 
-## Market DB Table Roles
+The recorder and bot write runtime facts to TimescaleDB, not to repository-local
+database files. Generated reports or temporary analysis outputs may be created
+under `data/` by explicit scripts, but they are not part of the canonical DB
+layout.
 
-Market DB は venue 別 file。DB には replay に必要な fact と、replay してはいけない時間帯だけを保存する。
-collector の起動情報は DB table にせず、同じ月の `<yyyy-mm>.manifest.json` に保存する。
+## Market Data Table Roles
 
-| Table              | 必要度 | 何を保存するか                               |
-| ------------------ | ------ | -------------------------------------------- |
-| `book_snapshots`   | 必須   | replay input。L2 top-N book                  |
-| `public_trades`    | 必須   | replay / fill model input。public trade tape |
-| `funding_rates`    | 必須   | funding-aware signal / funding PnL input     |
-| `reference_prices` | 必須   | mark/index/oracle。basis と valuation input  |
-| `market_data_gaps` | 必須   | 欠損区間。replay で除外/警告するための記録   |
+| Table                              | Writer                      | Time column   | Role                                                         |
+| ---------------------------------- | --------------------------- | ------------- | ------------------------------------------------------------ |
+| `market_data_order_book_snapshots` | market-data recorder worker | `received_at` | Venue L2 order book snapshots normalized for replay/markouts |
+| `market_data_trades`               | market-data recorder worker | `received_at` | Venue public trade prints                                    |
+| `market_data_tickers`              | market-data recorder worker | `received_at` | Mark/index/last/funding/open-interest facts when available   |
 
-## Market DB ER 図
+The market-data recorder writes only `market_data_*` rows. It must not write
+`bot_*` execution rows.
+
+## Table Details
+
+### `market_data_order_book_snapshots`
+
+Venue L2 book snapshots observed by the recorder.
+
+| Column           | Type               | Null | Default | Description                                                                |
+| ---------------- | ------------------ | ---- | ------- | -------------------------------------------------------------------------- |
+| `id`             | `TEXT`             | No   | -       | Recorder-generated snapshot id. Unique with `received_at` for TimescaleDB. |
+| `venue`          | `TEXT`             | No   | -       | Recorder venue, for example `bulk`.                                        |
+| `symbol`         | `TEXT`             | No   | -       | Venue symbol, for example `BTC-USD`.                                       |
+| `exchange_time`  | `BIGINT`           | Yes  | -       | Venue-provided event time in epoch milliseconds when available.            |
+| `received_at`    | `BIGINT`           | No   | -       | Local recorder receive time in epoch milliseconds. Hypertable time column. |
+| `depth`          | `INTEGER`          | No   | -       | Number of levels captured per side.                                        |
+| `best_bid_price` | `DOUBLE PRECISION` | No   | -       | Top bid price.                                                             |
+| `best_bid_size`  | `DOUBLE PRECISION` | No   | -       | Top bid quantity.                                                          |
+| `best_ask_price` | `DOUBLE PRECISION` | No   | -       | Top ask price.                                                             |
+| `best_ask_size`  | `DOUBLE PRECISION` | No   | -       | Top ask quantity.                                                          |
+| `mid_price`      | `DOUBLE PRECISION` | No   | -       | `(best_bid_price + best_ask_price) / 2`.                                   |
+| `micro_price`    | `DOUBLE PRECISION` | Yes  | -       | BBO size-weighted microprice when computable.                              |
+| `vamp_price`     | `DOUBLE PRECISION` | Yes  | -       | Depth-weighted VAMP price when computable.                                 |
+| `spread_bps`     | `DOUBLE PRECISION` | No   | -       | BBO spread in basis points.                                                |
+| `bids_json`      | `TEXT`             | No   | -       | JSON string of normalized bid levels.                                      |
+| `asks_json`      | `TEXT`             | No   | -       | JSON string of normalized ask levels.                                      |
+| `sequence`       | `TEXT`             | Yes  | -       | Venue sequence or update id when available.                                |
+| `raw_json`       | `TEXT`             | Yes  | -       | Raw venue payload serialized as JSON when retained.                        |
+
+| Index                                  | Unique | Columns                          | Purpose                                                                                   |
+| -------------------------------------- | ------ | -------------------------------- | ----------------------------------------------------------------------------------------- |
+| `md_book_id_received_at_idx`           | Yes    | `id`, `received_at`              | Deduplicate snapshots while satisfying TimescaleDB unique-index time-column requirements. |
+| `md_book_venue_symbol_received_at_idx` | No     | `venue`, `symbol`, `received_at` | Main replay and markout lookup path by venue, symbol, and time.                           |
+| `md_book_symbol_received_at_idx`       | No     | `symbol`, `received_at`          | Symbol-level time scans across venues.                                                    |
+
+### `market_data_trades`
+
+Venue public trade prints observed by the recorder.
+
+| Column           | Type               | Null | Default | Description                                                                 |
+| ---------------- | ------------------ | ---- | ------- | --------------------------------------------------------------------------- |
+| `id`             | `TEXT`             | No   | -       | Recorder-generated trade row id. Unique with `received_at` for TimescaleDB. |
+| `venue`          | `TEXT`             | No   | -       | Recorder venue.                                                             |
+| `symbol`         | `TEXT`             | No   | -       | Venue symbol.                                                               |
+| `trade_id`       | `TEXT`             | Yes  | -       | Venue-provided trade id when available.                                     |
+| `exchange_time`  | `BIGINT`           | Yes  | -       | Venue-provided trade time in epoch milliseconds when available.             |
+| `received_at`    | `BIGINT`           | No   | -       | Local recorder receive time in epoch milliseconds. Hypertable time column.  |
+| `price`          | `DOUBLE PRECISION` | No   | -       | Trade price.                                                                |
+| `quantity`       | `DOUBLE PRECISION` | No   | -       | Trade quantity.                                                             |
+| `side`           | `TEXT`             | Yes  | -       | Normalized trade side, usually `buy`, `sell`, or `unknown`.                 |
+| `aggressor_side` | `TEXT`             | Yes  | -       | Aggressor side when the venue exposes it.                                   |
+| `raw_json`       | `TEXT`             | Yes  | -       | Raw venue payload serialized as JSON when retained.                         |
+
+| Index                                      | Unique | Columns                            | Purpose                                                                                    |
+| ------------------------------------------ | ------ | ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `md_trades_id_received_at_idx`             | Yes    | `id`, `received_at`                | Deduplicate trade rows while satisfying TimescaleDB unique-index time-column requirements. |
+| `md_trades_venue_symbol_received_at_idx`   | No     | `venue`, `symbol`, `received_at`   | Query trades by venue, symbol, and time.                                                   |
+| `md_trades_symbol_received_at_idx`         | No     | `symbol`, `received_at`            | Symbol-level time scans across venues.                                                     |
+| `md_trades_venue_trade_id_received_at_idx` | Yes    | `venue`, `trade_id`, `received_at` | Avoid duplicate venue trade ids at the same observed time.                                 |
+
+### `market_data_tickers`
+
+Ticker, mark, index, funding, and open-interest facts observed by the recorder.
+
+| Column          | Type               | Null | Default | Description                                                                  |
+| --------------- | ------------------ | ---- | ------- | ---------------------------------------------------------------------------- |
+| `id`            | `TEXT`             | No   | -       | Recorder-generated ticker row id. Unique with `received_at` for TimescaleDB. |
+| `venue`         | `TEXT`             | No   | -       | Recorder venue.                                                              |
+| `symbol`        | `TEXT`             | No   | -       | Venue symbol.                                                                |
+| `exchange_time` | `BIGINT`           | Yes  | -       | Venue-provided ticker time in epoch milliseconds when available.             |
+| `received_at`   | `BIGINT`           | No   | -       | Local recorder receive time in epoch milliseconds. Hypertable time column.   |
+| `mark_price`    | `DOUBLE PRECISION` | Yes  | -       | Venue mark price when available.                                             |
+| `index_price`   | `DOUBLE PRECISION` | Yes  | -       | Venue index price when available.                                            |
+| `last_price`    | `DOUBLE PRECISION` | Yes  | -       | Last traded price when available.                                            |
+| `funding_rate`  | `DOUBLE PRECISION` | Yes  | -       | Current or next funding rate when available.                                 |
+| `open_interest` | `DOUBLE PRECISION` | Yes  | -       | Open interest when available.                                                |
+| `raw_json`      | `TEXT`             | Yes  | -       | Raw venue payload serialized as JSON when retained.                          |
+
+| Index                                     | Unique | Columns                          | Purpose                                                                                     |
+| ----------------------------------------- | ------ | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| `md_tickers_id_received_at_idx`           | Yes    | `id`, `received_at`              | Deduplicate ticker rows while satisfying TimescaleDB unique-index time-column requirements. |
+| `md_tickers_venue_symbol_received_at_idx` | No     | `venue`, `symbol`, `received_at` | Query tickers by venue, symbol, and time.                                                   |
+| `md_tickers_symbol_received_at_idx`       | No     | `symbol`, `received_at`          | Symbol-level time scans across venues.                                                      |
+
+### `bot_runs`
+
+One live, paper, backtest, or replay run.
+
+| Column             | Type      | Null | Default | Description                                                             |
+| ------------------ | --------- | ---- | ------- | ----------------------------------------------------------------------- |
+| `id`               | `TEXT`    | No   | -       | Run id. Primary key.                                                    |
+| `mode`             | `TEXT`    | No   | -       | Runtime mode: `live`, `paper`, `backtest`, or `replay`.                 |
+| `venue`            | `TEXT`    | No   | -       | Venue used by the run.                                                  |
+| `symbol`           | `TEXT`    | No   | -       | Symbol used by the run.                                                 |
+| `strategy_name`    | `TEXT`    | No   | -       | Strategy implementation name.                                           |
+| `strategy_version` | `TEXT`    | Yes  | -       | Strategy version when available.                                        |
+| `config_hash`      | `TEXT`    | No   | -       | Stable hash of the effective config.                                    |
+| `config_json`      | `TEXT`    | No   | -       | Effective run config serialized as JSON.                                |
+| `git_sha`          | `TEXT`    | Yes  | -       | Git commit sha when available.                                          |
+| `git_dirty`        | `BOOLEAN` | No   | `false` | Whether the worktree was dirty when the run started.                    |
+| `started_at`       | `BIGINT`  | No   | -       | Run start time in epoch milliseconds.                                   |
+| `ended_at`         | `BIGINT`  | Yes  | -       | Run end time in epoch milliseconds.                                     |
+| `status`           | `TEXT`    | No   | -       | Run status, for example `running`, `completed`, `failed`, or `stopped`. |
+| `stop_reason`      | `TEXT`    | Yes  | -       | Stop or failure reason.                                                 |
+| `metadata_json`    | `TEXT`    | Yes  | -       | Additional run metadata serialized as JSON.                             |
+
+| Index           | Unique | Columns | Purpose                     |
+| --------------- | ------ | ------- | --------------------------- |
+| `bot_runs_pkey` | Yes    | `id`    | Enforce one row per run id. |
+
+### `bot_market_observations`
+
+What the bot saw and computed before making quote decisions.
+
+| Column                    | Type               | Null | Default | Description                                                       |
+| ------------------------- | ------------------ | ---- | ------- | ----------------------------------------------------------------- |
+| `id`                      | `TEXT`             | No   | -       | Observation id. Unique with `observed_at` for TimescaleDB.        |
+| `run_id`                  | `TEXT`             | No   | -       | Owning bot run id.                                                |
+| `observed_at`             | `BIGINT`           | No   | -       | Observation time in epoch milliseconds. Hypertable time column.   |
+| `venue`                   | `TEXT`             | No   | -       | Venue observed by the bot.                                        |
+| `symbol`                  | `TEXT`             | No   | -       | Symbol observed by the bot.                                       |
+| `latest_book_snapshot_id` | `TEXT`             | Yes  | -       | Latest market-data book snapshot id visible to the bot.           |
+| `latest_ticker_id`        | `TEXT`             | Yes  | -       | Latest market-data ticker id visible to the bot.                  |
+| `latest_trade_id`         | `TEXT`             | Yes  | -       | Latest market-data trade id visible to the bot.                   |
+| `local_mid`               | `DOUBLE PRECISION` | Yes  | -       | Bot-local mid price.                                              |
+| `local_micro`             | `DOUBLE PRECISION` | Yes  | -       | Bot-local microprice.                                             |
+| `local_vamp`              | `DOUBLE PRECISION` | Yes  | -       | Bot-local VAMP price.                                             |
+| `mark_price`              | `DOUBLE PRECISION` | Yes  | -       | Mark price used by the bot.                                       |
+| `external_fair`           | `DOUBLE PRECISION` | Yes  | -       | External fair value used by the bot when available.               |
+| `external_age_ms`         | `BIGINT`           | Yes  | -       | Age of the external fair value in milliseconds.                   |
+| `external_diff_bps`       | `DOUBLE PRECISION` | Yes  | -       | Difference between local price and external fair in basis points. |
+| `position_qty`            | `DOUBLE PRECISION` | Yes  | -       | Bot position quantity at observation time.                        |
+| `inventory_notional`      | `DOUBLE PRECISION` | Yes  | -       | Position notional at observation time.                            |
+| `context_json`            | `TEXT`             | Yes  | -       | Additional quote-input context serialized as JSON.                |
+
+| Index                                | Unique | Columns                           | Purpose                                                                                      |
+| ------------------------------------ | ------ | --------------------------------- | -------------------------------------------------------------------------------------------- |
+| `bot_obs_id_observed_at_idx`         | Yes    | `id`, `observed_at`               | Deduplicate observations while satisfying TimescaleDB unique-index time-column requirements. |
+| `bot_obs_run_observed_at_idx`        | No     | `run_id`, `observed_at`           | Read a run's observations in time order.                                                     |
+| `bot_obs_run_symbol_observed_at_idx` | No     | `run_id`, `symbol`, `observed_at` | Read symbol-scoped observations for a run.                                                   |
+
+### `bot_quote_decisions`
+
+Quote decisions produced by the strategy and quote engine.
+
+| Column               | Type               | Null | Default | Description                                                  |
+| -------------------- | ------------------ | ---- | ------- | ------------------------------------------------------------ |
+| `id`                 | `TEXT`             | No   | -       | Quote decision id. Unique with `decided_at` for TimescaleDB. |
+| `run_id`             | `TEXT`             | No   | -       | Owning bot run id.                                           |
+| `observation_id`     | `TEXT`             | Yes  | -       | Input observation id when linked.                            |
+| `decided_at`         | `BIGINT`           | No   | -       | Decision time in epoch milliseconds. Hypertable time column. |
+| `quote_cycle_id`     | `TEXT`             | Yes  | -       | Runtime quote cycle id when available.                       |
+| `venue`              | `TEXT`             | No   | -       | Venue quoted by the bot.                                     |
+| `symbol`             | `TEXT`             | No   | -       | Symbol quoted by the bot.                                    |
+| `fair_price`         | `DOUBLE PRECISION` | No   | -       | Fair price used by the quote engine.                         |
+| `reservation_price`  | `DOUBLE PRECISION` | Yes  | -       | Inventory-adjusted reservation price.                        |
+| `reference_price`    | `DOUBLE PRECISION` | Yes  | -       | Reference price used by the strategy.                        |
+| `sigma`              | `DOUBLE PRECISION` | Yes  | -       | Volatility input.                                            |
+| `gamma`              | `DOUBLE PRECISION` | Yes  | -       | Risk-aversion input.                                         |
+| `kappa`              | `DOUBLE PRECISION` | Yes  | -       | Liquidity or fill-intensity input.                           |
+| `inventory_qty`      | `DOUBLE PRECISION` | Yes  | -       | Position quantity used for the decision.                     |
+| `inventory_skew_bps` | `DOUBLE PRECISION` | Yes  | -       | Inventory-driven quote skew in basis points.                 |
+| `bid_price`          | `DOUBLE PRECISION` | Yes  | -       | Decided bid price when bid quoting is enabled.               |
+| `bid_size`           | `DOUBLE PRECISION` | Yes  | -       | Decided bid quantity.                                        |
+| `ask_price`          | `DOUBLE PRECISION` | Yes  | -       | Decided ask price when ask quoting is enabled.               |
+| `ask_size`           | `DOUBLE PRECISION` | Yes  | -       | Decided ask quantity.                                        |
+| `bid_enabled`        | `BOOLEAN`          | No   | `true`  | Whether the bid side was enabled.                            |
+| `ask_enabled`        | `BOOLEAN`          | No   | `true`  | Whether the ask side was enabled.                            |
+| `spread_bps`         | `DOUBLE PRECISION` | Yes  | -       | Full quoted spread in basis points.                          |
+| `half_spread_bps`    | `DOUBLE PRECISION` | Yes  | -       | Half spread in basis points.                                 |
+| `reason`             | `TEXT`             | Yes  | -       | Short decision reason or skip reason.                        |
+| `decision_json`      | `TEXT`             | Yes  | -       | Full decision diagnostics serialized as JSON.                |
+
+| Index                                  | Unique | Columns                          | Purpose                                                                                   |
+| -------------------------------------- | ------ | -------------------------------- | ----------------------------------------------------------------------------------------- |
+| `bot_quotes_id_decided_at_idx`         | Yes    | `id`, `decided_at`               | Deduplicate decisions while satisfying TimescaleDB unique-index time-column requirements. |
+| `bot_quotes_run_decided_at_idx`        | No     | `run_id`, `decided_at`           | Read quote decisions for a run in time order.                                             |
+| `bot_quotes_run_symbol_decided_at_idx` | No     | `run_id`, `symbol`, `decided_at` | Read symbol-scoped decisions for a run.                                                   |
+
+### `bot_orders`
+
+Orders created, submitted, accepted, canceled, rejected, skipped, or filled by the bot.
+
+| Column              | Type               | Null | Default | Description                                                              |
+| ------------------- | ------------------ | ---- | ------- | ------------------------------------------------------------------------ |
+| `id`                | `TEXT`             | No   | -       | Bot order row id. Unique with `created_at` for TimescaleDB.              |
+| `run_id`            | `TEXT`             | No   | -       | Owning bot run id.                                                       |
+| `quote_decision_id` | `TEXT`             | Yes  | -       | Quote decision that produced the order when linked.                      |
+| `created_at`        | `BIGINT`           | No   | -       | Local order creation time in epoch milliseconds. Hypertable time column. |
+| `submitted_at`      | `BIGINT`           | Yes  | -       | Submission time in epoch milliseconds.                                   |
+| `accepted_at`       | `BIGINT`           | Yes  | -       | Venue acceptance time in epoch milliseconds.                             |
+| `canceled_at`       | `BIGINT`           | Yes  | -       | Cancellation time in epoch milliseconds.                                 |
+| `rejected_at`       | `BIGINT`           | Yes  | -       | Rejection time in epoch milliseconds.                                    |
+| `venue`             | `TEXT`             | No   | -       | Venue receiving the order.                                               |
+| `symbol`            | `TEXT`             | No   | -       | Order symbol.                                                            |
+| `client_order_id`   | `TEXT`             | Yes  | -       | Client order id assigned by the bot.                                     |
+| `venue_order_id`    | `TEXT`             | Yes  | -       | Venue order id when known.                                               |
+| `side`              | `TEXT`             | No   | -       | Order side: `buy` or `sell`.                                             |
+| `order_type`        | `TEXT`             | No   | -       | Order type, for example `limit` or `market`.                             |
+| `price`             | `DOUBLE PRECISION` | Yes  | -       | Limit price, null for price-less market orders.                          |
+| `quantity`          | `DOUBLE PRECISION` | No   | -       | Order quantity.                                                          |
+| `post_only`         | `BOOLEAN`          | Yes  | -       | Whether the order was intended to be post-only.                          |
+| `reduce_only`       | `BOOLEAN`          | Yes  | -       | Whether the order was intended to reduce exposure only.                  |
+| `time_in_force`     | `TEXT`             | Yes  | -       | Time-in-force policy such as `ALO`, `GTC`, or `IOC`.                     |
+| `status`            | `TEXT`             | No   | -       | Latest order status recorded by the bot.                                 |
+| `reason`            | `TEXT`             | Yes  | -       | Status, skip, cancel, or reject reason.                                  |
+| `latency_ms`        | `BIGINT`           | Yes  | -       | Measured venue or local order latency in milliseconds.                   |
+| `raw_json`          | `TEXT`             | Yes  | -       | Raw venue/order payload serialized as JSON when retained.                |
+
+| Index                                | Unique | Columns                     | Purpose                                                                                    |
+| ------------------------------------ | ------ | --------------------------- | ------------------------------------------------------------------------------------------ |
+| `bot_orders_id_created_at_idx`       | Yes    | `id`, `created_at`          | Deduplicate order rows while satisfying TimescaleDB unique-index time-column requirements. |
+| `bot_orders_run_created_at_idx`      | No     | `run_id`, `created_at`      | Read orders for a run in creation-time order.                                              |
+| `bot_orders_run_client_order_id_idx` | No     | `run_id`, `client_order_id` | Resolve bot order rows by run and client order id.                                         |
+| `bot_orders_run_venue_order_id_idx`  | No     | `run_id`, `venue_order_id`  | Resolve bot order rows by run and venue order id.                                          |
+
+### `bot_fills`
+
+Venue fills observed by the bot or fills simulated by future replay/backtest paths.
+
+| Column              | Type               | Null | Default | Description                                               |
+| ------------------- | ------------------ | ---- | ------- | --------------------------------------------------------- |
+| `id`                | `TEXT`             | No   | -       | Fill row id. Unique with `filled_at` for TimescaleDB.     |
+| `run_id`            | `TEXT`             | No   | -       | Owning bot run id.                                        |
+| `order_id`          | `TEXT`             | Yes  | -       | Linked bot order row id when available.                   |
+| `quote_decision_id` | `TEXT`             | Yes  | -       | Linked quote decision id when available.                  |
+| `venue`             | `TEXT`             | No   | -       | Venue where the fill occurred.                            |
+| `symbol`            | `TEXT`             | No   | -       | Fill symbol.                                              |
+| `venue_fill_id`     | `TEXT`             | Yes  | -       | Venue-provided fill id when available.                    |
+| `venue_order_id`    | `TEXT`             | Yes  | -       | Venue-provided order id when available.                   |
+| `client_order_id`   | `TEXT`             | Yes  | -       | Client order id when available.                           |
+| `filled_at`         | `BIGINT`           | No   | -       | Fill time in epoch milliseconds. Hypertable time column.  |
+| `received_at`       | `BIGINT`           | Yes  | -       | Local receive time in epoch milliseconds.                 |
+| `side`              | `TEXT`             | No   | -       | Filled side: `buy` or `sell`.                             |
+| `price`             | `DOUBLE PRECISION` | No   | -       | Fill price.                                               |
+| `quantity`          | `DOUBLE PRECISION` | No   | -       | Fill quantity.                                            |
+| `fee`               | `DOUBLE PRECISION` | Yes  | -       | Fee amount when available.                                |
+| `fee_asset`         | `TEXT`             | Yes  | -       | Fee asset when available.                                 |
+| `liquidity`         | `TEXT`             | Yes  | -       | Liquidity classification: `maker`, `taker`, or `unknown`. |
+| `raw_json`          | `TEXT`             | Yes  | -       | Raw venue fill payload serialized as JSON when retained.  |
+
+| Index                                | Unique | Columns                         | Purpose                                                                                   |
+| ------------------------------------ | ------ | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `bot_fills_id_filled_at_idx`         | Yes    | `id`, `filled_at`               | Deduplicate fill rows while satisfying TimescaleDB unique-index time-column requirements. |
+| `bot_fills_run_filled_at_idx`        | No     | `run_id`, `filled_at`           | Read fills for a run in fill-time order.                                                  |
+| `bot_fills_run_symbol_filled_at_idx` | No     | `run_id`, `symbol`, `filled_at` | Read symbol-scoped fills for a run.                                                       |
+| `bot_fills_venue_fill_id_idx`        | No     | `venue`, `venue_fill_id`        | Resolve fills by venue fill id when provided.                                             |
+
+## Market Data ER 図
 
 ```mermaid
 erDiagram
-    book_snapshots {
-        text id PK
-        text market
-        bigint exchange_ts
-        bigint received_at
-        bigint observed_at
-        bigint ingest_seq
-        double best_bid
-        double best_ask
-        double best_bid_size
-        double best_ask_size
-        text levels_json
-    }
+  market_data_order_book_snapshots {
+    text id
+    text venue
+    text symbol
+    bigint exchange_time
+    bigint received_at
+    integer depth
+    double best_bid_price
+    double best_bid_size
+    double best_ask_price
+    double best_ask_size
+    double mid_price
+    double micro_price
+    double vamp_price
+    double spread_bps
+    text bids_json
+    text asks_json
+    text sequence
+    text raw_json
+  }
 
-    public_trades {
-        text id PK
-        text market
-        text venue_trade_id
-        text side
-        bigint trade_ts
-        bigint received_at
-        double price
-        double quantity
-        text maker_side
-    }
+  market_data_trades {
+    text id
+    text venue
+    text symbol
+    text trade_id
+    bigint exchange_time
+    bigint received_at
+    double price
+    double quantity
+    text side
+    text aggressor_side
+    text raw_json
+  }
 
-    funding_rates {
-        text id PK
-        text market
-        bigint effective_at
-        double funding_rate_bps
-        int interval_sec
-        bigint received_at
-        text source
-        text raw_json
-    }
-
-    reference_prices {
-        text id PK
-        text market
-        text price_type
-        bigint exchange_ts
-        bigint observed_at
-        bigint received_at
-        double price
-        text source
-        text raw_json
-    }
-
-    market_data_gaps {
-        text id PK
-        text market
-        text source
-        text gap_type
-        bigint from_ts
-        bigint to_ts
-        bigint duration_ms
-        text note
-    }
+  market_data_tickers {
+    text id
+    text venue
+    text symbol
+    bigint exchange_time
+    bigint received_at
+    double mark_price
+    double index_price
+    double last_price
+    double funding_rate
+    double open_interest
+    text raw_json
+  }
 ```
 
-## Run DB ER 図
+Index summary:
+
+| Table                              | Indexes                                                                                                                                                  |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `market_data_order_book_snapshots` | `md_book_id_received_at_idx`, `md_book_venue_symbol_received_at_idx`, `md_book_symbol_received_at_idx`                                                   |
+| `market_data_trades`               | `md_trades_id_received_at_idx`, `md_trades_venue_symbol_received_at_idx`, `md_trades_symbol_received_at_idx`, `md_trades_venue_trade_id_received_at_idx` |
+| `market_data_tickers`              | `md_tickers_id_received_at_idx`, `md_tickers_venue_symbol_received_at_idx`, `md_tickers_symbol_received_at_idx`                                          |
+
+Hypertables:
+
+| Table                              | Time column   | Chunk interval |
+| ---------------------------------- | ------------- | -------------- |
+| `market_data_order_book_snapshots` | `received_at` | `21600000` ms  |
+| `market_data_trades`               | `received_at` | `86400000` ms  |
+| `market_data_tickers`              | `received_at` | `86400000` ms  |
+
+## Bot Execution ER 図
 
 ```mermaid
 erDiagram
-    runs {
-        text id PK
-        text mode
-        text venue
-        text market
-        text strategy_name
-        text config_json
-        text config_hash
-        text git_sha
-        int git_dirty
-        text status
-        bigint started_at
-        bigint ended_at
-        text stop_reason
-    }
+  bot_runs ||--o{ bot_market_observations : has
+  bot_runs ||--o{ bot_quote_decisions : has
+  bot_runs ||--o{ bot_orders : has
+  bot_runs ||--o{ bot_fills : has
+  bot_market_observations ||--o{ bot_quote_decisions : informs
+  bot_quote_decisions ||--o{ bot_orders : creates
+  bot_quote_decisions ||--o{ bot_fills : attributes
+  bot_orders ||--o{ bot_fills : fills
 
-    replay_runs {
-        text id PK
-        text run_id FK
-        text dataset_manifest_path
-        text market_db_path
-        bigint from_ts
-        bigint to_ts
-        text latency_model
-        text fill_model_version
-        bigint simulation_seed
-        bigint created_at
-    }
+  bot_runs {
+    text id PK
+    text mode
+    text venue
+    text symbol
+    text strategy_name
+    text strategy_version
+    text config_hash
+    text config_json
+    text git_sha
+    boolean git_dirty
+    bigint started_at
+    bigint ended_at
+    text status
+    text stop_reason
+    text metadata_json
+  }
 
-    quote_cycles {
-        text id PK
-        text run_id FK
-        text market
-        bigint cycle_seq
-        bigint started_at
-        bigint completed_at
-        text book_snapshot_id
-        text status
-        double position_qty
-        text raw_json
-    }
+  bot_market_observations {
+    text id
+    text run_id
+    bigint observed_at
+    text venue
+    text symbol
+    text latest_book_snapshot_id
+    text latest_ticker_id
+    text latest_trade_id
+    double local_mid
+    double local_micro
+    double local_vamp
+    double mark_price
+    double external_fair
+    bigint external_age_ms
+    double external_diff_bps
+    double position_qty
+    double inventory_notional
+    text context_json
+  }
 
-    quote_decisions {
-        text id PK
-        text quote_cycle_id FK
-        text run_id FK
-        text side
-        int level
-        text intent
-        double price
-        double quantity
-        double fair_price
-        text model_name
-        double alpha_drift_bps
-        double expected_funding_bps
-        double basis_bps
-        double target_inventory_qty
-        double inventory_error_qty
-        text reason_tags_json
-        bigint created_at
-    }
+  bot_quote_decisions {
+    text id
+    text run_id
+    text observation_id
+    bigint decided_at
+    text quote_cycle_id
+    text venue
+    text symbol
+    double fair_price
+    double reservation_price
+    double reference_price
+    double sigma
+    double gamma
+    double kappa
+    double inventory_qty
+    double inventory_skew_bps
+    double bid_price
+    double bid_size
+    double ask_price
+    double ask_size
+    boolean bid_enabled
+    boolean ask_enabled
+    double spread_bps
+    double half_spread_bps
+    text reason
+    text decision_json
+  }
 
-    orders {
-        text id PK
-        text run_id FK
-        text client_order_id
-        text venue_order_id
-        text market
-        text side
-        text intent
-        text order_type
-        text time_in_force
-        double limit_price
-        double quantity
-        text status
-        bigint submitted_at
-        bigint accepted_at
-        bigint canceled_at
-        bigint rejected_at
-        bigint filled_at
-        text reject_reason
-        text raw_json
-    }
+  bot_orders {
+    text id
+    text run_id
+    text quote_decision_id
+    bigint created_at
+    bigint submitted_at
+    bigint accepted_at
+    bigint canceled_at
+    bigint rejected_at
+    text venue
+    text symbol
+    text client_order_id
+    text venue_order_id
+    text side
+    text order_type
+    double price
+    double quantity
+    boolean post_only
+    boolean reduce_only
+    text time_in_force
+    text status
+    text reason
+    bigint latency_ms
+    text raw_json
+  }
 
-    order_events {
-        text id PK
-        text run_id FK
-        text order_id FK
-        text client_order_id
-        text venue_order_id
-        text action
-        text side
-        double price
-        double quantity
-        text status
-        bigint observed_at
-        bigint latency_ms
-        text raw_json
-    }
-
-    fills {
-        text id PK
-        text run_id FK
-        text order_id FK
-        text venue_fill_id
-        text venue_order_id
-        text market
-        text side
-        double price
-        double quantity
-        double fee
-        double rebate
-        text maker_taker
-        bigint filled_at
-        text raw_json
-    }
-
-    position_snapshots {
-        text id PK
-        text run_id FK
-        text market
-        bigint observed_at
-        double position_qty
-        double entry_price
-        double mark_price
-        double unrealized_pnl
-        text raw_json
-    }
-
-    account_snapshots {
-        text id PK
-        text run_id FK
-        bigint observed_at
-        double balance
-        double equity
-        double margin_ratio
-        double realized_pnl
-        double unrealized_pnl
-        text raw_json
-    }
-
-    funding_accruals {
-        text id PK
-        text run_id FK
-        text market
-        double position_qty
-        double notional
-        double funding_rate_bps
-        bigint funding_interval_start
-        bigint funding_interval_end
-        bigint accrual_start
-        bigint accrual_end
-        double amount
-        text currency
-        text source
-        bigint created_at
-    }
-
-    ledger_entries {
-        text id PK
-        text run_id FK
-        text market
-        text source_table
-        text source_id
-        text entry_type
-        double amount
-        text currency
-        bigint realized_at
-        text raw_json
-    }
-
-    runtime_events {
-        text id PK
-        text run_id FK
-        text market
-        text level
-        text code
-        text message
-        bigint observed_at
-        text raw_json
-    }
-
-    runs ||--o{ replay_runs : has
-    runs ||--o{ quote_cycles : has
-    quote_cycles ||--o{ quote_decisions : has
-    runs ||--o{ orders : submits
-    orders ||--o{ order_events : emits
-    orders ||--o{ fills : fills
-    runs ||--o{ position_snapshots : observes
-    runs ||--o{ account_snapshots : observes
-    runs ||--o{ funding_accruals : accrues
-    runs ||--o{ ledger_entries : posts
-    runs ||--o{ runtime_events : emits
+  bot_fills {
+    text id
+    text run_id
+    text order_id
+    text quote_decision_id
+    text venue
+    text symbol
+    text venue_fill_id
+    text venue_order_id
+    text client_order_id
+    bigint filled_at
+    bigint received_at
+    text side
+    double price
+    double quantity
+    double fee
+    text fee_asset
+    text liquidity
+    text raw_json
+  }
 ```
 
-## Market DB Tables
-
-Key: 🔑 PK / 🔗 FK / ⭐ Unique key / 📌 Indexed。複合 key は対象列すべてに付ける。
-
-### `book_snapshots`
-
-L2 book の snapshot。top-N levels は JSON で保存する。
-
-| Column          | Type     | Key | Required | Note                 |
-| --------------- | -------- | --- | -------- | -------------------- |
-| `id`            | `text`   | 🔑  | yes      | snapshot id          |
-| `market`        | `text`   | 📌  | yes      | venue market symbol  |
-| `exchange_ts`   | `bigint` |     | no       | venue timestamp      |
-| `received_at`   | `bigint` |     | yes      | local receive time   |
-| `observed_at`   | `bigint` | 📌  | yes      | normalized time      |
-| `ingest_seq`    | `bigint` | 📌  | yes      | collector sequence   |
-| `best_bid`      | `double` |     | yes      | top bid price        |
-| `best_ask`      | `double` |     | yes      | top ask price        |
-| `best_bid_size` | `double` |     | yes      | top bid quantity     |
-| `best_ask_size` | `double` |     | yes      | top ask quantity     |
-| `levels_json`   | `text`   |     | yes      | top-N bid/ask levels |
-
-Indexes:
-
-- `idx_book_snapshots_market_time` (`market`, `observed_at`)
-- `idx_book_snapshots_market_seq` (`market`, `ingest_seq`)
-
-### `public_trades`
-
-public trade tape。
-
-| Column           | Type     | Key  | Required | Note                   |
-| ---------------- | -------- | ---- | -------- | ---------------------- |
-| `id`             | `text`   | 🔑   | yes      | trade row id           |
-| `market`         | `text`   | 📌⭐ | yes      | venue market symbol    |
-| `venue_trade_id` | `text`   | ⭐   | no       | venue trade id         |
-| `side`           | `text`   |      | no       | aggressor side         |
-| `price`          | `double` |      | yes      | trade price            |
-| `quantity`       | `double` |      | yes      | trade quantity         |
-| `trade_ts`       | `bigint` | 📌   | yes      | venue trade time       |
-| `received_at`    | `bigint` |      | yes      | local receive time     |
-| `maker_side`     | `text`   |      | no       | maker side if known    |
-| `raw_json`       | `text`   |      | no       | source payload summary |
-
-Indexes:
-
-- `idx_public_trades_market_time` (`market`, `trade_ts`)
-- `idx_public_trades_venue_id` (`market`, `venue_trade_id`) ⭐
-
-### `funding_rates`
-
-market-level funding rate。
-
-| Column             | Type      | Key | Required | Note                   |
-| ------------------ | --------- | --- | -------- | ---------------------- |
-| `id`               | `text`    | 🔑  | yes      | funding row id         |
-| `market`           | `text`    | ⭐  | yes      | venue market symbol    |
-| `funding_rate_bps` | `double`  |     | yes      | funding rate in bps    |
-| `interval_sec`     | `integer` |     | yes      | funding interval       |
-| `effective_at`     | `bigint`  | ⭐  | yes      | funding effective time |
-| `received_at`      | `bigint`  |     | yes      | local receive time     |
-| `source`           | `text`    |     | yes      | venue/source name      |
-| `raw_json`         | `text`    |     | no       | source payload summary |
-
-Indexes:
-
-- `idx_funding_rates_market_effective` (`market`, `effective_at`) ⭐
-
-### `reference_prices`
-
-mark/index/oracle price。
-
-| Column        | Type     | Key | Required | Note                  |
-| ------------- | -------- | --- | -------- | --------------------- |
-| `id`          | `text`   | 🔑  | yes      | price row id          |
-| `market`      | `text`   | 📌  | yes      | venue market symbol   |
-| `price_type`  | `text`   | 📌  | yes      | mark / index / oracle |
-| `price`       | `double` |     | yes      | observed price        |
-| `exchange_ts` | `bigint` |     | no       | source timestamp      |
-| `observed_at` | `bigint` | 📌  | yes      | normalized time       |
-| `received_at` | `bigint` |     | yes      | local receive time    |
-| `source`      | `text`   |     | yes      | venue/source name     |
-| `raw_json`    | `text`   |     | no       | source summary        |
-
-Indexes:
-
-- `idx_reference_prices_market_type_time` (`market`, `price_type`, `observed_at`)
-
-### `market_data_gaps`
-
-market data collection gap。backtest input ではなく、欠損区間を避ける/評価から除外するための ops/audit table。
-
-| Column        | Type     | Key | Required | Note                    |
-| ------------- | -------- | --- | -------- | ----------------------- |
-| `id`          | `text`   | 🔑  | yes      | gap row id              |
-| `market`      | `text`   | 📌  | no       | nullable venue-wide gap |
-| `source`      | `text`   |     | yes      | stream/source name      |
-| `gap_type`    | `text`   |     | yes      | reconnect/stale/seq gap |
-| `from_ts`     | `bigint` | 📌  | yes      | gap start               |
-| `to_ts`       | `bigint` | 📌  | yes      | gap end                 |
-| `duration_ms` | `bigint` |     | yes      | gap length              |
-| `note`        | `text`   |     | no       | nullable                |
-
-Indexes:
-
-- `idx_market_data_gaps_market_time` (`market`, `from_ts`, `to_ts`)
-
-## Run DB Tables
-
-Key: 🔑 PK / 🔗 FK / ⭐ Unique key / 📌 Indexed。複合 key は対象列すべてに付ける。
-
-### `runs`
-
-bot / replay の実行単位。
-
-| Column          | Type      | Key | Required | Note                  |
-| --------------- | --------- | --- | -------- | --------------------- |
-| `id`            | `text`    | 🔑  | yes      | run id                |
-| `mode`          | `text`    | 📌  | yes      | live/paper/backtest   |
-| `venue`         | `text`    |     | yes      | e.g. `bulk`           |
-| `market`        | `text`    | 📌  | yes      | venue market symbol   |
-| `strategy_name` | `text`    |     | yes      | strategy id           |
-| `config_json`   | `text`    |     | yes      | sanitized config      |
-| `config_hash`   | `text`    |     | yes      | stable config hash    |
-| `git_sha`       | `text`    |     | no       | nullable              |
-| `git_dirty`     | `integer` |     | yes      | 0 / 1                 |
-| `started_at`    | `bigint`  | 📌  | yes      | epoch ms              |
-| `ended_at`      | `bigint`  |     | no       | epoch ms              |
-| `status`        | `text`    |     | yes      | running/completed/... |
-| `stop_reason`   | `text`    |     | no       | nullable              |
-
-Indexes:
-
-- `idx_runs_started` (`started_at`)
-- `idx_runs_mode_market_started` (`mode`, `market`, `started_at`)
-
-### `replay_runs`
-
-backtest/replay の再現情報。
-
-| Column                  | Type     | Key  | Required | Note                   |
-| ----------------------- | -------- | ---- | -------- | ---------------------- |
-| `id`                    | `text`   | 🔑   | yes      | replay row id          |
-| `run_id`                | `text`   | 🔗⭐ | yes      | `runs.id`              |
-| `dataset_manifest_path` | `text`   |      | yes      | manifest path          |
-| `market_db_path`        | `text`   |      | yes      | replay source DB       |
-| `from_ts`               | `bigint` |      | yes      | replay start           |
-| `to_ts`                 | `bigint` |      | yes      | replay end             |
-| `latency_model`         | `text`   |      | yes      | latency model id       |
-| `fill_model_version`    | `text`   |      | yes      | fill simulator version |
-| `simulation_seed`       | `bigint` |      | yes      | deterministic seed     |
-| `created_at`            | `bigint` |      | yes      | epoch ms               |
-
-Indexes:
-
-- `idx_replay_runs_run` (`run_id`) ⭐
-
-### `quote_cycles`
-
-quote decision cycle。
-
-| Column             | Type     | Key  | Required | Note                      |
-| ------------------ | -------- | ---- | -------- | ------------------------- |
-| `id`               | `text`   | 🔑   | yes      | cycle id                  |
-| `run_id`           | `text`   | 🔗⭐ | yes      | `runs.id`                 |
-| `market`           | `text`   |      | yes      | venue market symbol       |
-| `cycle_seq`        | `bigint` | ⭐   | yes      | run-local sequence        |
-| `started_at`       | `bigint` | 📌   | yes      | epoch ms                  |
-| `completed_at`     | `bigint` |      | no       | epoch ms                  |
-| `status`           | `text`   |      | yes      | quoted/skipped/failed     |
-| `book_snapshot_id` | `text`   |      | no       | logical Market DB ref     |
-| `position_qty`     | `double` |      | no       | position at decision time |
-| `raw_json`         | `text`   |      | no       | compact context           |
-
-Indexes:
-
-- `idx_quote_cycles_run_seq` (`run_id`, `cycle_seq`) ⭐
-- `idx_quote_cycles_run_time` (`run_id`, `started_at`)
-
-### `quote_decisions`
-
-bot が出した quote intent。
-
-| Column                 | Type      | Key  | Required | Note                     |
-| ---------------------- | --------- | ---- | -------- | ------------------------ |
-| `id`                   | `text`    | 🔑   | yes      | decision id              |
-| `run_id`               | `text`    | 🔗📌 | yes      | `runs.id`                |
-| `quote_cycle_id`       | `text`    | 🔗⭐ | yes      | `quote_cycles.id`        |
-| `side`                 | `text`    | ⭐   | yes      | buy/sell                 |
-| `level`                | `integer` | ⭐   | yes      | ladder level             |
-| `intent`               | `text`    |      | yes      | quote/reduce/disabled    |
-| `price`                | `double`  |      | yes      | planned price            |
-| `quantity`             | `double`  |      | yes      | planned quantity         |
-| `fair_price`           | `double`  |      | yes      | model fair price         |
-| `model_name`           | `text`    |      | yes      | quote model id           |
-| `alpha_drift_bps`      | `double`  |      | no       | funding-aware diagnostic |
-| `expected_funding_bps` | `double`  |      | no       | funding-aware diagnostic |
-| `basis_bps`            | `double`  |      | no       | funding-aware diagnostic |
-| `target_inventory_qty` | `double`  |      | no       | funding-aware diagnostic |
-| `inventory_error_qty`  | `double`  |      | no       | funding-aware diagnostic |
-| `reason_tags_json`     | `text`    |      | no       | gate/control reasons     |
-| `created_at`           | `bigint`  | 📌   | yes      | epoch ms                 |
-
-Indexes:
-
-- `idx_quote_decisions_cycle_side_level` (`quote_cycle_id`, `side`, `level`) ⭐
-- `idx_quote_decisions_run_created` (`run_id`, `created_at`)
-
-### `orders`
-
-order state projection。
-
-| Column            | Type     | Key  | Required | Note                |
-| ----------------- | -------- | ---- | -------- | ------------------- |
-| `id`              | `text`   | 🔑   | yes      | order id            |
-| `run_id`          | `text`   | 🔗⭐ | yes      | `runs.id`           |
-| `client_order_id` | `text`   | ⭐   | yes      | bot-generated id    |
-| `venue_order_id`  | `text`   | 📌   | no       | venue ack id        |
-| `market`          | `text`   |      | yes      | venue market symbol |
-| `side`            | `text`   |      | yes      | buy/sell            |
-| `intent`          | `text`   |      | yes      | quote/reduce/close  |
-| `order_type`      | `text`   |      | yes      | limit/market        |
-| `time_in_force`   | `text`   |      | yes      | e.g. GTC            |
-| `limit_price`     | `double` |      | no       | nullable            |
-| `quantity`        | `double` |      | yes      | order quantity      |
-| `status`          | `text`   | 📌   | yes      | normalized state    |
-| `submitted_at`    | `bigint` |      | yes      | epoch ms            |
-| `accepted_at`     | `bigint` |      | no       | epoch ms            |
-| `canceled_at`     | `bigint` |      | no       | epoch ms            |
-| `rejected_at`     | `bigint` |      | no       | epoch ms            |
-| `filled_at`       | `bigint` |      | no       | epoch ms            |
-| `reject_reason`   | `text`   |      | no       | nullable            |
-| `raw_json`        | `text`   |      | no       | venue response      |
-
-Indexes:
-
-- `idx_orders_run_client` (`run_id`, `client_order_id`) ⭐
-- `idx_orders_run_venue_order` (`run_id`, `venue_order_id`)
-- `idx_orders_run_status` (`run_id`, `status`)
-
-### `order_events`
-
-order lifecycle event stream。
-
-| Column            | Type     | Key  | Required | Note                     |
-| ----------------- | -------- | ---- | -------- | ------------------------ |
-| `id`              | `text`   | 🔑   | yes      | event id                 |
-| `run_id`          | `text`   | 🔗📌 | yes      | `runs.id`                |
-| `order_id`        | `text`   | 🔗📌 | no       | `orders.id` when known   |
-| `client_order_id` | `text`   |      | no       | bot-generated id         |
-| `venue_order_id`  | `text`   |      | no       | venue order id           |
-| `action`          | `text`   |      | yes      | submit/ack/reject/cancel |
-| `side`            | `text`   |      | no       | buy/sell                 |
-| `price`           | `double` |      | no       | event price              |
-| `quantity`        | `double` |      | no       | event quantity           |
-| `status`          | `text`   |      | no       | normalized status        |
-| `latency_ms`      | `bigint` |      | no       | observed latency         |
-| `observed_at`     | `bigint` | 📌   | yes      | epoch ms                 |
-| `raw_json`        | `text`   |      | no       | venue payload            |
-
-Indexes:
-
-- `idx_order_events_run_time` (`run_id`, `observed_at`)
-- `idx_order_events_order_time` (`order_id`, `observed_at`)
-
-### `fills`
-
-execution fact。
-
-| Column           | Type     | Key  | Required | Note                |
-| ---------------- | -------- | ---- | -------- | ------------------- |
-| `id`             | `text`   | 🔑   | yes      | fill row id         |
-| `run_id`         | `text`   | 🔗⭐ | yes      | `runs.id`           |
-| `order_id`       | `text`   | 🔗📌 | no       | `orders.id`         |
-| `venue_fill_id`  | `text`   | ⭐   | yes      | venue/generated id  |
-| `venue_order_id` | `text`   |      | no       | venue order id      |
-| `market`         | `text`   |      | yes      | venue market symbol |
-| `side`           | `text`   |      | yes      | buy/sell            |
-| `price`          | `double` |      | yes      | execution price     |
-| `quantity`       | `double` |      | yes      | executed quantity   |
-| `fee`            | `double` |      | yes      | fee amount          |
-| `rebate`         | `double` |      | yes      | rebate amount       |
-| `maker_taker`    | `text`   |      | yes      | maker/taker/unknown |
-| `filled_at`      | `bigint` | 📌   | yes      | epoch ms            |
-| `raw_json`       | `text`   |      | no       | fill summary        |
-
-Indexes:
-
-- `idx_fills_run_time` (`run_id`, `filled_at`)
-- `idx_fills_run_venue_fill` (`run_id`, `venue_fill_id`) ⭐
-- `idx_fills_order` (`order_id`)
-
-### `position_snapshots`
-
-position timeline。
-
-| Column           | Type     | Key  | Required | Note                 |
-| ---------------- | -------- | ---- | -------- | -------------------- |
-| `id`             | `text`   | 🔑   | yes      | snapshot id          |
-| `run_id`         | `text`   | 🔗⭐ | yes      | `runs.id`            |
-| `market`         | `text`   | ⭐   | yes      | venue market symbol  |
-| `observed_at`    | `bigint` | ⭐   | yes      | epoch ms             |
-| `position_qty`   | `double` |      | yes      | signed base quantity |
-| `entry_price`    | `double` |      | no       | nullable             |
-| `mark_price`     | `double` |      | no       | valuation price      |
-| `unrealized_pnl` | `double` |      | no       | venue/account value  |
-| `raw_json`       | `text`   |      | no       | source summary       |
-
-Indexes:
-
-- `idx_position_snapshots_run_market_time` (`run_id`, `market`, `observed_at`) ⭐
-
-### `account_snapshots`
-
-account equity/risk timeline。
-
-| Column           | Type     | Key  | Required | Note                |
-| ---------------- | -------- | ---- | -------- | ------------------- |
-| `id`             | `text`   | 🔑   | yes      | snapshot id         |
-| `run_id`         | `text`   | 🔗⭐ | yes      | `runs.id`           |
-| `observed_at`    | `bigint` | ⭐   | yes      | epoch ms            |
-| `balance`        | `double` |      | no       | account balance     |
-| `equity`         | `double` |      | no       | account equity      |
-| `margin_ratio`   | `double` |      | no       | venue risk metric   |
-| `realized_pnl`   | `double` |      | no       | venue/account value |
-| `unrealized_pnl` | `double` |      | no       | venue/account value |
-| `raw_json`       | `text`   |      | no       | source summary      |
-
-Indexes:
-
-- `idx_account_snapshots_run_time` (`run_id`, `observed_at`) ⭐
-
-### `funding_accruals`
-
-funding cashflow fact。
-
-| Column                   | Type     | Key  | Required | Note                  |
-| ------------------------ | -------- | ---- | -------- | --------------------- |
-| `id`                     | `text`   | 🔑   | yes      | accrual id            |
-| `run_id`                 | `text`   | 🔗📌 | yes      | `runs.id`             |
-| `market`                 | `text`   | 📌   | yes      | venue market symbol   |
-| `position_qty`           | `double` |      | yes      | signed position       |
-| `notional`               | `double` |      | yes      | position notional     |
-| `funding_rate_bps`       | `double` |      | yes      | applied funding rate  |
-| `funding_interval_start` | `bigint` |      | yes      | source interval start |
-| `funding_interval_end`   | `bigint` |      | yes      | source interval end   |
-| `accrual_start`          | `bigint` |      | yes      | held interval start   |
-| `accrual_end`            | `bigint` | 📌   | yes      | held interval end     |
-| `amount`                 | `double` |      | yes      | signed cashflow       |
-| `currency`               | `text`   |      | yes      | quote currency        |
-| `source`                 | `text`   |      | yes      | venue/replay          |
-| `created_at`             | `bigint` |      | yes      | epoch ms              |
-
-Indexes:
-
-- `idx_funding_accruals_run_market_end` (`run_id`, `market`, `accrual_end`)
-
-### `ledger_entries`
-
-accounting source of truth。
-
-| Column         | Type     | Key  | Required | Note                        |
-| -------------- | -------- | ---- | -------- | --------------------------- |
-| `id`           | `text`   | 🔑   | yes      | ledger entry id             |
-| `run_id`       | `text`   | 🔗📌 | yes      | `runs.id`                   |
-| `market`       | `text`   |      | no       | nullable account-wide entry |
-| `source_table` | `text`   | ⭐   | no       | fills/funding_accruals/etc  |
-| `source_id`    | `text`   | ⭐   | no       | source row id               |
-| `entry_type`   | `text`   | ⭐📌 | yes      | trade/funding/fee/etc       |
-| `amount`       | `double` |      | yes      | signed amount               |
-| `currency`     | `text`   |      | yes      | accounting currency         |
-| `realized_at`  | `bigint` | 📌   | yes      | epoch ms                    |
-| `raw_json`     | `text`   |      | no       | source summary              |
-
-Indexes:
-
-- `idx_ledger_entries_run_time` (`run_id`, `realized_at`)
-- `idx_ledger_entries_source` (`source_table`, `source_id`, `entry_type`) ⭐
-- `idx_ledger_entries_run_type` (`run_id`, `entry_type`)
-
-### `runtime_events`
-
-runtime health / incident fact。
-
-| Column        | Type     | Key  | Required | Note                         |
-| ------------- | -------- | ---- | -------- | ---------------------------- |
-| `id`          | `text`   | 🔑   | yes      | event id                     |
-| `run_id`      | `text`   | 🔗📌 | yes      | `runs.id`                    |
-| `market`      | `text`   |      | no       | nullable run-wide event      |
-| `level`       | `text`   |      | yes      | info/warn/error              |
-| `code`        | `text`   | 📌   | yes      | stable machine-readable code |
-| `message`     | `text`   |      | yes      | short message                |
-| `observed_at` | `bigint` | 📌   | yes      | epoch ms                     |
-| `raw_json`    | `text`   |      | no       | context                      |
-
-Indexes:
-
-- `idx_runtime_events_run_time` (`run_id`, `observed_at`)
-- `idx_runtime_events_run_code` (`run_id`, `code`)
-
-## Logical Cross-DB References
-
-| From                                | To                                                     | Note                                    |
-| ----------------------------------- | ------------------------------------------------------ | --------------------------------------- |
-| `quote_cycles.book_snapshot_id`     | Market DB `book_snapshots.id`                          | SQLite file 分割のため physical FK なし |
-| `replay_runs.market_db_path`        | `data/market/<venue>/<yyyy-mm>.sqlite`                 | replay source                           |
-| `replay_runs.dataset_manifest_path` | `data/strategy-runs/<timestamp>-<label>/manifest.json` | replay dataset definition               |
-
-## PnL Source
-
-| Metric        | Source                                                   |
-| ------------- | -------------------------------------------------------- |
-| trade PnL     | `ledger_entries.entry_type = 'realized_trade_pnl'`       |
-| inventory PnL | `ledger_entries.entry_type = 'unrealized_inventory_pnl'` |
-| fee           | `ledger_entries.entry_type = 'fee'`                      |
-| rebate        | `ledger_entries.entry_type = 'rebate'`                   |
-| funding PnL   | `ledger_entries.entry_type = 'funding_pnl'`              |
-| net PnL       | `SUM(ledger_entries.amount)`                             |
+Index summary:
+
+| Table                     | Indexes                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bot_runs`                | `bot_runs_pkey`                                                                                                                            |
+| `bot_market_observations` | `bot_obs_id_observed_at_idx`, `bot_obs_run_observed_at_idx`, `bot_obs_run_symbol_observed_at_idx`                                          |
+| `bot_quote_decisions`     | `bot_quotes_id_decided_at_idx`, `bot_quotes_run_decided_at_idx`, `bot_quotes_run_symbol_decided_at_idx`                                    |
+| `bot_orders`              | `bot_orders_id_created_at_idx`, `bot_orders_run_created_at_idx`, `bot_orders_run_client_order_id_idx`, `bot_orders_run_venue_order_id_idx` |
+| `bot_fills`               | `bot_fills_id_filled_at_idx`, `bot_fills_run_filled_at_idx`, `bot_fills_run_symbol_filled_at_idx`, `bot_fills_venue_fill_id_idx`           |
+
+Hypertables:
+
+| Table                     | Time column   | Chunk interval |
+| ------------------------- | ------------- | -------------- |
+| `bot_market_observations` | `observed_at` | `86400000` ms  |
+| `bot_quote_decisions`     | `decided_at`  | `86400000` ms  |
+| `bot_orders`              | `created_at`  | `86400000` ms  |
+| `bot_fills`               | `filled_at`   | `86400000` ms  |
+
+## Analytics Views
+
+| View                       | Base facts                                   | Semantics                                                    |
+| -------------------------- | -------------------------------------------- | ------------------------------------------------------------ |
+| `analytics_quote_markouts` | `bot_quote_decisions`, future book snapshots | Quote-decision bid/ask/center markout at 1s, 5s, 30s, and 5m |
+| `analytics_fill_markouts`  | `bot_fills`, future book snapshots           | Actual fill markout at 1s, 5s, 30s, and 5m                   |
+
+These are normal SQL views. They are not materialized and do not persist
+derived markout rows.
+
+## Migration
+
+The migration is intentionally destructive while this backtest foundation is
+being reset. It drops legacy runtime tables, enables TimescaleDB, creates the
+minimal `market_data_*` and `bot_*` fact tables, creates hypertables, and then
+creates the analytics views.
+
+Required extension:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+```
+
+Retention and compression policies are not configured yet.
+
+## Rules
+
+- `market_data_*` stores venue facts actually observed from public feeds.
+- `bot_*` stores what the bot observed, decided, ordered, and filled.
+- The recorder process writes only market data.
+- Bot run logging and replay/backtest logging write only bot execution facts.
+- All timestamps are `BIGINT` epoch milliseconds.
+- Unsupported recorder venues fail fast.
+- Non-Postgres `DATABASE_URL` values fail fast.

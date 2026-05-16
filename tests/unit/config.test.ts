@@ -8,14 +8,17 @@ const DEFAULT_BULK_BETA_CONFIG_PATH = "config/bulk/beta.yml";
 const DEFAULT_CONFIG_PATH = DEFAULT_BULK_BETA_CONFIG_PATH;
 
 describe("ConfigLoader", () => {
-  test("uses DATABASE_URL as the default SQLite database setting", () => {
-    expect(DEFAULT_DATABASE_URL).toBe("file:data/mm.db");
+  test("uses DATABASE_URL as the default PostgreSQL database setting", () => {
+    expect(DEFAULT_DATABASE_URL).toBe("postgresql://mm:mm@127.0.0.1:5432/mm_bot");
   });
 
   test("keeps the sample env file aligned with the default database URL", async () => {
     const envExample = await Bun.file(".env.example").text();
 
-    expect(envExample).toContain(`DATABASE_URL=${DEFAULT_DATABASE_URL}`);
+    expect(envExample).toContain("POSTGRES_PASSWORD=replace-with-long-random-password");
+    expect(envExample).toContain(
+      "DATABASE_URL=postgresql://mm:replace-with-long-random-password@127.0.0.1:5432/mm_bot",
+    );
     expect(envExample).toContain("ALLORA_API_KEY=");
     expect(envExample).not.toContain("DB_PATH=");
   });

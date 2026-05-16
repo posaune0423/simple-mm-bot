@@ -1,0 +1,13 @@
+.git
+.agents
+.codex
+.cursor
+.claude
+node_modules
+data
+docs/reports
+coverage
+.env
+.env.*
+!.env.example
+*.log

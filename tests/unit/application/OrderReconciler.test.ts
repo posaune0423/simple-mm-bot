@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { OrderReconciler } from "../../../src/application/services/OrderReconciler.ts";
 import type { IOrderGateway, PlacedOrder } from "../../../src/domain/ports/IOrderGateway.ts";
+import { RecoverableVenueError } from "../../../src/domain/ports/RecoverableVenueError.ts";
 import type { OrderIntent } from "../../../src/domain/value-objects/OrderIntent.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 import { Quantity } from "../../../src/domain/value-objects/Quantity.ts";
@@ -14,8 +15,28 @@ async function expectUnknownStateError(
   expect(String(result._unsafeUnwrapErr().cause)).toContain("cancel_failed_unknown_order_state");
 }
 
+async function expectRecoverableVenueError(
+  promise: ReturnType<OrderReconciler["reconcile"]>,
+): Promise<void> {
+  const result = await promise;
+  expect(result.isErr()).toBe(true);
+  expect(result._unsafeUnwrapErr().cause).toBeInstanceOf(RecoverableVenueError);
+}
+
 async function activeOrders(promise: ReturnType<OrderReconciler["reconcile"]>) {
   return (await promise)._unsafeUnwrap().activeOrders;
+}
+
+function recoverableBulkTimeout(operation: string): RecoverableVenueError {
+  const cause = Object.assign(new Error("HTTP error 408"), {
+    name: "BulkHttpError",
+    status: 408,
+  });
+  return new RecoverableVenueError("BulkHttpError: HTTP error 408", {
+    venue: "bulk",
+    operation,
+    cause,
+  });
 }
 
 function quoteOrder(overrides: Partial<OrderIntent> = {}): OrderIntent {
@@ -609,6 +630,46 @@ describe("OrderReconciler", () => {
         unknownOrderState: true,
         cancelFailures: 1,
         unknownOrderKeys: ["bid"],
+      }),
+    );
+    expect(calls).toEqual(["place:quote-1", "cancel:quote-1", "cancelAll"]);
+  });
+
+  test("recovers tracked order state when a recoverable cancel timeout is followed by cancelAll success", async () => {
+    const calls: string[] = [];
+    const gateway: IOrderGateway = {
+      async place(order) {
+        calls.push(`place:${order.clientOrderId}`);
+        return {
+          id: order.clientOrderId ?? "order",
+          request: order,
+          status: "open",
+        } satisfies PlacedOrder;
+      },
+      async cancel(id: string) {
+        calls.push(`cancel:${id}`);
+        throw recoverableBulkTimeout("cancel_order");
+      },
+      async cancelAll() {
+        calls.push("cancelAll");
+      },
+      subscribeFills() {
+        return () => {};
+      },
+    };
+
+    const reconciler = new OrderReconciler(gateway);
+    await activeOrders(reconciler.reconcile([quoteOrder({ clientOrderId: "quote-1" })]));
+
+    await expectRecoverableVenueError(
+      reconciler.reconcile([quoteOrder({ price: Price.unsafe(101), clientOrderId: "quote-2" })]),
+    );
+    expect(reconciler.state()).toEqual(
+      expect.objectContaining({
+        unknownOrderState: false,
+        cancelFailures: 1,
+        unknownOrderKeys: [],
+        trackedOrderCount: 0,
       }),
     );
     expect(calls).toEqual(["place:quote-1", "cancel:quote-1", "cancelAll"]);

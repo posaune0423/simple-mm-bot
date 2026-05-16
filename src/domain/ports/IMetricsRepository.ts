@@ -7,7 +7,6 @@ type OrderIntent = "quote" | "reduce" | "close";
 type OrderType = "limit" | "market";
 type OrderFinalStatus = "submitted" | "accepted" | "rejected" | "canceled" | "filled";
 type MakerTaker = "maker" | "taker" | "unknown";
-type RuntimeHealthLevel = "info" | "warn" | "error";
 type QuoteDecisionIntent = "quote" | "reduce" | "disabled";
 type OrderLifecycleAction = "submit" | "ack" | "cancel" | "reject" | "fill";
 
@@ -100,18 +99,6 @@ export interface AccountStateObservationFact {
   rawJson?: unknown;
 }
 
-export interface RuntimeHealthEventFact {
-  id: string;
-  runId: string;
-  venue: string;
-  market: string;
-  observedAt: number;
-  level: RuntimeHealthLevel;
-  code: string;
-  message: string;
-  rawJson?: unknown;
-}
-
 export interface QuoteDecisionFact {
   id: string;
   runId: string;
@@ -169,7 +156,6 @@ export interface IMetricsRepository {
   recordSubmittedOrder(order: SubmittedOrderFact): Promise<void>;
   recordTradeFill(fill: TradeFillFact): Promise<void>;
   recordAccountStateObservation(observation: AccountStateObservationFact): Promise<void>;
-  recordRuntimeHealthEvent(event: RuntimeHealthEventFact): Promise<void>;
   recordQuoteDecision(decision: QuoteDecisionFact): Promise<void>;
   recordOrderLifecycleEvent(event: OrderLifecycleEventFact): Promise<void>;
   findRun(runId: string): Promise<TradingRunFact | null>;

@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 
 import { BulkMarketFeed } from "../../../src/adapters/bulk/BulkMarketFeed.ts";
 import { BulkOrderGateway } from "../../../src/adapters/bulk/BulkOrderGateway.ts";
@@ -9,7 +7,7 @@ import { PaperOrderGateway } from "../../../src/adapters/paper/PaperOrderGateway
 import { DIContainer, resolveCapitalMode } from "../../../src/application/di.ts";
 import type { LoadedAppConfig } from "../../../src/config.ts";
 
-const TEST_DB_DIR = join(process.cwd(), "data", "test-dbs", "di");
+const TEST_DATABASE_URL = "postgresql://mm:mm@127.0.0.1:5432/mm_bot";
 
 function config(
   mode: "live" | "paper" | "backtest",
@@ -109,24 +107,18 @@ function fundingAwareStrategy(alphaEnabled: boolean): LoadedAppConfig["quoteEngi
 
 describe("DIContainer Bulk venue", () => {
   let previousDatabaseUrl: string | undefined;
-  let tempDir: string;
-  let dbPath: string;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     previousDatabaseUrl = Bun.env.DATABASE_URL;
-    await mkdir(TEST_DB_DIR, { recursive: true });
-    tempDir = await mkdtemp(join(TEST_DB_DIR, "run-"));
-    dbPath = join(tempDir, "di.db");
-    Bun.env.DATABASE_URL = `file:${dbPath}`;
+    Bun.env.DATABASE_URL = TEST_DATABASE_URL;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     if (previousDatabaseUrl === undefined) {
       delete Bun.env.DATABASE_URL;
     } else {
       Bun.env.DATABASE_URL = previousDatabaseUrl;
     }
-    await rm(tempDir, { force: true, recursive: true });
   });
 
   test("resolves bulk paper to BulkMarketFeed and PaperOrderGateway", async () => {

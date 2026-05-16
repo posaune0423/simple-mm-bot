@@ -92,7 +92,7 @@ describe("QuotingCycleService", () => {
       undefined,
       {
         getRecentSideMarkoutFeedback: async () => {
-          throw new Error("sqlite locked");
+          throw new Error("database locked");
         },
       } satisfies IMarkoutFeedbackRepository,
       { enabled: true, lookbackFills: 100, horizonsSec: [5, 30, 300] },

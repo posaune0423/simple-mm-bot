@@ -5,13 +5,13 @@ import {
   MetricsFlushLoop,
   MetricsRecorder,
 } from "../../../src/application/services/MetricsRecorder.ts";
+import { logger } from "../../../src/utils/logger.ts";
 import type { Fill } from "../../../src/domain/types/Fill.ts";
 import type {
   AccountStateObservationFact,
   OrderLifecycleEventFact,
   OrderbookSnapshotFact,
   QuoteDecisionFact,
-  RuntimeHealthEventFact,
   SubmittedOrderFact,
   TradeFillFact,
   TradingRunFact,
@@ -24,7 +24,6 @@ class MemoryMetricsRepository implements IMetricsRepository {
   orders: SubmittedOrderFact[] = [];
   fills: TradeFillFact[] = [];
   accounts: AccountStateObservationFact[] = [];
-  runtimeHealth: RuntimeHealthEventFact[] = [];
   quoteDecisions: QuoteDecisionFact[] = [];
   lifecycleEvents: OrderLifecycleEventFact[] = [];
 
@@ -58,10 +57,6 @@ class MemoryMetricsRepository implements IMetricsRepository {
 
   async recordAccountStateObservation(observation: AccountStateObservationFact): Promise<void> {
     this.accounts.push(observation);
-  }
-
-  async recordRuntimeHealthEvent(event: RuntimeHealthEventFact): Promise<void> {
-    this.runtimeHealth.push(event);
   }
 
   async recordQuoteDecision(decision: QuoteDecisionFact): Promise<void> {
@@ -284,7 +279,7 @@ describe("MetricsRecorder", () => {
       },
     });
     buffer.enqueue({
-      type: "runtime_health",
+      type: "ohlcv",
       priority: "normal",
       run: async () => {
         calls.push(3);
@@ -792,8 +787,9 @@ describe("MetricsRecorder", () => {
     ]);
   });
 
-  test("records runtime health events", async () => {
+  test("logs runtime health without writing legacy health facts", async () => {
     const repository = new MemoryMetricsRepository();
+    const warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
     const recorder = new MetricsRecorder(repository, {
       runId: "run-health",
       mode: "live",
@@ -810,17 +806,11 @@ describe("MetricsRecorder", () => {
     });
     await recorder.drainAndStop();
 
-    expect(repository.runtimeHealth).toEqual([
-      expect.objectContaining({
-        runId: "run-health",
-        venue: "bulk",
-        market: "BTC-USD",
-        level: "warn",
-        code: "quote_side_skipped",
-        message: "Skipped quote side",
-        rawJson: { reason: "stale_touch" },
-      }),
-    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[application] MetricsRecorder | HEALTH | runId=run-health"),
+    );
+    expect(repository.snapshots).toHaveLength(0);
+    warnSpy.mockRestore();
   });
 
   test("computes realized trade pnl from fill sequence for metrics facts", async () => {

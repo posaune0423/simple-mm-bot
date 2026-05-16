@@ -15,7 +15,7 @@ import { logger } from "../../utils/logger.ts";
 import type { MetricsRecorder } from "./MetricsRecorder.ts";
 import type { OrderReconciler, ReconcileResult } from "./OrderReconciler.ts";
 import type { OrderIntentBuilder, OrderIntentBuildResult } from "./OrderIntentBuilder.ts";
-import { toLegacyQuoteForMetrics } from "./QuoteMetricsAdapter.ts";
+import { toQuoteMetricsRecord } from "./QuoteMetricsAdapter.ts";
 
 type QuotingCycleExecutionConfig = Readonly<{
   defaultTimeInForce: OrderTimeInForce;
@@ -180,7 +180,7 @@ export class QuotingCycleService {
     await this.metrics?.recordQuote(
       input.snapshot,
       input.positionQty,
-      toLegacyQuoteForMetrics(input.quote, execution.defaultTimeInForce),
+      toQuoteMetricsRecord(input.quote, execution.defaultTimeInForce),
       input.quoteCycleId,
     );
     const recordQuoteMs = Date.now() - recordQuoteStartedAt;

@@ -1,6 +1,10 @@
 import type { ResultAsync } from "neverthrow";
 import type { OrderSide, OrderTimeInForce } from "../../domain/types/Order.ts";
 import type { IOrderGateway, OrderRequest, PlacedOrder } from "../../domain/ports/IOrderGateway.ts";
+import {
+  isRecoverableVenueError,
+  RecoverableVenueError,
+} from "../../domain/ports/RecoverableVenueError.ts";
 import type { OrderIntent } from "../../domain/value-objects/OrderIntent.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
@@ -272,11 +276,34 @@ export class OrderReconciler {
     logger.error(
       `[application] OrderReconciler | CANCEL_FAILED_UNKNOWN_STATE | key=${key} orderId=${order.id} reason=${reason} error=${stringifyError(error)}`,
     );
-    await this.orderGateway.cancelAll().catch((cancelAllError) => {
+    try {
+      await this.orderGateway.cancelAll();
+    } catch (cancelAllError) {
       logger.error(
         `[application] OrderReconciler | CANCEL_ALL_AFTER_CANCEL_FAILURE_FAILED | key=${key} orderId=${order.id} error=${stringifyError(cancelAllError)}`,
       );
-    });
+      throw new OrderReconcilerUnknownStateError(
+        `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${stringifyError(error)}`,
+        error,
+      );
+    }
+    if (isRecoverableVenueError(error)) {
+      this.activeOrders.clear();
+      this.unknownOrders.clear();
+      this.quoteCooldownUntilMs = Math.max(
+        this.quoteCooldownUntilMs,
+        this.options.nowMs() + this.options.exchangeDropQuoteCooldownMs,
+      );
+      logger.warn(
+        `[application] OrderReconciler | CANCEL_UNKNOWN_STATE_RECOVERED_BY_CANCEL_ALL | key=${key} orderId=${order.id} reason=${reason}`,
+      );
+      throw new RecoverableVenueError("recoverable cancel failure recovered by cancelAll", {
+        venue: error.venue,
+        operation: "cancel_unknown_state_recovered_by_cancel_all",
+        cause: error,
+        context: { key, orderId: order.id, reason },
+      });
+    }
     throw new OrderReconcilerUnknownStateError(
       `cancel_failed_unknown_order_state key=${key} orderId=${order.id} reason=${reason}: ${stringifyError(error)}`,
       error,

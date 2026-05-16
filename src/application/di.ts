@@ -26,9 +26,6 @@ import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresOhlcvRepository } from "../infrastructure/db/postgres/repository/PostgresOhlcvRepository.ts";
 import { PostgresMetricsRepository } from "../infrastructure/db/postgres/repository/PostgresMetricsRepository.ts";
 import { resolveDatabaseUrl } from "../utils/databaseUrl.ts";
-import { createSqliteClient } from "../infrastructure/db/sqlite/client.ts";
-import { SqliteMetricsRepository } from "../infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts";
-import { SqliteOhlcvRepository } from "../infrastructure/db/sqlite/repository/SqliteOhlcvRepository.ts";
 import { HyperliquidExchangeApi } from "../lib/hyperliquid/HyperliquidExchangeApi.ts";
 import { HyperliquidInfoApi } from "../lib/hyperliquid/HyperliquidInfoApi.ts";
 import { HyperliquidSubscriptionApi } from "../lib/hyperliquid/HyperliquidSubscriptionApi.ts";
@@ -231,24 +228,11 @@ export class DIContainer {
 
   private createRepositories(): Repositories {
     const database = resolveDatabaseUrl(Bun.env.DATABASE_URL ?? env.DATABASE_URL);
-    return match(database)
-      .with({ kind: "postgres" }, (database) => {
-        const client = createPostgresClient(database.url);
-        return {
-          ohlcvRepository: new PostgresOhlcvRepository(client.db),
-          metricsRepository: new PostgresMetricsRepository(client.db),
-        };
-      })
-      .with({ kind: "sqlite" }, (database) => {
-        const client = createSqliteClient(database.path);
-        const metricsRepository = new SqliteMetricsRepository(client.db);
-        return {
-          ohlcvRepository: new SqliteOhlcvRepository(client.db),
-          metricsRepository,
-          markoutFeedbackRepository: metricsRepository,
-        };
-      })
-      .exhaustive();
+    const client = createPostgresClient(database.url);
+    return {
+      ohlcvRepository: new PostgresOhlcvRepository(),
+      metricsRepository: new PostgresMetricsRepository(client.db),
+    };
   }
 
   private buildMetricsRecorder(
