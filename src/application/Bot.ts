@@ -373,9 +373,22 @@ export class Bot {
 
   private async cleanup(): Promise<unknown> {
     let closePositionError: unknown;
+    const recordCleanupFailure = (event: string, err: unknown) => {
+      closePositionError ??= err;
+      logger.error(`[application] Bot | ${event} | error=${stringifyError(err)}`);
+    };
+    const runCleanupStep = async (event: string, step: () => void | Promise<void>) => {
+      await Promise.resolve()
+        .then(step)
+        .catch((err) => recordCleanupFailure(event, err));
+    };
     this.running = false;
     logger.info("[application] Bot | CLEANUP_STARTED |");
-    await this.orderGateway.stopBackgroundSync?.();
+    if (this.orderGateway.stopBackgroundSync !== undefined) {
+      await runCleanupStep("CLEANUP_STOP_BACKGROUND_SYNC_FAILED", (): void | Promise<void> =>
+        this.orderGateway.stopBackgroundSync?.(),
+      );
+    }
     logger.info("[application] Bot | CLEANUP_CANCEL_ALL_STARTED |");
     await this.orderGateway
       .cancelAll()
@@ -403,14 +416,26 @@ export class Bot {
         `[application] Bot | CLEANUP_CLOSE_POSITION_SKIPPED | policy=${this.options.closePositionPolicy} emergencyStop=${this.emergencyStopRequested}`,
       );
     }
-    await this.marketFeed.disconnect();
+    await runCleanupStep("CLEANUP_DISCONNECT_FAILED", async () => {
+      await this.marketFeed.disconnect();
+    });
     this.marketFeedConnected = false;
     closePositionError ??= this.stopRuntimeDisposables();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
-      unsubscribe();
+      try {
+        unsubscribe();
+      } catch (err) {
+        recordCleanupFailure("CLEANUP_UNSUBSCRIBE_FAILED", err);
+      }
     }
-    await this.drainEventTasks();
-    await this.orderGateway.dispose?.();
+    await runCleanupStep("CLEANUP_EVENT_TASK_DRAIN_FAILED", async () => {
+      await this.drainEventTasks();
+    });
+    if (this.orderGateway.dispose !== undefined) {
+      await runCleanupStep("CLEANUP_DISPOSE_FAILED", (): void | Promise<void> =>
+        this.orderGateway.dispose?.(),
+      );
+    }
     if (closePositionError === undefined) {
       logger.info(`[application] Bot | CLEANUP_COMPLETE | quotedCount=${this.quotedCount}`);
     } else {
@@ -593,26 +618,22 @@ function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): Bo
 }
 
 function recoverableRuntimeErrorMessageOrThrow(error: unknown): string {
-  const recoverableError = findRecoverableVenueError(error);
+  const recoverableError = directRecoverableVenueError(error);
   if (recoverableError === null) {
     throw error;
   }
   return stringifyError(recoverableError.cause ?? recoverableError);
 }
 
-function findRecoverableVenueError(error: unknown): RecoverableVenueError | null {
-  const seen = new Set<unknown>();
-  let current: unknown = error;
-
-  while (current !== undefined) {
-    if (isRecoverableVenueError(current)) {
-      return current;
+function directRecoverableVenueError(error: unknown): RecoverableVenueError | null {
+  if (isRecoverableVenueError(error)) {
+    return error;
+  }
+  if (typeof error === "object" && error !== null) {
+    const cause = (error as { cause?: unknown }).cause;
+    if (isRecoverableVenueError(cause)) {
+      return cause;
     }
-    if (typeof current !== "object" || current === null || seen.has(current)) {
-      return null;
-    }
-    seen.add(current);
-    current = (current as { cause?: unknown }).cause;
   }
 
   return null;
