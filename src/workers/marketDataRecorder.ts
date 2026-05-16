@@ -51,13 +51,32 @@ async function main(): Promise<void> {
     }
     shuttingDown = true;
     logger.info("[worker] market-data-recorder | SHUTDOWN_STARTED");
-    await recorder.disconnect();
-    const result = await writer.shutdown();
-    await postgresClient.client.end();
-    logger.info(
-      `[worker] market-data-recorder | SHUTDOWN_FLUSHED | insertedBookCount=${result.insertedBookCount} insertedTradeCount=${result.insertedTradeCount} insertedTickerCount=${result.insertedTickerCount} insertFailureCount=${result.insertFailureCount}`,
-    );
-    process.exit(0);
+    try {
+      await recorder.disconnect();
+    } catch (error) {
+      logger.error(
+        `[worker] market-data-recorder | SHUTDOWN_DISCONNECT_FAILED | error=${stringifyError(error)}`,
+      );
+    }
+    try {
+      const result = await writer.shutdown();
+      logger.info(
+        `[worker] market-data-recorder | SHUTDOWN_FLUSHED | insertedBookCount=${result.insertedBookCount} insertedTradeCount=${result.insertedTradeCount} insertedTickerCount=${result.insertedTickerCount} insertFailureCount=${result.insertFailureCount}`,
+      );
+    } catch (error) {
+      logger.error(
+        `[worker] market-data-recorder | SHUTDOWN_FLUSH_FAILED | error=${stringifyError(error)}`,
+      );
+    }
+    try {
+      await postgresClient.client.end();
+    } catch (error) {
+      logger.error(
+        `[worker] market-data-recorder | SHUTDOWN_DB_CLOSE_FAILED | error=${stringifyError(error)}`,
+      );
+    } finally {
+      process.exit(0);
+    }
   }
 
   process.on("SIGINT", () => {
@@ -70,13 +89,25 @@ async function main(): Promise<void> {
   writer.start();
   await recorder.connect({
     onBookSnapshot: (row) => {
-      void writer.addBookSnapshot(row);
+      void writer.addBookSnapshot(row).catch((error: unknown) => {
+        logger.error(
+          `[worker] market-data-recorder | BOOK_WRITE_FAILED | error=${stringifyError(error)}`,
+        );
+      });
     },
     onTrade: (row) => {
-      void writer.addTrade(row);
+      void writer.addTrade(row).catch((error: unknown) => {
+        logger.error(
+          `[worker] market-data-recorder | TRADE_WRITE_FAILED | error=${stringifyError(error)}`,
+        );
+      });
     },
     onTicker: (row) => {
-      void writer.addTicker(row);
+      void writer.addTicker(row).catch((error: unknown) => {
+        logger.error(
+          `[worker] market-data-recorder | TICKER_WRITE_FAILED | error=${stringifyError(error)}`,
+        );
+      });
     },
     onError: (error) =>
       logger.error(`[worker] market-data-recorder | ERROR | error=${stringifyError(error)}`),

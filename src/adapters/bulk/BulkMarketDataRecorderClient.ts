@@ -190,8 +190,26 @@ export class BulkMarketDataRecorderClient implements IMarketDataRecorderClient {
     logger.warn(
       `[adapter] BulkMarketDataRecorderClient | RECONNECT_SCHEDULED | symbol=${this.params.symbol} intervalMs=${this.reconnectIntervalMs} error=${stringifyError(cause)}`,
     );
-    await this.unsubscribeAll();
-    await this.client.ws.close();
+    try {
+      await this.unsubscribeAll();
+    } catch (error) {
+      this.handlers.onError?.(error);
+      logger.warn(
+        `[adapter] BulkMarketDataRecorderClient | RECONNECT_UNSUBSCRIBE_FAILED | symbol=${this.params.symbol} error=${stringifyError(error)}`,
+      );
+    }
+    try {
+      await this.client.ws.close();
+    } catch (error) {
+      this.handlers.onError?.(error);
+      logger.warn(
+        `[adapter] BulkMarketDataRecorderClient | RECONNECT_CLOSE_FAILED | symbol=${this.params.symbol} error=${stringifyError(error)}`,
+      );
+    }
+    if (!this.shouldReconnect()) {
+      this.reconnectInFlight = false;
+      return;
+    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectInFlight = false;
@@ -211,5 +229,9 @@ export class BulkMarketDataRecorderClient implements IMarketDataRecorderClient {
         this.handlers.onError?.(result.reason);
       }
     }
+  }
+
+  private shouldReconnect(): boolean {
+    return this.connected;
   }
 }

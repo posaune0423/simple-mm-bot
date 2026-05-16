@@ -129,7 +129,7 @@ describe("MarketDataBufferedWriter", () => {
 
     writer.start();
     await writer.addBookSnapshot(book("book-1"));
-    await Bun.sleep(25);
+    await waitFor(() => repository.bookBatches.length === 1);
 
     expect(repository.bookBatches).toEqual([[book("book-1")]]);
   });
@@ -187,3 +187,14 @@ describe("MarketDataBufferedWriter", () => {
     expect(repository.bookBatches).toEqual([[book("book-retry-1")]]);
   });
 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await Bun.sleep(5);
+  }
+  expect(predicate()).toBe(true);
+}

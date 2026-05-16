@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
 import type {
   AccountStateObservationFact,
+  OrderLifecycleEventFact,
   SubmittedOrderFact,
 } from "../../src/domain/ports/IMetricsRepository.ts";
 import { createPostgresClient } from "../../src/infrastructure/db/postgres/client.ts";
@@ -27,6 +28,9 @@ describePostgres("PostgresMetricsRepository", () => {
     }
     client = createPostgresClient(databaseUrl);
     repository = new PostgresMetricsRepository(client.db);
+  });
+
+  beforeEach(async () => {
     await client.client`TRUNCATE bot_orders, bot_market_observations`;
   });
 
@@ -94,6 +98,43 @@ describePostgres("PostgresMetricsRepository", () => {
       realizedPnl: 100,
       unrealizedPnl: 150,
       marginRatio: 0.8,
+    });
+  });
+
+  test("updates an existing submitted order from lifecycle facts", async () => {
+    const submitted = submittedOrder({
+      finalStatus: "submitted",
+    });
+    const canceled: OrderLifecycleEventFact = {
+      id: "lifecycle-cancel-1",
+      runId: submitted.runId,
+      venue: submitted.venue,
+      market: submitted.market,
+      action: "cancel",
+      clientOrderId: submitted.clientOrderId,
+      venueOrderId: "venue-order-canceled",
+      status: "canceled",
+      latencyMs: 40,
+      observedAt: 1_700_000_000_040,
+    };
+
+    await repository.recordSubmittedOrder(submitted);
+    await repository.recordOrderLifecycleEvent(canceled);
+
+    const rows = await client.db
+      .select()
+      .from(botOrdersTable)
+      .where(eq(botOrdersTable.clientOrderId, submitted.clientOrderId));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: submitted.id,
+      status: "canceled",
+      venueOrderId: "venue-order-canceled",
+      canceledAt: 1_700_000_000_040,
+      latencyMs: 40,
+      side: "buy",
+      quantity: 0.01,
     });
   });
 });

@@ -6,14 +6,6 @@ import { logger } from "../src/utils/logger.ts";
 export const MAIN_WALLET_PRIVATE_KEY_PLACEHOLDER = "paste main wallet private key here";
 export const AGENT_WALLET_PUBLIC_KEY_PLACEHOLDER = "paste agent wallet public key here";
 
-// Human-only edit point:
-// 1. Paste the main wallet private key here immediately before running this script.
-// 2. Paste the agent wallet public key here.
-// 3. Restore the placeholders after execution; do not commit real keys.
-const MAIN_WALLET_PRIVATE_KEY = MAIN_WALLET_PRIVATE_KEY_PLACEHOLDER;
-const AGENT_WALLET_PUBLIC_KEY = AGENT_WALLET_PUBLIC_KEY_PLACEHOLDER;
-const REMOVE_AGENT_WALLET: boolean = false;
-
 const BULK_HTTP_URL = "https://exchange-api.bulk.trade/api/v1";
 const BULK_WS_URL = "wss://exchange-ws1.bulk.trade";
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -36,12 +28,27 @@ export function validateRegistrationConstants(input: {
 }): void {
   if (
     input.mainWalletPrivateKey === MAIN_WALLET_PRIVATE_KEY_PLACEHOLDER ||
-    input.agentWalletPublicKey === AGENT_WALLET_PUBLIC_KEY_PLACEHOLDER
+    input.agentWalletPublicKey === AGENT_WALLET_PUBLIC_KEY_PLACEHOLDER ||
+    input.mainWalletPrivateKey.trim() === "" ||
+    input.agentWalletPublicKey.trim() === ""
   ) {
     throw new Error(
-      "Edit scripts/registerBulkAgentWallet.ts constants before running this script.",
+      "Set BULK_MAIN_WALLET_PRIVATE_KEY and BULK_AGENT_WALLET_PUBLIC_KEY before running this script.",
     );
   }
+}
+
+function readRequiredEnv(name: string): string {
+  const value = Bun.env[name];
+  if (value === undefined || value.trim() === "") {
+    throw new Error(`${name} is required`);
+  }
+  return value.trim();
+}
+
+function readBooleanEnv(name: string): boolean {
+  const value = Bun.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
 }
 
 function maskPublicKey(publicKey: string): string {
@@ -49,8 +56,9 @@ function maskPublicKey(publicKey: string): string {
 }
 
 async function main(): Promise<void> {
-  const mainWalletPrivateKey = MAIN_WALLET_PRIVATE_KEY;
-  const agentWalletPublicKey = AGENT_WALLET_PUBLIC_KEY;
+  const mainWalletPrivateKey = readRequiredEnv("BULK_MAIN_WALLET_PRIVATE_KEY");
+  const agentWalletPublicKey = readRequiredEnv("BULK_AGENT_WALLET_PUBLIC_KEY");
+  const removeAgentWallet = readBooleanEnv("BULK_REMOVE_AGENT_WALLET");
   validateRegistrationConstants({ mainWalletPrivateKey, agentWalletPublicKey });
 
   const client = new BulkClient({
@@ -67,11 +75,11 @@ async function main(): Promise<void> {
 
   const params = buildManageAgentWalletParams({
     agentWalletPublicKey,
-    remove: REMOVE_AGENT_WALLET,
+    remove: removeAgentWallet,
   });
 
   logger.info(
-    `bulk_agent_wallet.${REMOVE_AGENT_WALLET ? "remove" : "register"}.start main=${maskPublicKey(mainWalletPublicKey)} agent=${maskPublicKey(params.agent)} timeoutMs=${REQUEST_TIMEOUT_MS}`,
+    `bulk_agent_wallet.${removeAgentWallet ? "remove" : "register"}.start main=${maskPublicKey(mainWalletPublicKey)} agent=${maskPublicKey(params.agent)} timeoutMs=${REQUEST_TIMEOUT_MS}`,
   );
 
   const response = await client.trade.manageAgentWallet(params, {
@@ -80,7 +88,7 @@ async function main(): Promise<void> {
 
   logger.log(JSON.stringify(response, null, 2));
   logger.info(
-    `bulk_agent_wallet.${REMOVE_AGENT_WALLET ? "remove" : "register"}.complete main=${maskPublicKey(mainWalletPublicKey)} agent=${maskPublicKey(params.agent)}`,
+    `bulk_agent_wallet.${removeAgentWallet ? "remove" : "register"}.complete main=${maskPublicKey(mainWalletPublicKey)} agent=${maskPublicKey(params.agent)}`,
   );
 }
 

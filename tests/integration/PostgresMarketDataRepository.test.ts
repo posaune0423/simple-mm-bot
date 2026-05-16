@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { and, eq, gte } from "drizzle-orm";
 
 import type { MarketDataBookSnapshot } from "../../src/domain/market-data/MarketDataRecord.ts";
@@ -25,6 +25,9 @@ describePostgres("PostgresMarketDataRepository", () => {
     }
     client = createPostgresClient(databaseUrl);
     repository = new PostgresMarketDataRepository(client.db);
+  });
+
+  beforeEach(async () => {
     await client.client`TRUNCATE market_data_order_book_snapshots, market_data_trades, market_data_tickers`;
   });
 

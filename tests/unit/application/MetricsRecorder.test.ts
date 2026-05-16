@@ -801,16 +801,19 @@ describe("MetricsRecorder", () => {
       gitDirty: false,
     });
 
-    await recorder.recordRuntimeHealth("warn", "quote_side_skipped", "Skipped quote side", {
-      reason: "stale_touch",
-    });
-    await recorder.drainAndStop();
+    try {
+      await recorder.recordRuntimeHealth("warn", "quote_side_skipped", "Skipped quote side", {
+        reason: "stale_touch",
+      });
+      await recorder.drainAndStop();
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[application] MetricsRecorder | HEALTH | runId=run-health"),
-    );
-    expect(repository.snapshots).toHaveLength(0);
-    warnSpy.mockRestore();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[application] MetricsRecorder | HEALTH | runId=run-health"),
+      );
+      expect(repository.snapshots).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test("computes realized trade pnl from fill sequence for metrics facts", async () => {

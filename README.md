@@ -2,7 +2,7 @@
 
 Bulk Trade-first market making bot built with Bun + TypeScript.
 
-This repository runs the same quoting core in `live`, `paper`, and temporary `backtest` modes. Persistence is PostgreSQL/TimescaleDB only. Continuous venue market data is recorded by a separate worker and kept separate from bot run facts.
+This repository runs the same quoting core in `live`, `paper`, and temporary `backtest` modes. Persistence is PostgreSQL/TimescaleDB only. Continuous venue market data is recorded by a separate worker and kept separate from bot-run facts.
 
 ## At a Glance
 
@@ -83,10 +83,10 @@ bun run record:bulk
 Bulk agent wallet registration:
 
 ```bash
-bun run bulk:register-agent-wallet
+BULK_MAIN_WALLET_PRIVATE_KEY=... BULK_AGENT_WALLET_PUBLIC_KEY=... bun run bulk:register-agent-wallet
 ```
 
-Before running, edit `scripts/registerBulkAgentWallet.ts` locally and paste the required wallet constants. Restore placeholders after execution and do not commit real keys.
+Use environment variables for wallet material. `BULK_REMOVE_AGENT_WALLET=true` switches the script to removal mode.
 
 ## Runtime Model
 

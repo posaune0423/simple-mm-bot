@@ -42,7 +42,7 @@ export default {
       "@typescript-eslint/no-for-in-array": "error",
       "@typescript-eslint/no-import-type-side-effects": "error",
       "@typescript-eslint/no-misused-promises": "error",
-      "typescript/no-deprecated": "error",
+      "@typescript-eslint/no-deprecated": "error",
       "@typescript-eslint/no-require-imports": "error",
       "@typescript-eslint/no-unnecessary-condition": "error",
       "@typescript-eslint/no-unnecessary-type-assertion": "error",

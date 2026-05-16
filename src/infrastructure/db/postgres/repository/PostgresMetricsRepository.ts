@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { match } from "ts-pattern";
 
 import type {
   AccountStateObservationFact,
@@ -191,10 +192,53 @@ export class PostgresMetricsRepository implements IMetricsRepository {
   }
 
   async recordOrderLifecycleEvent(event: OrderLifecycleEventFact): Promise<void> {
+    const status = lifecycleStatus(event);
+    const timestampPatch = lifecycleTimestampPatch(event, status);
+    const updateSet = removeUndefinedValues({
+      venueOrderId: event.venueOrderId,
+      price: event.price,
+      quantity: event.quantity,
+      timeInForce: event.timeInForce,
+      status,
+      latencyMs: event.latencyMs,
+      rawJson: stringifyOptional({ intent: event.intent, rawJson: event.rawJson }),
+      ...timestampPatch,
+    });
+    if (event.clientOrderId !== undefined) {
+      const updated = await this.db
+        .update(botOrdersTable)
+        .set(updateSet)
+        .where(
+          and(
+            eq(botOrdersTable.runId, event.runId),
+            eq(botOrdersTable.clientOrderId, event.clientOrderId),
+          ),
+        )
+        .returning({ id: botOrdersTable.id });
+      if (updated.length > 0) {
+        return;
+      }
+    }
+    if (event.venueOrderId !== undefined) {
+      const updated = await this.db
+        .update(botOrdersTable)
+        .set(updateSet)
+        .where(
+          and(
+            eq(botOrdersTable.runId, event.runId),
+            eq(botOrdersTable.venueOrderId, event.venueOrderId),
+          ),
+        )
+        .returning({ id: botOrdersTable.id });
+      if (updated.length > 0) {
+        return;
+      }
+    }
     const row = {
       id: event.id,
       runId: event.runId,
       createdAt: event.observedAt,
+      ...timestampPatch,
       venue: event.venue,
       symbol: event.market,
       clientOrderId: event.clientOrderId,
@@ -204,7 +248,7 @@ export class PostgresMetricsRepository implements IMetricsRepository {
       price: event.price,
       quantity: event.quantity ?? 0,
       timeInForce: event.timeInForce,
-      status: event.status ?? event.action,
+      status,
       latencyMs: event.latencyMs,
       rawJson: stringifyOptional({ intent: event.intent, rawJson: event.rawJson }),
     } satisfies typeof botOrdersTable.$inferInsert;
@@ -271,4 +315,45 @@ function parseMetadata(value: string | null): { capitalMode: TradingRunFact["cap
 
 function stringifyOptional(value: unknown): string | undefined {
   return value === undefined ? undefined : JSON.stringify(value);
+}
+
+function lifecycleStatus(event: OrderLifecycleEventFact): string {
+  if (event.status !== undefined) {
+    return event.status;
+  }
+  return match(event.action)
+    .with("submit", () => "submitted")
+    .with("ack", () => "accepted")
+    .with("cancel", () => "canceled")
+    .with("reject", () => "rejected")
+    .with("fill", () => "filled")
+    .exhaustive();
+}
+
+function lifecycleTimestampPatch(
+  event: OrderLifecycleEventFact,
+  status: string,
+): Partial<typeof botOrdersTable.$inferInsert> {
+  const byStatus = match(status)
+    .with("submitted", () => ({ submittedAt: event.observedAt }))
+    .with("accepted", () => ({ acceptedAt: event.observedAt }))
+    .with("canceled", () => ({ canceledAt: event.observedAt }))
+    .with("rejected", () => ({ rejectedAt: event.observedAt }))
+    .otherwise(() => undefined);
+  if (byStatus !== undefined) {
+    return byStatus;
+  }
+  return match(event.action)
+    .with("submit", () => ({ submittedAt: event.observedAt }))
+    .with("ack", () => ({ acceptedAt: event.observedAt }))
+    .with("cancel", () => ({ canceledAt: event.observedAt }))
+    .with("reject", () => ({ rejectedAt: event.observedAt }))
+    .with("fill", () => ({}))
+    .exhaustive();
+}
+
+function removeUndefinedValues<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as Partial<T>;
 }
