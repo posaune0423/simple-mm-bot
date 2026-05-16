@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { BulkOrderGateway } from "../../../src/adapters/bulk/BulkOrderGateway.ts";
+import { RecoverableVenueError } from "../../../src/domain/ports/RecoverableVenueError.ts";
 import { logger } from "../../../src/utils/logger.ts";
 
 function captureLogs() {
@@ -41,6 +42,30 @@ function captureWarnAndErrorLogs() {
       logger.error = error;
     },
   };
+}
+
+function bulkTimeoutError(): Error & { name: string; status: number } {
+  return Object.assign(new Error("HTTP error 408"), {
+    name: "BulkHttpError",
+    status: 408,
+  });
+}
+
+async function expectRecoverableBulkOperation(
+  action: () => Promise<unknown>,
+  operation: string,
+): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    expect(error).toBeInstanceOf(RecoverableVenueError);
+    expect(error).toMatchObject({
+      venue: "bulk",
+      operation,
+    });
+    return;
+  }
+  throw new Error(`expected recoverable Bulk ${operation} failure`);
 }
 
 describe("BulkOrderGateway", () => {
@@ -1785,5 +1810,48 @@ describe("BulkOrderGateway", () => {
         qty: 2.5,
       },
     ]);
+  });
+
+  test("wraps transient account open-order failures as recoverable venue errors", async () => {
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {},
+        account: {
+          async openOrders() {
+            throw bulkTimeoutError();
+          },
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    await expectRecoverableBulkOperation(async () => gateway.getOpenOrders(), "get_open_orders");
+  });
+
+  test("wraps transient cancel failures as recoverable venue errors", async () => {
+    const gateway = new BulkOrderGateway(
+      {
+        trade: {
+          async cancelOrder() {
+            throw bulkTimeoutError();
+          },
+          async cancelAll() {
+            throw bulkTimeoutError();
+          },
+        },
+        account: {
+          async fills() {
+            return [];
+          },
+        },
+      },
+      { market: "BTC-USD", accountId: "account" },
+    );
+
+    await expectRecoverableBulkOperation(async () => gateway.cancel("limit-1"), "cancel_order");
+    await expectRecoverableBulkOperation(async () => gateway.cancelAll(), "cancel_all");
   });
 });

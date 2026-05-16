@@ -3,7 +3,10 @@ import type { Fill } from "../domain/types/Fill.ts";
 import { isFlatPositionQty } from "../domain/types/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
-import { isRecoverableVenueError } from "../domain/ports/RecoverableVenueError.ts";
+import {
+  isRecoverableVenueError,
+  type RecoverableVenueError,
+} from "../domain/ports/RecoverableVenueError.ts";
 import { stringifyError } from "../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
 import type { MetricsRecorder } from "./services/MetricsRecorder.ts";
@@ -590,13 +593,29 @@ function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): Bo
 }
 
 function recoverableRuntimeErrorMessageOrThrow(error: unknown): string {
-  return match(error)
-    .with(P.when(isRecoverableVenueError), (recoverableError) =>
-      stringifyError(recoverableError.cause ?? recoverableError),
-    )
-    .otherwise((fatalError) => {
-      throw fatalError;
-    });
+  const recoverableError = findRecoverableVenueError(error);
+  if (recoverableError === null) {
+    throw error;
+  }
+  return stringifyError(recoverableError.cause ?? recoverableError);
+}
+
+function findRecoverableVenueError(error: unknown): RecoverableVenueError | null {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined) {
+    if (isRecoverableVenueError(current)) {
+      return current;
+    }
+    if (typeof current !== "object" || current === null || seen.has(current)) {
+      return null;
+    }
+    seen.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  return null;
 }
 
 function stopReasonFromSignal(signal: AbortSignal): string {

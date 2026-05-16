@@ -481,7 +481,9 @@ export class BulkOrderGateway implements IOrderGateway {
       `[adapter] BulkOrderGateway | CANCEL_SUBMITTED | market=${this.params.market} orderId=${id}`,
     );
     const submittedAt = Date.now();
-    await this.client.trade.cancelOrder?.({ symbol: this.params.market, orderId: id });
+    await this.client.trade
+      .cancelOrder?.({ symbol: this.params.market, orderId: id })
+      .catch((error: unknown) => throwRecoverableBulkError(error, "cancel_order"));
     await this.publishOrderEvent({
       action: "cancel",
       orderId: id,
@@ -493,7 +495,9 @@ export class BulkOrderGateway implements IOrderGateway {
   async cancelAll(): Promise<void> {
     logger.info(`[adapter] BulkOrderGateway | CANCEL_ALL_SUBMITTED | market=${this.params.market}`);
     const submittedAt = Date.now();
-    await this.client.trade.cancelAll?.({ symbols: [this.params.market] });
+    await this.client.trade
+      .cancelAll?.({ symbols: [this.params.market] })
+      .catch((error: unknown) => throwRecoverableBulkError(error, "cancel_all"));
     await this.publishOrderEvent({
       action: "cancel",
       latencyMs: Date.now() - submittedAt,
@@ -527,7 +531,9 @@ export class BulkOrderGateway implements IOrderGateway {
     if (!this.client.account.openOrders) {
       return [];
     }
-    const openOrders = await this.client.account.openOrders(this.params.accountId);
+    const openOrders = await this.client.account
+      .openOrders(this.params.accountId)
+      .catch((error: unknown) => throwRecoverableBulkError(error, "get_open_orders"));
     return openOrders
       .map((order) => normalizeOpenOrder(order))
       .filter((order): order is OpenOrder => order !== null && order.market === this.params.market);

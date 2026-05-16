@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { Bot } from "../../../src/application/Bot.ts";
+import { OrderReconcileFailedError } from "../../../src/application/services/OrderReconciler.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
 import type { FillListener, OrderEventListener } from "../../../src/domain/ports/IOrderGateway.ts";
 import { RecoverableVenueError } from "../../../src/domain/ports/RecoverableVenueError.ts";
@@ -1760,6 +1761,74 @@ describe("Bot", () => {
             calls.push("quoteCycle");
             if (calls.filter((call) => call === "quoteCycle").length === 1) {
               throw recoverableBulkTimeout("quote_cycle");
+            }
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    try {
+      await bot.start(2);
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual(["connect", "quoteCycle", "quoteCycle", "cancelAll", "disconnect"]);
+    expect(logs.messages).toContain(
+      "[application] Bot | TICK_TRANSIENT_ERROR | tick=1 error=BulkHttpError: HTTP error 408",
+    );
+  });
+
+  test("continues when order reconciliation wraps a recoverable venue error", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+            if (calls.filter((call) => call === "quoteCycle").length === 1) {
+              throw new OrderReconcileFailedError(recoverableBulkTimeout("get_open_orders"));
             }
           },
         },
