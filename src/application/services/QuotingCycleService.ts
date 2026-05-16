@@ -35,8 +35,16 @@ type QuotingCycleMarkoutFeedbackConfig = Readonly<{
   horizonsSec: readonly number[];
 }>;
 
+const PLACEMENT_TREND_LOOKBACK_MS = 5_000;
+const MARKOUT_FEEDBACK_MAX_FUTURE_FILL_SKEW_MS = 5_000;
+
+type PlacementMidSample = Readonly<{
+  mid: number;
+  observedAt: number;
+}>;
+
 export class QuotingCycleService {
-  private previousPlacementMid: number | null = null;
+  private placementMidSamples: readonly PlacementMidSample[] = [];
 
   constructor(
     private readonly marketFeed: IMarketFeed,
@@ -178,12 +186,12 @@ export class QuotingCycleService {
     const recordQuoteMs = Date.now() - recordQuoteStartedAt;
 
     const trendSnapshot = await this.marketFeed.getSnapshot();
-    const placementMid = midPrice(trendSnapshot);
-    const trendBps =
-      this.previousPlacementMid !== null && this.previousPlacementMid > 0
-        ? ((placementMid - this.previousPlacementMid) / this.previousPlacementMid) * 10_000
-        : 0;
-    this.previousPlacementMid = placementMid;
+    const trend = computePlacementTrendBps(
+      this.placementMidSamples,
+      { mid: midPrice(trendSnapshot), observedAt: Date.now() },
+      PLACEMENT_TREND_LOOKBACK_MS,
+    );
+    this.placementMidSamples = trend.samples;
 
     const buildOrdersStartedAt = Date.now();
     const buildResult = this.orderIntentBuilder.build({
@@ -191,7 +199,7 @@ export class QuotingCycleService {
       quoteCycleId: input.quoteCycleId,
       execution,
       placement: {
-        trendBps,
+        trendBps: trend.trendBps,
         touchByLegKey: await this.collectPlacementContext(input.quote),
       },
     });
@@ -291,12 +299,14 @@ export class QuotingCycleService {
       return [];
     }
     try {
+      const now = Date.now();
       return await this.markoutFeedbackRepository.getRecentSideMarkoutFeedback({
         market: snapshot.market,
         lookbackFills: this.markoutFeedbackGate.lookbackFills ?? 100,
         ...(this.markoutFeedbackGate.maxFillAgeMs === undefined
           ? {}
-          : { minFilledAt: Date.now() - this.markoutFeedbackGate.maxFillAgeMs }),
+          : { minFilledAt: now - this.markoutFeedbackGate.maxFillAgeMs }),
+        maxFilledAt: now + MARKOUT_FEEDBACK_MAX_FUTURE_FILL_SKEW_MS,
         horizonsSec: [...this.markoutFeedbackGate.horizonsSec],
       });
     } catch (error) {
@@ -427,4 +437,23 @@ function quoteSummary(quote: Quote) {
 
 function midPrice(snapshot: MarketSnapshot): number {
   return (snapshot.bestBid + snapshot.bestAsk) / 2;
+}
+
+export function computePlacementTrendBps(
+  existingSamples: readonly PlacementMidSample[],
+  currentSample: PlacementMidSample,
+  lookbackMs: number,
+): Readonly<{ trendBps: number; samples: readonly PlacementMidSample[] }> {
+  const oldestAllowedAt = currentSample.observedAt - lookbackMs;
+  const samples = [...existingSamples, currentSample].filter(
+    (sample) => sample.observedAt >= oldestAllowedAt,
+  );
+  const baseline = samples[0];
+  if (baseline === undefined || baseline.mid <= 0) {
+    return { trendBps: 0, samples };
+  }
+  return {
+    trendBps: ((currentSample.mid - baseline.mid) / baseline.mid) * 10_000,
+    samples,
+  };
 }

@@ -32,6 +32,8 @@ type SqliteDb = ReturnType<typeof import("../client.ts").createSqliteClient>["db
 type TradingRunRow = typeof tradingRunsTable.$inferSelect;
 type MarkoutRow = {
   side: "buy" | "sell";
+  price: number;
+  quantity: number;
   markout_5s_bps: number | null;
   markout_30s_bps: number | null;
   markout_300s_bps: number | null;
@@ -162,6 +164,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
 
   async getRecentSideMarkoutFeedback(query: MarkoutFeedbackQuery): Promise<SideMarkoutFeedback[]> {
     const minFilledAt = query.minFilledAt ?? null;
+    const maxFilledAt = query.maxFilledAt ?? null;
     const rows = this.db.all<MarkoutRow>(
       sql`
         WITH recent AS (
@@ -173,11 +176,13 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
               f.market,
               f.side,
               f.price,
+              f.quantity,
               f.filled_at
             FROM trade_fills f
             WHERE f.market = ${query.market}
               AND f.side = 'buy'
               AND (${minFilledAt} IS NULL OR f.filled_at >= ${minFilledAt})
+              AND (${maxFilledAt} IS NULL OR f.filled_at <= ${maxFilledAt})
               AND EXISTS (
                 SELECT 1
                 FROM submitted_orders o
@@ -200,11 +205,13 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
               f.market,
               f.side,
               f.price,
+              f.quantity,
               f.filled_at
             FROM trade_fills f
             WHERE f.market = ${query.market}
               AND f.side = 'sell'
               AND (${minFilledAt} IS NULL OR f.filled_at >= ${minFilledAt})
+              AND (${maxFilledAt} IS NULL OR f.filled_at <= ${maxFilledAt})
               AND EXISTS (
                 SELECT 1
                 FROM submitted_orders o
@@ -223,6 +230,7 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
           SELECT
             r.side,
             r.price,
+            r.quantity,
             r.filled_at,
             (
               SELECT s.mid_price
@@ -258,6 +266,8 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
         )
         SELECT
           side,
+          price,
+          quantity,
           CASE
             WHEN mid_5s IS NULL OR price <= 0 THEN NULL
             WHEN side = 'buy' THEN ((mid_5s - price) / price) * 10000
@@ -301,13 +311,27 @@ export class SqliteMetricsRepository implements IMetricsRepository, IMarkoutFeed
 
 function aggregateHorizon(rows: MarkoutRow[], horizonSec: number) {
   const values = rows
-    .map((row) => markoutForHorizon(row, horizonSec))
-    .filter((value): value is number => value !== null);
+    .map((row) => ({
+      markout: markoutForHorizon(row, horizonSec),
+      notional: row.price * row.quantity,
+    }))
+    .filter((value): value is { markout: number; notional: number } => value.markout !== null);
+  const notionalSum = values.reduce((sum, value) => sum + value.notional, 0);
   return {
     horizonSec,
     sampleCount: values.length,
     averageMarkoutBps:
-      values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length,
+      values.length === 0
+        ? null
+        : values.reduce((sum, value) => sum + value.markout, 0) / values.length,
+    weightedAverageMarkoutBps:
+      values.length === 0 || notionalSum <= 0
+        ? null
+        : values.reduce((sum, value) => sum + value.markout * value.notional, 0) / notionalSum,
+    adverseSelectionRate:
+      values.length === 0
+        ? null
+        : values.reduce((sum, value) => sum + (value.markout < 0 ? 1 : 0), 0) / values.length,
   };
 }
 

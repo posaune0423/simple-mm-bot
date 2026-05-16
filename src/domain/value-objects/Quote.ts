@@ -1,11 +1,17 @@
 import { err, ok, type Result } from "neverthrow";
-import { InvalidQuoteError, type DomainError } from "../errors/DomainError";
+import { EmptyQuoteError, InvalidQuoteError, type DomainError } from "../errors/DomainError";
 import type { Price } from "./Price";
 import type { QuoteLeg } from "./QuoteLeg";
 
 type QuoteDiagnostics = Readonly<{
   quoteModel: string;
   reasonTags: readonly string[];
+  alphaDriftBps?: number;
+  fundingRateBps?: number;
+  expectedFundingBps?: number;
+  basisBps?: number;
+  targetInventoryQty?: number;
+  inventoryErrorQty?: number;
 }>;
 
 export type Quote = Readonly<{
@@ -22,7 +28,7 @@ export type Quote = Readonly<{
 export const Quote = {
   create(input: Quote): Result<Quote, DomainError> {
     if (input.bids.length === 0 && input.asks.length === 0) {
-      return err(new InvalidQuoteError("quote must contain at least one bid or ask leg"));
+      return err(new EmptyQuoteError());
     }
     if (!Number.isFinite(input.sigma) || input.sigma < 0) {
       return err(

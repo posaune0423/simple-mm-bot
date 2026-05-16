@@ -42,7 +42,13 @@ describe("BulkMarketFeed", () => {
     const client = {
       market: {
         async ticker() {
-          return { markPrice: 101, lastPrice: 100.5, timestamp: 1_700_000_000_123 * 1_000_000 };
+          return {
+            markPrice: 101,
+            oraclePrice: 102.02,
+            fundingRate: 0.0036,
+            lastPrice: 100.5,
+            timestamp: 1_700_000_000_123 * 1_000_000,
+          };
         },
         async l2Book() {
           return {
@@ -83,6 +89,9 @@ describe("BulkMarketFeed", () => {
       microPrice: 100.33333333333333,
       vampPrice: (99 * 1 + 98 * 3 + 101 * 2 + 102 * 4) / (2 + 4 + 1 + 3),
       markPrice: 101,
+      indexPrice: 101,
+      oraclePrice: 102.02,
+      fundingRateBps: 36,
       tickerExchangeTimestamp: 1_700_000_000_123,
       candleUpdatedAt: null,
       accountUpdatedAt: null,
@@ -192,7 +201,12 @@ describe("BulkMarketFeed", () => {
     const client = {
       market: {
         async ticker() {
-          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+          return {
+            markPrice: 100,
+            oraclePrice: 100.2,
+            fundingRate: 0.001,
+            timestamp: 1_700_000_000_000 * 1_000_000,
+          };
         },
         async l2Book() {
           return {
@@ -224,7 +238,14 @@ describe("BulkMarketFeed", () => {
 
     await feed.connect();
     handlers[0]?.({
-      data: { ticker: { markPrice: 102, timestamp: 1_700_000_001_000 * 1_000_000 } },
+      data: {
+        ticker: {
+          markPrice: 102,
+          oraclePrice: 103.02,
+          fundingRate: 0.0036,
+          timestamp: 1_700_000_001_000 * 1_000_000,
+        },
+      },
     });
     const beforeSnapshot = Date.now();
     handlers[1]?.({
@@ -246,6 +267,9 @@ describe("BulkMarketFeed", () => {
     });
     const snapshot = await feed.getSnapshot();
     expect(snapshot.markPrice).toBe(102);
+    expect(snapshot.indexPrice).toBe(102);
+    expect(snapshot.oraclePrice).toBe(103.02);
+    expect(snapshot.fundingRateBps).toBe(36);
     expect(snapshot.bestBid).toBe(100);
     expect(snapshot.bestAsk).toBe(104);
     expect(snapshot.microPrice).toBe(103);
@@ -761,6 +785,100 @@ describe("BulkMarketFeed", () => {
       (error) => {
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe("account unavailable");
+      },
+    );
+  });
+
+  test("fails connect with an explicit Bulk margin error when margin was reset", async () => {
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          return { margin: { totalBalance: 0, marginUsed: 0 } };
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, {
+      market: "ETH-USD",
+      accountId: "account-with-reset-margin",
+    });
+
+    await feed.connect().then(
+      () => {
+        throw new Error("Expected reset margin lookup to reject");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error & { name?: string }).name).toBe("BulkMarginUnavailableError");
+        expect((error as Error & { code?: string }).code).toBe("BULK_MARGIN_UNAVAILABLE");
+        expect((error as Error).message).toContain("Bulk margin is unavailable");
+        expect((error as Error).message).toContain("account=account-with-reset-margin");
+        expect((error as Error).message).toContain("market=ETH-USD");
+        expect((error as Error).message).toContain("totalBalance=0");
+        expect((error as Error).message).toContain("fund or reinitialize");
+      },
+    );
+  });
+
+  test("wraps Bulk account lookup failures with margin setup context", async () => {
+    const cause = Object.assign(new Error("HTTP error 500"), {
+      name: "BulkHttpError",
+      status: 500,
+    });
+    const client = {
+      market: {
+        async ticker() {
+          return { markPrice: 100, timestamp: 1_700_000_000_000 * 1_000_000 };
+        },
+        async l2Book() {
+          return {
+            levels: [[{ px: 99, sz: 1 }], [{ px: 101, sz: 1 }]],
+          };
+        },
+      },
+      account: {
+        async fullAccount() {
+          throw cause;
+        },
+      },
+      ws: {
+        async subscribe() {
+          return { unsubscribe: async () => {} };
+        },
+        async close() {},
+      },
+    };
+    const feed = new BulkMarketFeed(client, { market: "ETH-USD", accountId: "account" });
+
+    await feed.connect().then(
+      () => {
+        throw new Error("Expected account lookup to reject");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error & { name?: string }).name).toBe("BulkMarginUnavailableError");
+        expect((error as Error & { code?: string }).code).toBe("BULK_MARGIN_UNAVAILABLE");
+        expect((error as Error & { cause?: unknown }).cause).toBe(cause);
+        expect((error as Error).message).toContain("Bulk margin lookup failed");
+        expect((error as Error).message).toContain("account=account");
+        expect((error as Error).message).toContain("market=ETH-USD");
+        expect((error as Error).message).toContain("HTTP error 500");
+        expect((error as Error).message).toContain("margin was reset");
       },
     );
   });

@@ -1,7 +1,8 @@
 # Bulk beta status:
 # - Faucet deposits 10,000 mock USD once per 24 hours per account.
-# - This preset is a PnL-first guarded baseline. Do not scale notional solely
-#   for leaderboard volume unless live PnL and 5s/30s/300s markouts pass.
+# - This preset is a tight-spread canary baseline for the current BTC-USD beta
+#   regime. Do not scale notional solely for leaderboard volume unless live PnL
+#   and 5s/30s/300s markouts pass.
 # - Bulk exchangeInfo may omit ALO from timeInForces, but the order endpoint
 #   accepts tif=ALO as post-only; keep quotes ALO to avoid accidental taker fills.
 # - Use this for virtual trading only, not for real-capital mainnet.
@@ -24,6 +25,9 @@ connections:
     # Reconnect when quote-critical WS streams stop delivering messages.
     # Book state is seeded from REST and then maintained from l2Snapshot.
     marketWsReconnectAfterMs: 5000
+    # Bulk account fills are still polled until the account WS path is wired.
+    # Keep this conservative because Bulk does not publish account.fills limits.
+    fillPollIntervalMs: 2000
 
 quoteEngine:
   markWeight: 0.25
@@ -31,34 +35,32 @@ quoteEngine:
   # for current Bulk BTC-USD flow; keep this config-switchable, but default to
   # micro until VAMP has positive live bucket evidence.
   bookPriceSource: micro
-  inventoryScale: 0.22
-  timeHorizonSec: 10
-  minSpreadBps: 4.0
-  slideMarginThreshold: 0.06
+  inventoryScale: 0.025
+  timeHorizonSec: 3
+  minSpreadBps: 1.6
+  slideMarginThreshold: 0.02
   defaultTimeInForce: ALO
   sizing:
-    positionSize: 1.0
-    # 2026-05-11 live loop: keep 1.25 as the default. Tightening bid distance
-    # to 1.10 improved reduce-buy markout but reduced aggregate EV/300s, and
-    # adding askDistance 1.20 still left high reduce churn.
-    # Stage13 askSize 0.45 improved live EV/300s and inventory versus baseline,
-    # while preserving enough projected volume for phase1/rebate targets.
-    budgetUsd: 45000
-    bidDistanceMultiplier: 1.25
-    askSizeMultiplier: 0.45
+    positionSize: 0.02
+    # 2026-05-15 live diagnosis: BTC-USD beta was trading around <0.25 bps
+    # market spread while the previous beta level 0 sat ~4-5 bps from best and
+    # repeatedly produced zero fills. Keep this small until live markout passes.
+    budgetUsd: 1000
+    bidDistanceMultiplier: 1.2
+    askDistanceMultiplier: 0.9
+    askSizeMultiplier: 1.0
+    # Treat single-fill dust as flat for passive reduce quoting; shutdown still
+    # force-closes residual inventory.
+    reduceQuoteMinPositionQty: 0.0065
   levels:
-    - halfSpreadBps: 4.0
-      sizeUsd: 15000
-    - halfSpreadBps: 6.4
-      sizeUsd: 15000
-    - halfSpreadBps: 9.6
-      sizeUsd: 15000
+    - halfSpreadBps: 0.8
+      sizeUsd: 1000
   qualityGate:
     enabled: true
     minAverageMarkoutBps: 0
-    minSamples: 20
-    lookbackFills: 100
-    maxFillAgeMs: 900000
+    minSamples: 8
+    lookbackFills: 40
+    maxFillAgeMs: 600000
     horizonsSec: [5, 30, 300]
   strategy:
     type: avellaneda-stoikov
@@ -74,15 +76,19 @@ risk:
   maxBookAgeMs: 2500
   # Ticker is quote-critical but can lag the initial snapshot by ~1.8s at startup.
   maxTickerAgeMs: 2500
-  maxPositionQty: 1.25
-  reduceTriggerQty: 1.05
-  reduceTargetQty: 0.25
-  maxUnrealizedLossUsd: 650
-  maxAdverseMoveBps: 220
+  maxPositionQty: 0.025
+  reduceTriggerQty: 0.012
+  reduceTargetQty: 0.003
+  maxUnrealizedLossUsd: 15
+  maxAdverseMoveBps: 35
 
 bot:
   intervalMs: 150
-  maxRestingMs: 3000
+  maxRestingMs: 700
+  exchangeOpenOrderSyncIntervalMs: 1500
+  # Keep quote placement on the hot path; accepted cancels are scrubbed by the
+  # periodic exchange-open-order sync instead of a blocking post-cancel sync.
+  postCancelOpenOrderSyncMode: interval
 
 shutdown:
   closePositionPolicy: always
@@ -93,5 +99,5 @@ paper:
 backtest:
   market: BTC-USD
   timeframe: 1m
-  from: 2026-05-08T18:17:03.708Z
-  to: 2026-05-09T18:17:03.708Z
+  from: 2026-05-12T10:13:41.000Z
+  to: 2026-05-12T12:38:01.000Z

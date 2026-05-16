@@ -15,7 +15,7 @@ import type {
 import { calculateDepthVampPrice } from "../../domain/services/FairPriceCalculator.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
-import { retryTransientBulk } from "./BulkTransientError.ts";
+import { isTransientBulkError, retryTransientBulk } from "./BulkTransientError.ts";
 
 type BulkPositionEntry = {
   symbol?: string;
@@ -36,6 +36,7 @@ interface BulkMarginState {
   positionUpdatedAt: number | null;
 }
 type BulkSubscriptionHandle = { unsubscribe(): Promise<void> };
+type BulkMarginUnavailableReason = "lookup_failed" | "missing_or_empty_margin";
 type MarketWsStaleReason = "book_ws_stale" | "ticker_ws_stale";
 type ParsedBookSnapshot = {
   bestBid: number;
@@ -83,6 +84,17 @@ interface BulkMarketFeedParams {
   sleep?: (ms: number) => Promise<void>;
 }
 
+export class BulkMarginUnavailableError extends Error {
+  readonly code = "BULK_MARGIN_UNAVAILABLE";
+  readonly context: Record<string, unknown>;
+
+  constructor(message: string, context: Record<string, unknown>, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "BulkMarginUnavailableError";
+    this.context = context;
+  }
+}
+
 const DEFAULT_CANDLE_INTERVAL = "1m";
 const DEFAULT_ACCOUNT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_MARKET_WS_WATCHDOG_INTERVAL_MS = 250;
@@ -114,6 +126,71 @@ function microPrice(bestBid: number, bestAsk: number, bidSize: number, askSize: 
     return (bestBid + bestAsk) / 2;
   }
   return (bestAsk * bidSize + bestBid * askSize) / denominator;
+}
+
+function finiteNumber(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isBulkHttpError(error: unknown): boolean {
+  return error instanceof Error && error.name === "BulkHttpError";
+}
+
+function bulkMarginUnavailableError(params: {
+  accountId: string;
+  market: string;
+  reason: BulkMarginUnavailableReason;
+  totalBalance?: number;
+  marginUsed?: number;
+  cause?: unknown;
+}): BulkMarginUnavailableError {
+  const baseContext = {
+    venue: "bulk",
+    accountId: params.accountId,
+    market: params.market,
+    reason: params.reason,
+  };
+  if (params.reason === "lookup_failed") {
+    const causeMessage = params.cause === undefined ? "unknown" : stringifyError(params.cause);
+    return new BulkMarginUnavailableError(
+      `Bulk margin lookup failed for account=${params.accountId} market=${params.market}; Bulk beta account may have no initialized margin, margin was reset, or faucet funding is missing; fund or reinitialize the account before live trading. cause=${causeMessage}`,
+      baseContext,
+      params.cause,
+    );
+  }
+
+  return new BulkMarginUnavailableError(
+    `Bulk margin is unavailable for account=${params.accountId} market=${params.market} totalBalance=${params.totalBalance ?? "undefined"} marginUsed=${params.marginUsed ?? "undefined"}; Bulk beta margin may have been reset; fund or reinitialize the account before live trading.`,
+    {
+      ...baseContext,
+      totalBalance: params.totalBalance,
+      marginUsed: params.marginUsed,
+    },
+  );
+}
+
+function tickerMarkPrice(ticker: BulkTicker, fallback: number): number {
+  return (
+    finiteNumber(ticker.markPrice) ??
+    finiteNumber(ticker.fairBookPx) ??
+    finiteNumber(ticker.lastPrice) ??
+    fallback
+  );
+}
+
+function tickerOraclePrice(
+  ticker: BulkTicker,
+  previous: MarketSnapshot | undefined,
+): number | undefined {
+  return finiteNumber(ticker.oraclePrice) ?? previous?.oraclePrice ?? undefined;
+}
+
+function tickerFundingRateBps(
+  ticker: BulkTicker,
+  previous: MarketSnapshot | undefined,
+): number | undefined {
+  const fundingRate = finiteNumber(ticker.fundingRate);
+  return fundingRate === undefined ? (previous?.fundingRateBps ?? undefined) : fundingRate * 10_000;
 }
 
 function sortedBookSide(
@@ -186,6 +263,9 @@ function quoteSnapshot(snapshot: MarketSnapshot): MarketSnapshot {
     vampPrice: snapshot.vampPrice,
     orderBookLevels: snapshot.orderBookLevels,
     markPrice: snapshot.markPrice,
+    oraclePrice: snapshot.oraclePrice,
+    indexPrice: snapshot.indexPrice,
+    fundingRateBps: snapshot.fundingRateBps,
     timestamp: snapshot.timestamp,
     bookUpdatedAt: snapshot.bookUpdatedAt,
     tickerUpdatedAt: snapshot.tickerUpdatedAt,
@@ -425,6 +505,8 @@ export class BulkMarketFeed implements IMarketFeed {
       typeof book.timestamp === "number" ? timestampToMs(book.timestamp) : undefined;
     const tickerExchangeTimestamp =
       typeof ticker.timestamp === "number" ? timestampToMs(ticker.timestamp) : undefined;
+    const fallbackMarkPrice = (parsedBook.bestBid + parsedBook.bestAsk) / 2;
+    const markPrice = tickerMarkPrice(ticker, fallbackMarkPrice);
     return {
       market: this.params.market,
       bestBid: parsedBook.bestBid,
@@ -432,11 +514,10 @@ export class BulkMarketFeed implements IMarketFeed {
       microPrice: parsedBook.microPrice,
       vampPrice: parsedBook.vampPrice,
       orderBookLevels: parsedBook.orderBookLevels,
-      markPrice:
-        ticker.markPrice ??
-        ticker.fairBookPx ??
-        ticker.lastPrice ??
-        (parsedBook.bestBid + parsedBook.bestAsk) / 2,
+      markPrice,
+      oraclePrice: tickerOraclePrice(ticker, undefined),
+      indexPrice: markPrice,
+      fundingRateBps: tickerFundingRateBps(ticker, undefined),
       timestamp: receivedAt,
       bookUpdatedAt: receivedAt,
       tickerUpdatedAt: receivedAt,
@@ -465,7 +546,7 @@ export class BulkMarketFeed implements IMarketFeed {
     if (data === null) {
       return;
     }
-    const markPrice = Number(data.markPrice ?? data.fairBookPx ?? data.lastPrice);
+    const markPrice = tickerMarkPrice(data, Number.NaN);
     if (!Number.isFinite(markPrice)) {
       return;
     }
@@ -474,6 +555,9 @@ export class BulkMarketFeed implements IMarketFeed {
     this.snapshot = {
       ...quoteSnapshot(this.snapshot),
       markPrice,
+      oraclePrice: tickerOraclePrice(data, this.snapshot),
+      indexPrice: markPrice,
+      fundingRateBps: tickerFundingRateBps(data, this.snapshot),
       timestamp: receivedAt,
       tickerUpdatedAt: receivedAt,
       tickerReceivedAt: receivedAt,
@@ -703,9 +787,10 @@ export class BulkMarketFeed implements IMarketFeed {
         positionUpdatedAt: null,
       };
     }
-    const account = await retryTransientBulk(
-      async () => this.client.account.fullAccount(this.params.accountId ?? ""),
-      {
+    const accountId = this.params.accountId;
+    let account: BulkAccount;
+    try {
+      account = await retryTransientBulk(async () => this.client.account.fullAccount(accountId), {
         attempts: options.attempts ?? this.params.accountRetryAttempts ?? 1,
         delayMs: this.params.accountRetryDelayMs ?? 1_000,
         sleep: this.params.sleep,
@@ -714,12 +799,28 @@ export class BulkMarketFeed implements IMarketFeed {
             `[adapter] BulkMarketFeed | MARGIN_TRANSIENT_RETRY | market=${this.params.market} attempt=${attempt}/${attempts} error=${stringifyError(error)}`,
           );
         },
-      },
-    );
+      });
+    } catch (error) {
+      if (isBulkHttpError(error) && !isTransientBulkError(error)) {
+        throw bulkMarginUnavailableError({
+          accountId,
+          market: this.params.market,
+          reason: "lookup_failed",
+          cause: error,
+        });
+      }
+      throw error;
+    }
     const totalBalance = account.margin?.totalBalance;
     const marginUsed = account.margin?.marginUsed;
     if (totalBalance === undefined || totalBalance <= 0 || marginUsed === undefined) {
-      throw new Error(`No Bulk margin data for ${this.params.accountId}`);
+      throw bulkMarginUnavailableError({
+        accountId,
+        market: this.params.market,
+        reason: "missing_or_empty_margin",
+        totalBalance,
+        marginUsed,
+      });
     }
     const observedAt = Date.now();
     const availableMarginUsd = Math.max(0, totalBalance - marginUsed);

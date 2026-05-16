@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { Bot } from "../../../src/application/Bot.ts";
+import { OrderReconcileFailedError } from "../../../src/application/services/OrderReconciler.ts";
 import type { MarketSnapshot, SnapshotListener } from "../../../src/domain/ports/IMarketFeed.ts";
 import type { FillListener, OrderEventListener } from "../../../src/domain/ports/IOrderGateway.ts";
 import { RecoverableVenueError } from "../../../src/domain/ports/RecoverableVenueError.ts";
@@ -247,6 +248,70 @@ describe("Bot", () => {
     await bot.start({ signal: controller.signal });
 
     expect(calls).toEqual([]);
+  });
+
+  test("does not run destructive cleanup when market feed connect fails", async () => {
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+          throw new Error("connect failed");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          throw new Error("should not read snapshot");
+        },
+        subscribe() {
+          calls.push("subscribe");
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          calls.push("subscribeFills");
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    await bot.start(1).then(
+      () => {
+        throw new Error("Expected connect failure");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("connect failed");
+      },
+    );
+
+    expect(calls).toEqual(["connect"]);
   });
 
   test("does not build or persist a legacy report after a successful run", async () => {
@@ -856,6 +921,222 @@ describe("Bot", () => {
       "unsubscribe",
       "dispose",
     ]);
+  });
+
+  test("continues cleanup when a runtime disposable stop fails", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const stopError = new Error("alpha cache stop failed");
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          calls.push("subscribe");
+          return () => {
+            calls.push("unsubscribe");
+          };
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+        async dispose() {
+          calls.push("dispose");
+        },
+      },
+      1,
+      undefined,
+      {
+        closePositionPolicy: "always",
+        runtimeDisposables: [
+          {
+            start() {
+              calls.push("disposableStart");
+            },
+            stop() {
+              calls.push("badDisposableStop");
+              throw stopError;
+            },
+          },
+          {
+            stop() {
+              calls.push("goodDisposableStop");
+            },
+          },
+        ],
+      },
+    );
+
+    try {
+      let startError: unknown;
+      try {
+        await bot.start(1);
+      } catch (error) {
+        startError = error;
+      }
+
+      expect(startError).toBe(stopError);
+      expect(calls).toEqual([
+        "connect",
+        "subscribe",
+        "disposableStart",
+        "cancelAll",
+        "disconnect",
+        "badDisposableStop",
+        "goodDisposableStop",
+        "unsubscribe",
+        "dispose",
+      ]);
+      expect(logs.messages).toContain(
+        "[application] Bot | RUNTIME_DISPOSABLE_STOP_FAILED | error=alpha cache stop failed",
+      );
+    } finally {
+      logs.restore();
+    }
+  });
+
+  test("continues cleanup when teardown hooks fail", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const stopBackgroundSyncError = new Error("stop background sync failed");
+    const disconnectError = new Error("disconnect failed");
+    const unsubscribeError = new Error("unsubscribe failed");
+    const disposeError = new Error("dispose failed");
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: { execute: async () => {} },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: {
+          execute: async () => {
+            calls.push("closePosition");
+          },
+        },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+          throw disconnectError;
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          calls.push("marketSubscribe");
+          return () => {
+            calls.push("marketUnsubscribe");
+            throw unsubscribeError;
+          };
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          calls.push("fillSubscribe");
+          return () => {
+            calls.push("fillUnsubscribe");
+          };
+        },
+        async stopBackgroundSync() {
+          calls.push("stopBackgroundSync");
+          throw stopBackgroundSyncError;
+        },
+        async dispose() {
+          calls.push("dispose");
+          throw disposeError;
+        },
+      },
+      1,
+    );
+
+    try {
+      await bot.start(1).then(
+        () => {
+          throw new Error("Expected cleanup failure");
+        },
+        (error) => {
+          expect(error).toBe(stopBackgroundSyncError);
+        },
+      );
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual([
+      "connect",
+      "marketSubscribe",
+      "fillSubscribe",
+      "stopBackgroundSync",
+      "cancelAll",
+      "closePosition",
+      "disconnect",
+      "marketUnsubscribe",
+      "fillUnsubscribe",
+      "dispose",
+    ]);
+    expect(logs.messages).toContain(
+      "[application] Bot | CLEANUP_STOP_BACKGROUND_SYNC_FAILED | error=stop background sync failed",
+    );
+    expect(logs.messages).toContain(
+      "[application] Bot | CLEANUP_DISCONNECT_FAILED | error=disconnect failed",
+    );
+    expect(logs.messages).toContain(
+      "[application] Bot | CLEANUP_UNSUBSCRIBE_FAILED | error=unsubscribe failed",
+    );
+    expect(logs.messages).toContain(
+      "[application] Bot | CLEANUP_DISPOSE_FAILED | error=dispose failed",
+    );
   });
 
   test("skips normal-stop market close when shutdown policy is emergency only", async () => {
@@ -1649,6 +1930,152 @@ describe("Bot", () => {
     );
   });
 
+  test("continues when order reconciliation wraps a recoverable venue error", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+            if (calls.filter((call) => call === "quoteCycle").length === 1) {
+              throw new OrderReconcileFailedError(recoverableBulkTimeout("get_open_orders"));
+            }
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    try {
+      await bot.start(2);
+    } finally {
+      logs.restore();
+    }
+
+    expect(calls).toEqual(["connect", "quoteCycle", "quoteCycle", "cancelAll", "disconnect"]);
+    expect(logs.messages).toContain(
+      "[application] Bot | TICK_TRANSIENT_ERROR | tick=1 error=BulkHttpError: HTTP error 408",
+    );
+  });
+
+  test("stops when order reconciliation wraps an unknown cancel state with a recoverable cause", async () => {
+    const logs = captureLogs();
+    const calls: string[] = [];
+    const unknownCancelState = Object.assign(
+      new Error("cancel_failed_unknown_order_state key=bid orderId=limit-1 reason=replace", {
+        cause: recoverableBulkTimeout("cancel_order"),
+      }),
+      { name: "OrderReconcilerUnknownStateError" },
+    );
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+            if (calls.filter((call) => call === "quoteCycle").length === 1) {
+              throw new OrderReconcileFailedError(unknownCancelState);
+            }
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          return () => {};
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+    );
+
+    let thrown: unknown;
+    try {
+      await bot.start(2);
+    } catch (error) {
+      thrown = error;
+    } finally {
+      logs.restore();
+    }
+
+    expect(thrown).toBeInstanceOf(OrderReconcileFailedError);
+    expect(calls).toEqual(["connect", "quoteCycle", "cancelAll", "disconnect"]);
+    expect(logs.messages).not.toContain(
+      "[application] Bot | TICK_TRANSIENT_ERROR | tick=1 error=BulkHttpError: HTTP error 408",
+    );
+  });
+
   test("syncs late fills during cleanup before finishing the run", async () => {
     const calls: string[] = [];
     let fillListener: FillListener | undefined;
@@ -2240,6 +2667,10 @@ describe("Bot", () => {
       expect(logs.messages).toContain("[application] Bot | MARKET_FEED_CONNECTED |");
       expect(logs.messages).toContain("[application] Bot | TICK | tick=1 riskState=OK");
       expect(logs.messages).toContain("[application] Bot | STOPPING | reason=max_ticks tick=1");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CANCEL_ALL_STARTED |");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CANCEL_ALL_COMPLETE |");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CLOSE_POSITION_STARTED |");
+      expect(logs.messages).toContain("[application] Bot | CLEANUP_CLOSE_POSITION_COMPLETE |");
       expect(logs.messages).toContain("[application] Bot | CLEANUP_COMPLETE | quotedCount=2");
     } finally {
       logs.restore();

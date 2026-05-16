@@ -113,8 +113,11 @@ type BulkMarketRules = {
 const openStatusKeys = new Set(["resting", "working", "placed", "pending"]);
 const DEFAULT_MAX_SEEN_FILL_IDS = 20_000;
 const DEFAULT_SEEN_FILL_TTL_MS = 24 * 60 * 60 * 1_000;
+const DEFAULT_MAX_SUBMITTED_ORDER_IDS = 20_000;
+const DEFAULT_SUBMITTED_ORDER_TTL_MS = DEFAULT_SEEN_FILL_TTL_MS;
 const SEEN_FILL_FULL_PRUNE_INTERVAL_FILLS = 100;
 const SEEN_FILL_FULL_PRUNE_INTERVAL_MS = 60_000;
+const MAX_FILL_FUTURE_CLOCK_SKEW_MS = 5_000;
 const filledStatusKeys = new Set(["filled"]);
 const cancelledStatusKeys = new Set([
   "cancelled",
@@ -239,6 +242,7 @@ export class BulkOrderGateway implements IOrderGateway {
   private pollInFlight: Promise<void> | null = null;
   private leverageChecked = false;
   private fillTimer: Timer | null = null;
+  private readonly submittedOrderIds = new Map<string, number>();
 
   constructor(
     private readonly client: BulkOrderGatewayClient,
@@ -320,6 +324,7 @@ export class BulkOrderGateway implements IOrderGateway {
     if (status === "rejected") {
       logger.warn(reason === undefined ? resultMessage : `${resultMessage} reason=${reason}`);
     } else {
+      this.rememberSubmittedOrder(orderId, submittedAt);
       logger.info(resultMessage);
     }
     await this.publishOrderEvent({
@@ -379,7 +384,18 @@ export class BulkOrderGateway implements IOrderGateway {
 
   private async marketRules(): Promise<BulkMarketRules | null> {
     if (this.rulesPromise === null) {
-      this.rulesPromise = this.loadMarketRules();
+      this.rulesPromise = this.loadMarketRules().then(
+        (rules) => {
+          if (rules === null) {
+            this.rulesPromise = null;
+          }
+          return rules;
+        },
+        (error: unknown) => {
+          this.rulesPromise = null;
+          throw error;
+        },
+      );
     }
     return await this.rulesPromise;
   }
@@ -389,6 +405,12 @@ export class BulkOrderGateway implements IOrderGateway {
       return null;
     }
     const markets = await this.client.market.exchangeInfo();
+    if (markets.length === 0) {
+      logger.warn(
+        `[adapter] BulkOrderGateway | MARKET_RULES_UNAVAILABLE | market=${this.params.market} reason=empty_exchange_info`,
+      );
+      return null;
+    }
     const market = markets.find((entry) => entry.symbol === this.params.market);
     if (market === undefined) {
       throw new Error(`Bulk exchangeInfo does not include market=${this.params.market}`);
@@ -459,7 +481,9 @@ export class BulkOrderGateway implements IOrderGateway {
       `[adapter] BulkOrderGateway | CANCEL_SUBMITTED | market=${this.params.market} orderId=${id}`,
     );
     const submittedAt = Date.now();
-    await this.client.trade.cancelOrder?.({ symbol: this.params.market, orderId: id });
+    await this.client.trade
+      .cancelOrder?.({ symbol: this.params.market, orderId: id })
+      .catch((error: unknown) => throwRecoverableBulkError(error, "cancel_order"));
     await this.publishOrderEvent({
       action: "cancel",
       orderId: id,
@@ -471,7 +495,9 @@ export class BulkOrderGateway implements IOrderGateway {
   async cancelAll(): Promise<void> {
     logger.info(`[adapter] BulkOrderGateway | CANCEL_ALL_SUBMITTED | market=${this.params.market}`);
     const submittedAt = Date.now();
-    await this.client.trade.cancelAll?.({ symbols: [this.params.market] });
+    await this.client.trade
+      .cancelAll?.({ symbols: [this.params.market] })
+      .catch((error: unknown) => throwRecoverableBulkError(error, "cancel_all"));
     await this.publishOrderEvent({
       action: "cancel",
       latencyMs: Date.now() - submittedAt,
@@ -505,7 +531,9 @@ export class BulkOrderGateway implements IOrderGateway {
     if (!this.client.account.openOrders) {
       return [];
     }
-    const openOrders = await this.client.account.openOrders(this.params.accountId);
+    const openOrders = await this.client.account
+      .openOrders(this.params.accountId)
+      .catch((error: unknown) => throwRecoverableBulkError(error, "get_open_orders"));
     return openOrders
       .map((order) => normalizeOpenOrder(order))
       .filter((order): order is OpenOrder => order !== null && order.market === this.params.market);
@@ -581,20 +609,31 @@ export class BulkOrderGateway implements IOrderGateway {
   }
 
   async pollFillsOnce(): Promise<void> {
+    const observedAtMs = Date.now();
     const fills = await this.client.account.fills(this.params.accountId);
     logger.debug(
       `[adapter] BulkOrderGateway | FILLS_POLLED | market=${this.params.market} accountId=${this.params.accountId} count=${fills.length}`,
     );
     for (const fill of fills) {
-      const normalized = this.normalizeFill(fill);
+      let normalized = this.normalizeFill(fill);
       if (normalized === null || this.seenFillIds.has(normalized.id)) {
         continue;
       }
+      normalized = this.clampFutureFillTimestamp(normalized, observedAtMs);
+      const belongsToSubmittedOrder =
+        normalized.quoteId !== undefined &&
+        this.hasSubmittedOrder(normalized.quoteId, observedAtMs);
       if (
         this.params.ignoreFillsBeforeMs !== undefined &&
         normalized.filledAt < this.params.ignoreFillsBeforeMs
       ) {
-        continue;
+        if (!belongsToSubmittedOrder) {
+          continue;
+        }
+        normalized = {
+          ...normalized,
+          filledAt: Math.max(observedAtMs, this.params.ignoreFillsBeforeMs),
+        };
       }
       if (this.isFillOutsideSeenWindow(normalized)) {
         continue;
@@ -625,6 +664,39 @@ export class BulkOrderGateway implements IOrderGateway {
     this.maxObservedFillTimestamp = Math.max(this.maxObservedFillTimestamp, fill.filledAt);
     this.fillsSinceLastSeenFillPrune += 1;
     this.pruneSeenFillIds();
+  }
+
+  private rememberSubmittedOrder(orderId: string, submittedAtMs: number): void {
+    this.submittedOrderIds.set(orderId, submittedAtMs);
+    this.pruneSubmittedOrderIds(submittedAtMs);
+  }
+
+  private hasSubmittedOrder(orderId: string, observedAtMs: number): boolean {
+    this.pruneSubmittedOrderIds(observedAtMs);
+    return this.submittedOrderIds.has(orderId);
+  }
+
+  private pruneSubmittedOrderIds(observedAtMs: number): void {
+    const minSubmittedAtMs = observedAtMs - DEFAULT_SUBMITTED_ORDER_TTL_MS;
+    for (const [orderId, submittedAtMs] of this.submittedOrderIds) {
+      if (submittedAtMs < minSubmittedAtMs) {
+        this.submittedOrderIds.delete(orderId);
+      }
+    }
+    while (this.submittedOrderIds.size > DEFAULT_MAX_SUBMITTED_ORDER_IDS) {
+      const oldestOrderId = this.submittedOrderIds.keys().next().value;
+      if (oldestOrderId === undefined) {
+        return;
+      }
+      this.submittedOrderIds.delete(oldestOrderId);
+    }
+  }
+
+  private clampFutureFillTimestamp(fill: Fill, observedAtMs: number): Fill {
+    if (fill.filledAt - observedAtMs <= MAX_FILL_FUTURE_CLOCK_SKEW_MS) {
+      return fill;
+    }
+    return { ...fill, filledAt: observedAtMs };
   }
 
   private isFillOutsideSeenWindow(fill: Fill): boolean {

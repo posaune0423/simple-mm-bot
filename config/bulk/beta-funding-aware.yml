@@ -1,0 +1,94 @@
+mode: live
+venue: bulk
+
+connections:
+  bulk:
+    wsUrl: wss://exchange-ws1.bulk.trade
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    market: BTC-USD
+    environment: beta
+    nlevels: 20
+    timeoutMs: 30000
+    maxLeverage: 50
+    marketWsReconnectAfterMs: 5000
+
+quoteEngine:
+  markWeight: 0.25
+  bookPriceSource: micro
+  inventoryScale: 0.025
+  timeHorizonSec: 3
+  minSpreadBps: 1.6
+  slideMarginThreshold: 0.02
+  defaultTimeInForce: ALO
+  sizing:
+    positionSize: 0.02
+    budgetUsd: 1000
+    bidDistanceMultiplier: 1.2
+    askDistanceMultiplier: 0.9
+    askSizeMultiplier: 1.0
+  levels:
+    - halfSpreadBps: 0.8
+      sizeUsd: 500
+    - halfSpreadBps: 1.8
+      sizeUsd: 500
+  qualityGate:
+    enabled: true
+    minAverageMarkoutBps: 0
+    minSamples: 8
+    lookbackFills: 40
+    maxFillAgeMs: 600000
+    horizonsSec: [5, 30, 300]
+  strategy:
+    type: funding-aware
+    params:
+      gamma: 0
+      kappa: 625
+      kInv: 2
+      alpha:
+        enabled: false
+        source: none
+        chainSlug: testnet
+        asset: BTC
+        timeframe: 5m
+        pollIntervalMs: 60000
+        staleMs: 420000
+        calibrationWeight: 0.04
+        minAlphaDriftBps: 0.25
+        maxAlphaDriftBps: 3.0
+        maxRawDriftBps: 200
+        maxCiWidthBps: 250
+      targetInventory:
+        maxQty: 0.025
+        alphaQtyPerBps: 0.025
+      funding:
+        rateHorizonSec: 3600
+        holdingHorizonSec: 300
+        spreadWideningBpsPerAbsFundingBps: 0.1
+
+risk:
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxBookAgeMs: 2500
+  maxTickerAgeMs: 2500
+  maxPositionQty: 0.025
+  reduceTriggerQty: 0.012
+  reduceTargetQty: 0.003
+  maxUnrealizedLossUsd: 15
+  maxAdverseMoveBps: 35
+
+bot:
+  intervalMs: 150
+  maxRestingMs: 700
+  exchangeOpenOrderSyncIntervalMs: 1500
+
+shutdown:
+  closePositionPolicy: always
+
+paper:
+  touchFillRatio: 1
+
+backtest:
+  market: BTC-USD
+  timeframe: 1m
+  from: 2026-05-08T18:17:03.708Z
+  to: 2026-05-09T18:17:03.708Z

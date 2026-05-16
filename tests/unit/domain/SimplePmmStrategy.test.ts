@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 
+import { EmptyQuoteError, InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
 import { StrategyDecision } from "../../../src/domain/strategies/Strategy.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
@@ -48,6 +49,18 @@ class StubQuoteEngine {
   }
 }
 
+class EmptyQuoteEngine {
+  compute() {
+    return err(new EmptyQuoteError());
+  }
+}
+
+class InvalidQuoteEngine {
+  compute() {
+    return err(new InvalidQuoteError("crossed quote: bid=101, ask=100"));
+  }
+}
+
 describe("SimplePmmStrategy", () => {
   test("returns quote decision from QuoteEngine result", () => {
     const quoteEngine = new StubQuoteEngine();
@@ -86,6 +99,40 @@ describe("SimplePmmStrategy", () => {
     ).toBe(true);
   });
 
+  test("treats an empty quote as no-quote instead of a strategy failure", () => {
+    const strategy = new SimplePmmStrategy(new EmptyQuoteEngine() as never);
+
+    const result = strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [],
+      nowMs: 1,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(
+      StrategyDecision.match(result._unsafeUnwrap(), {
+        quote: () => false,
+        noQuote: ({ cancelExisting, reasonTags }) =>
+          cancelExisting && reasonTags.includes("empty_quote"),
+      }),
+    ).toBe(true);
+  });
+
+  test("keeps non-empty invalid quote errors as strategy failures", () => {
+    const strategy = new SimplePmmStrategy(new InvalidQuoteEngine() as never);
+
+    const result = strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [],
+      nowMs: 1,
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().cause).toBeInstanceOf(InvalidQuoteError);
+  });
+
   test("failed buy quality disables bid increase exposure in QuoteEngineInput", () => {
     const quoteEngine = new StubQuoteEngine();
     const strategy = new SimplePmmStrategy(quoteEngine as never, {
@@ -111,6 +158,359 @@ describe("SimplePmmStrategy", () => {
 
     expect(quoteEngine.computeCalls[0]?.sideSpecs.bid.disableIncreaseExposure).toBe(true);
     expect(quoteEngine.computeCalls[0]?.sideSpecs.ask.disableIncreaseExposure).toBe(false);
+  });
+
+  test("uses VW markout and adverse selection to block toxic open sides", () => {
+    const quoteEngine = new StubQuoteEngine();
+    const strategy = new SimplePmmStrategy(quoteEngine as never, {
+      markoutFeedbackGate: {
+        enabled: true,
+        minAverageMarkoutBps: 0,
+        maxAdverseSelectionRate: 0.45,
+        minSamples: 8,
+        horizonsSec: [5],
+      },
+    });
+
+    strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 20,
+              averageMarkoutBps: 0.2,
+              weightedAverageMarkoutBps: -1.4,
+              adverseSelectionRate: 0.65,
+            },
+          ],
+        },
+      ],
+      nowMs: 1,
+    });
+
+    expect(quoteEngine.computeCalls[0]?.sideSpecs.ask.disableIncreaseExposure).toBe(true);
+    expect(quoteEngine.computeCalls[0]?.sideSpecs.ask.reasonTags).toContain(
+      "quality_gate:sell:5s_vw_markout_below_0bps",
+    );
+    expect(quoteEngine.computeCalls[0]?.sideSpecs.ask.reasonTags).toContain(
+      "quality_gate:sell:5s_adverse_selection_above_45%",
+    );
+    expect(quoteEngine.computeCalls[0]?.sideSpecs.bid.disableIncreaseExposure).toBe(false);
+  });
+
+  test("can tag toxic sides without disabling quotes when volume preservation is required", () => {
+    const quoteEngine = new StubQuoteEngine();
+    const strategy = new SimplePmmStrategy(quoteEngine as never, {
+      markoutFeedbackGate: {
+        enabled: true,
+        action: "tag",
+        minAverageMarkoutBps: 0,
+        maxAdverseSelectionRate: 0.45,
+        minSamples: 8,
+        horizonsSec: [5],
+      },
+    });
+
+    strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 20,
+              averageMarkoutBps: 0.2,
+              weightedAverageMarkoutBps: -1.4,
+              adverseSelectionRate: 0.65,
+            },
+          ],
+        },
+      ],
+      nowMs: 1,
+    });
+
+    const askSpec = quoteEngine.computeCalls[0]?.sideSpecs.ask;
+    expect(askSpec?.disableIncreaseExposure).toBe(false);
+    expect(askSpec?.reasonTags).toContain("quality_gate:sell:5s_vw_markout_below_0bps");
+    expect(askSpec?.reasonTags).toContain("quality_gate:sell:5s_adverse_selection_above_45%");
+  });
+
+  test("rebalances toxic side distance and size while compensating the opposite side", () => {
+    const quoteEngine = new StubQuoteEngine();
+    const strategy = new SimplePmmStrategy(quoteEngine as never, {
+      markoutFeedbackGate: {
+        enabled: true,
+        action: "rebalance",
+        minAverageMarkoutBps: 0,
+        maxAdverseSelectionRate: 0.55,
+        minSamples: 8,
+        horizonsSec: [5, 30],
+        toxicDistanceMultiplier: 1.2,
+        toxicSizeMultiplier: 0.75,
+        compensatingDistanceMultiplier: 0.9,
+        compensatingSizeMultiplier: 1.25,
+      },
+    });
+
+    strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 30,
+              sampleCount: 20,
+              averageMarkoutBps: -0.2,
+              weightedAverageMarkoutBps: -1.4,
+              adverseSelectionRate: 0.75,
+            },
+          ],
+        },
+        {
+          side: "buy",
+          horizons: [
+            {
+              horizonSec: 30,
+              sampleCount: 20,
+              averageMarkoutBps: 1.2,
+              weightedAverageMarkoutBps: 1.4,
+              adverseSelectionRate: 0.2,
+            },
+          ],
+        },
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 20,
+              averageMarkoutBps: 0.8,
+              weightedAverageMarkoutBps: 0.9,
+              adverseSelectionRate: 0.2,
+            },
+          ],
+        },
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 20,
+              averageMarkoutBps: 0.8,
+              weightedAverageMarkoutBps: 0.9,
+              adverseSelectionRate: 0.2,
+            },
+          ],
+        },
+      ],
+      nowMs: 1,
+    });
+
+    const sideSpecs = quoteEngine.computeCalls[0]?.sideSpecs;
+    expect(sideSpecs?.ask.disableIncreaseExposure).toBe(false);
+    expect(sideSpecs?.ask.distanceMultiplier).toBe(1.2);
+    expect(sideSpecs?.ask.sizeMultiplier).toBe(0.75);
+    expect(sideSpecs?.bid.disableIncreaseExposure).toBe(false);
+    expect(sideSpecs?.bid.distanceMultiplier).toBe(0.9);
+    expect(sideSpecs?.bid.sizeMultiplier).toBe(1.25);
+    expect(sideSpecs?.ask.reasonTags).toContain("quality_gate:sell:30s_vw_markout_below_0bps");
+    expect(sideSpecs?.bid.reasonTags).toContain("quality_gate:buy:rebalance_against_sell");
+  });
+
+  test("can disable toxic open side while compensating opposite side during rebalance", () => {
+    const quoteEngine = new StubQuoteEngine();
+    const strategy = new SimplePmmStrategy(quoteEngine as never, {
+      markoutFeedbackGate: {
+        enabled: true,
+        action: "rebalance",
+        minAverageMarkoutBps: 0,
+        maxAdverseSelectionRate: 0.55,
+        minSamples: 8,
+        horizonsSec: [5, 30],
+        toxicDistanceMultiplier: 1.65,
+        toxicSizeMultiplier: 0.55,
+        compensatingDistanceMultiplier: 0.35,
+        compensatingSizeMultiplier: 1.6,
+        disableToxicIncreaseExposure: true,
+      },
+    });
+
+    strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [
+        {
+          side: "buy",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 20,
+              averageMarkoutBps: -0.8,
+              weightedAverageMarkoutBps: -0.9,
+              adverseSelectionRate: 0.8,
+            },
+            {
+              horizonSec: 30,
+              sampleCount: 20,
+              averageMarkoutBps: -0.4,
+              weightedAverageMarkoutBps: -0.3,
+              adverseSelectionRate: 0.6,
+            },
+          ],
+        },
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 20,
+              averageMarkoutBps: 0.8,
+              weightedAverageMarkoutBps: 0.9,
+              adverseSelectionRate: 0.2,
+            },
+          ],
+        },
+      ],
+      nowMs: 1,
+    });
+
+    const sideSpecs = quoteEngine.computeCalls[0]?.sideSpecs;
+    expect(sideSpecs?.bid.disableIncreaseExposure).toBe(true);
+    expect(sideSpecs?.bid.distanceMultiplier).toBe(1.65);
+    expect(sideSpecs?.bid.sizeMultiplier).toBe(0.55);
+    expect(sideSpecs?.ask.disableIncreaseExposure).toBe(false);
+    expect(sideSpecs?.ask.distanceMultiplier).toBe(0.35);
+    expect(sideSpecs?.ask.sizeMultiplier).toBe(1.6);
+    expect(sideSpecs?.ask.reasonTags).toEqual(["quality_gate:sell:rebalance_against_buy"]);
+  });
+
+  test("uses conservative compensation when the target side also fails quality gate", () => {
+    const quoteEngine = new StubQuoteEngine();
+    const strategy = new SimplePmmStrategy(quoteEngine as never, {
+      markoutFeedbackGate: {
+        enabled: true,
+        action: "rebalance",
+        minAverageMarkoutBps: 0,
+        maxAdverseSelectionRate: 0.55,
+        minSamples: 1,
+        horizonsSec: [30],
+        toxicDistanceMultiplier: 1.2,
+        toxicSizeMultiplier: 0.75,
+        compensatingDistanceMultiplier: 0.9,
+        compensatingSizeMultiplier: 1.25,
+      },
+    });
+
+    strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [
+        {
+          side: "buy",
+          horizons: [
+            {
+              horizonSec: 30,
+              sampleCount: 20,
+              averageMarkoutBps: -2.8,
+              weightedAverageMarkoutBps: -3,
+              adverseSelectionRate: 0.7,
+            },
+          ],
+        },
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 30,
+              sampleCount: 20,
+              averageMarkoutBps: -0.1,
+              weightedAverageMarkoutBps: -0.2,
+              adverseSelectionRate: 0.56,
+            },
+          ],
+        },
+      ],
+      nowMs: 1,
+    });
+
+    const sideSpecs = quoteEngine.computeCalls[0]?.sideSpecs;
+    expect(sideSpecs?.bid.disableIncreaseExposure).toBe(false);
+    expect(sideSpecs?.ask.disableIncreaseExposure).toBe(false);
+    expect(sideSpecs?.bid.distanceMultiplier).toBe(1.2);
+    expect(sideSpecs?.bid.sizeMultiplier).toBe(0.75);
+    expect(sideSpecs?.ask.distanceMultiplier).toBe(0.95);
+    expect(sideSpecs?.ask.sizeMultiplier).toBe(1);
+    expect(sideSpecs?.bid.reasonTags).toContain("quality_gate:buy:30s_vw_markout_below_0bps");
+    expect(sideSpecs?.ask.reasonTags).toEqual([
+      "quality_gate:sell:conservative_rebalance_against_buy",
+    ]);
+  });
+
+  test("uses conservative compensation until the opposite side has healthy evidence", () => {
+    const quoteEngine = new StubQuoteEngine();
+    const strategy = new SimplePmmStrategy(quoteEngine as never, {
+      markoutFeedbackGate: {
+        enabled: true,
+        action: "rebalance",
+        minAverageMarkoutBps: 0,
+        maxAdverseSelectionRate: 0.55,
+        minSamples: 4,
+        horizonsSec: [5],
+        toxicDistanceMultiplier: 1.65,
+        toxicSizeMultiplier: 0.55,
+        compensatingDistanceMultiplier: 0.35,
+        compensatingSizeMultiplier: 1.6,
+      },
+    });
+
+    strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [
+        {
+          side: "sell",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 4,
+              averageMarkoutBps: -1.2,
+              weightedAverageMarkoutBps: -1.4,
+              adverseSelectionRate: 0.75,
+            },
+          ],
+        },
+        {
+          side: "buy",
+          horizons: [
+            {
+              horizonSec: 5,
+              sampleCount: 3,
+              averageMarkoutBps: 1.2,
+              weightedAverageMarkoutBps: 1.4,
+              adverseSelectionRate: 0.2,
+            },
+          ],
+        },
+      ],
+      nowMs: 1,
+    });
+
+    const sideSpecs = quoteEngine.computeCalls[0]?.sideSpecs;
+    expect(sideSpecs?.ask.distanceMultiplier).toBe(1.65);
+    expect(sideSpecs?.ask.sizeMultiplier).toBe(0.55);
+    expect(sideSpecs?.bid.distanceMultiplier).toBe(0.675);
+    expect(sideSpecs?.bid.sizeMultiplier).toBe(1);
+    expect(sideSpecs?.bid.reasonTags).toEqual([
+      "quality_gate:buy:conservative_rebalance_against_sell",
+    ]);
   });
 });
 

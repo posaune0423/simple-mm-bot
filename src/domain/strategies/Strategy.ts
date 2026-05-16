@@ -10,6 +10,8 @@ interface MarkoutFeedbackHorizon {
   horizonSec: number;
   sampleCount: number;
   averageMarkoutBps: number | null;
+  weightedAverageMarkoutBps?: number | null;
+  adverseSelectionRate?: number | null;
 }
 
 export interface SideMarkoutFeedback {

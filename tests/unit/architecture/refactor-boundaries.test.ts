@@ -117,11 +117,13 @@ describe("refactor architecture boundaries", () => {
 
   test("process shutdown is handled at the main boundary", () => {
     const main = readFileSync(join(root, "src/main.ts"), "utf8");
+    const shutdownSignals = readFileSync(join(root, "src/utils/shutdownSignals.ts"), "utf8");
 
     expect(main).not.toContain("registerShutdownHandlers");
     expect(main).not.toContain("let stopRequested");
-    expect(main).toContain("SIGINT");
-    expect(main).toContain("SIGTERM");
+    expect(main).toContain("installShutdownSignalHandlers");
+    expect(shutdownSignals).toContain("SIGINT");
+    expect(shutdownSignals).toContain("SIGTERM");
     expect(main).toContain("AbortController");
     expect(main).not.toContain("bot.stop");
   });
@@ -169,6 +171,37 @@ describe("refactor architecture boundaries", () => {
       expect(source, file).not.toMatch(/class \w*Error\b/);
       expect(source, file).toContain("../errors/DomainError");
     }
+  });
+
+  test("funding-aware domain stays SDK-free and uses value-object quote boundaries", () => {
+    const fundingModel = readFileSync(
+      join(root, "src/domain/quote-models/FundingAwareQuoteModel.ts"),
+      "utf8",
+    );
+    const fundingStrategy = readFileSync(
+      join(root, "src/domain/strategies/FundingAwarePmmStrategy.ts"),
+      "utf8",
+    );
+    const alloraCache = readFileSync(
+      join(root, "src/infrastructure/allora/AlloraPredictionCache.ts"),
+      "utf8",
+    );
+
+    for (const [file, source] of [
+      ["FundingAwareQuoteModel.ts", fundingModel],
+      ["FundingAwarePmmStrategy.ts", fundingStrategy],
+    ] as const) {
+      expect(source, file).not.toContain("@alloralabs/allora-sdk");
+      expect(source, file).not.toContain("AlloraAPIClient");
+      expect(source, file).not.toContain("src/infrastructure");
+      expect(source, file).not.toContain("../../infrastructure");
+    }
+
+    expect(fundingModel).toContain("Price.unsafe");
+    expect(fundingModel).toContain("BasisPoints.unsafe");
+    expect(fundingModel).toContain("ModelQuote.create");
+    expect(fundingStrategy).toContain("AlphaDriftProvider");
+    expect(alloraCache).toContain("@alloralabs/allora-sdk");
   });
 
   test("error classes are defined at their owning layer boundaries", () => {

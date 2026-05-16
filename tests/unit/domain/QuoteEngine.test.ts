@@ -77,6 +77,61 @@ describe("QuoteEngine", () => {
     expect(Number(quote.bids[0]?.size)).toBe(0.25);
   });
 
+  test("treats the configured residual target as flat for passive quotes", () => {
+    const engine = new QuoteEngine(
+      fixedModel(),
+      new FairPriceCalculator(1),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 1,
+        timeHorizonSec: 1,
+        minSpreadBps: 2,
+        positionSize: 1,
+        budgetUsd: 100_000,
+        reduceQuoteMinPositionQty: 0.003,
+      },
+    );
+
+    const residual = engine
+      .compute({
+        snapshot: snapshot(),
+        position: position(-0.003),
+        sideSpecs: {
+          bid: sideSpec(),
+          ask: sideSpec(),
+        },
+      })
+      ._unsafeUnwrap();
+    expect(residual.bids[0]?.exposureIntent).toBe("increase_exposure");
+    expect(residual.asks[0]?.exposureIntent).toBe("increase_exposure");
+
+    const longResidual = engine
+      .compute({
+        snapshot: snapshot(),
+        position: position(0.003),
+        sideSpecs: {
+          bid: sideSpec(),
+          ask: sideSpec(),
+        },
+      })
+      ._unsafeUnwrap();
+    expect(longResidual.bids[0]?.exposureIntent).toBe("increase_exposure");
+    expect(longResidual.asks[0]?.exposureIntent).toBe("increase_exposure");
+
+    const aboveTarget = engine
+      .compute({
+        snapshot: snapshot(),
+        position: position(-0.004),
+        sideSpecs: {
+          bid: sideSpec(),
+          ask: sideSpec(),
+        },
+      })
+      ._unsafeUnwrap();
+    expect(aboveTarget.bids[0]?.exposureIntent).toBe("reduce_exposure");
+    expect(Number(aboveTarget.bids[0]?.size)).toBe(0.004);
+  });
+
   test("excludes disabled increase sides from open-notional cap totals", () => {
     const engine = new QuoteEngine(
       fixedModel(),
@@ -104,6 +159,36 @@ describe("QuoteEngine", () => {
 
     expect(quote.bids).toHaveLength(0);
     expect(Number(quote.asks[0]?.size)).toBeCloseTo(0.95);
+  });
+
+  test("passes model signals through to QuoteModel", () => {
+    let receivedAlpha: number | undefined;
+    const model: QuoteModel = {
+      name: "signal_test_model",
+      compute(input) {
+        receivedAlpha = input.signals?.alphaDriftBps ?? undefined;
+        return fixedModel().compute(input);
+      },
+    };
+    const engine = new QuoteEngine(model, new FairPriceCalculator(1), new VolatilityEstimator(), {
+      inventoryScale: 1,
+      timeHorizonSec: 1,
+      minSpreadBps: 2,
+      positionSize: 1,
+    });
+
+    const result = engine.compute({
+      snapshot: snapshot(),
+      position: position(0),
+      sideSpecs: {
+        bid: sideSpec(),
+        ask: sideSpec(),
+      },
+      modelSignals: { alphaDriftBps: 1.5 },
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(receivedAlpha).toBe(1.5);
   });
 });
 

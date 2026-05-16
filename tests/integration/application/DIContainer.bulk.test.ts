@@ -29,6 +29,7 @@ function config(
         market: "ETH-USD",
         environment: "beta",
         maxLeverage: 5,
+        fillPollIntervalMs: 2_000,
         privateKey: mode === "live" ? "11111111111111111111111111111111" : undefined,
       },
     },
@@ -42,6 +43,7 @@ function config(
       sizing: { positionSize: 0.01, budgetUsd: 100 },
       qualityGate: {
         enabled: false,
+        action: "disable",
         minAverageMarkoutBps: 0,
         minSamples: 20,
         lookbackFills: 100,
@@ -50,7 +52,7 @@ function config(
       strategy,
     },
     risk: { imrBuffer: 0.15, mmrBuffer: 0.08, maxPositionQty: 0.05 },
-    bot: { intervalMs: 1000 },
+    bot: { intervalMs: 1000, postCancelOpenOrderSyncMode: "blocking" },
     shutdown: { closePositionPolicy: "always" },
     paper: { touchFillRatio: 0.5 },
     backtest: {
@@ -69,6 +71,40 @@ function configWithoutBulkPrivateKey(): LoadedAppConfig {
   }
   appConfig.connections.bulk.privateKey = undefined;
   return appConfig;
+}
+
+function fundingAwareStrategy(alphaEnabled: boolean): LoadedAppConfig["quoteEngine"]["strategy"] {
+  return {
+    type: "funding-aware",
+    params: {
+      gamma: 0,
+      kappa: 625,
+      kInv: 2,
+      alpha: {
+        enabled: alphaEnabled,
+        source: alphaEnabled ? "allora" : "none",
+        chainSlug: "testnet",
+        asset: "BTC",
+        timeframe: "5m",
+        pollIntervalMs: 60_000,
+        staleMs: 420_000,
+        calibrationWeight: 0.04,
+        minAlphaDriftBps: 0.25,
+        maxAlphaDriftBps: 3,
+        maxRawDriftBps: 200,
+        maxCiWidthBps: 250,
+      },
+      targetInventory: {
+        maxQty: 0.35,
+        alphaQtyPerBps: 0.025,
+      },
+      funding: {
+        rateHorizonSec: 3600,
+        holdingHorizonSec: 300,
+        spreadWideningBpsPerAbsFundingBps: 0.1,
+      },
+    },
+  };
 }
 
 describe("DIContainer Bulk venue", () => {
@@ -110,6 +146,9 @@ describe("DIContainer Bulk venue", () => {
     expect(
       (internals.orderGateway as { params: { maxLeverage?: number } }).params.maxLeverage,
     ).toBe(5);
+    expect(
+      (internals.orderGateway as { params: { pollIntervalMs?: number } }).params.pollIntervalMs,
+    ).toBe(2_000);
     await (internals.orderGateway as BulkOrderGateway).dispose();
   });
 
@@ -159,5 +198,31 @@ describe("DIContainer Bulk venue", () => {
     };
 
     expect(internals.metrics.options.strategyName).toBe("avellaneda-stoikov");
+  });
+
+  test("creates Allora runtime provider only when funding-aware alpha uses Allora", async () => {
+    const pmmBot = await new DIContainer(config("paper")).buildBot();
+    const fundingWithoutAlloraBot = await new DIContainer(
+      config("paper", fundingAwareStrategy(false)),
+    ).buildBot();
+    const fundingWithAlloraBot = await new DIContainer(
+      config("paper", fundingAwareStrategy(true)),
+    ).buildBot();
+
+    const pmmInternals = pmmBot as unknown as {
+      options: { runtimeDisposables?: readonly unknown[] };
+    };
+    const fundingWithoutAlloraInternals = fundingWithoutAlloraBot as unknown as {
+      options: { runtimeDisposables?: readonly unknown[] };
+    };
+    const fundingWithAlloraInternals = fundingWithAlloraBot as unknown as {
+      options: { runtimeDisposables?: readonly { start?: () => void; stop: () => void }[] };
+    };
+
+    expect(pmmInternals.options.runtimeDisposables).toEqual([]);
+    expect(fundingWithoutAlloraInternals.options.runtimeDisposables).toEqual([]);
+    expect(fundingWithAlloraInternals.options.runtimeDisposables).toHaveLength(1);
+    expect(fundingWithAlloraInternals.options.runtimeDisposables?.[0]?.start).toBeFunction();
+    expect(fundingWithAlloraInternals.options.runtimeDisposables?.[0]?.stop).toBeFunction();
   });
 });

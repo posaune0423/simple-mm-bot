@@ -6,7 +6,7 @@
 
 ## Clean Architecture
 
-Implement and extend this codebase following **Clean Architecture** (Robert C. Martin). Obey the **dependency rule**: source dependencies point **inward**—inner circles must not import framework, I/O, or venue-specific code.
+Implement and extend this codebase following **DDD and Clean Architecture** (Robert C. Martin). Obey the **dependency rule**: source dependencies point **inward**—inner circles must not import framework, I/O, or venue-specific code.
 
 | Concern              | In this repo                                                       | Depends on                                               |
 | -------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
@@ -16,6 +16,17 @@ Implement and extend this codebase following **Clean Architecture** (Robert C. M
 | Frameworks & drivers | `src/infrastructure` (SQLite/Postgres, logging, config loaders)    | Outermost; implements repositories and technical details |
 
 New features should add or extend **use cases** in the application layer, keep **domain** free of venue and persistence details, and push HTTP/WebSocket/DB specifics into **adapters** and **infrastructure**. The **composition root** (e.g. application DI wiring) may construct and inject adapter and infrastructure implementations; individual use cases should still depend on **ports**, not concrete SDK or DB clients. See [docs/STRUCTURE.md](./docs/STRUCTURE.md) for the canonical folder map and [docs/TECH.md](./docs/TECH.md) for runtime and design policy.
+
+## TypeScript Design
+
+Write TypeScript as a strict, type-safe domain model first. Prefer explicit domain types, value objects, ports, and use-case contracts over primitive plumbing across layers.
+
+- Use `neverthrow` `Result` / `ResultAsync` for expected domain, application, adapter, and infrastructure failures that callers can handle.
+- Keep thrown errors for unrecoverable startup/runtime boundaries or truly exceptional failures; do not encode normal business validation or recoverable venue outcomes as unchecked exceptions.
+- Define layer-owned error types (`DomainError`, `ApplicationError`, adapter/infrastructure errors) and return them through `Result` where recovery or branching is part of the contract.
+- Use `ts-pattern` for type-safe matching over discriminated unions, closed state machines, venue/mode routing, side/intent matrices, and exhaustive policy decisions.
+- Do not mechanically replace simple guard clauses with `ts-pattern` when an `if` keeps the code clearer.
+- Preserve exhaustiveness: when a union grows, update the `ts-pattern` match and tests in the same change.
 
 ## Project Rules
 

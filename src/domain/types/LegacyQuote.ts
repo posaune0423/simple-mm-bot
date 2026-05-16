@@ -33,6 +33,12 @@ interface LegacyQuote {
   policy: OrderTimeInForce;
   fairPrice: number;
   sigma: number;
+  alphaDriftBps?: number;
+  fundingRateBps?: number;
+  expectedFundingBps?: number;
+  basisBps?: number;
+  targetInventoryQty?: number;
+  inventoryErrorQty?: number;
 }
 
 /** @deprecated Use `LegacyQuote` in new code. */

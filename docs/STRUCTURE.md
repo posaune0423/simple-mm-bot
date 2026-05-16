@@ -256,6 +256,12 @@ Runtime default は `src/env.ts`、Drizzle schema / migration path は `drizzle.
   - default SQLite DB。`DATABASE_URL=file:data/mm.db` として live / paper / backtest / metrics scripts が読む。
   - 通常の backtest、paper、live optimization はこの同一 DB を共有する。`trading_runs.id` と mode / venue / market / capitalMode で run を分離し、複数 run の比較や latest run 評価を DB 内で行う。
   - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `DATABASE_URL=file:data/tmp/<label>.db`、`--db data/tmp/<label>.db`、または一時 path を明示する。
+- `data/market/<venue>/<yyyy-mm>.sqlite`
+  - 次世代の low-cost market-data store。常時 collector が L2 book、trades、candles、funding、oracle/index price を venue / month ごとに保存する。
+  - DB target design は `docs/DATABASE.md` を source of truth とする。現行 runtime はまだ `data/mm.db` を primary metrics DB として使う。
+- `data/runs/<venue>.sqlite`
+  - 次世代の run/accounting store。quote decision、order lifecycle、fills、funding accrual、ledger entries を venue ごとに保存する。
+  - funding-aware PnL は fill table ではなく ledger / funding accrual fact から集計する。
 - `data/metrics/`
   - bot 性能評価結果の格納先。
   - `bun run metrics:evaluate` は `evaluation.json` を `data/metrics/<run_id>/`、または明示した `--output-dir` に書く。
@@ -322,6 +328,8 @@ secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
 `docs/venue/` には venue 固有の exchange rule、fee、risk、execution semantics を置く。
 `docs/venue/bulk/README.md` は Bulk Trade の maker / taker fee、commission、HFMM、STP、margin、liquidation ルールの参照資料として使う。
 `docs/STRATEGY.md` は current strategy flow、quote formula、Bulk live parameters、inventory reduction policy の参照資料として使う。
+`docs/DATABASE.md` は DB file layout、table family、MetricsRecorder と worker の責務分担の source of truth として使う。
+`docs/DATA_FOUNDATION.md` は低コスト SQLite-first の運用、保存頻度、replay backtest、cost control の方針として使う。
 `docs/research/` は特定 run や market regime の ad hoc 調査結果を、再現可能な data source / SQL とともに保存する。
 runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.md` とこの文書に置く。
 

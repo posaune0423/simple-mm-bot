@@ -5,8 +5,7 @@ import { env } from "./env.ts";
 import { notifyFatalErrorToSlack } from "./lib/slack/notification.ts";
 import { formatUnknownError } from "./utils/errors.ts";
 import { logger } from "./utils/logger.ts";
-
-const shutdownSignals = ["SIGINT", "SIGTERM"] as const;
+import { installShutdownSignalHandlers } from "./utils/shutdownSignals.ts";
 
 try {
   // Startup stays intentionally thin: load config, build the bot, then run it.
@@ -20,19 +19,17 @@ try {
 
   const bot = await new DIContainer(config).buildBot();
   const shutdownController = new AbortController();
+  const removeShutdownHandlers = installShutdownSignalHandlers({
+    controller: shutdownController,
+    target: process,
+    logInfo: (message) => logger.info(message),
+  });
 
-  for (const signal of shutdownSignals) {
-    process.once(signal, () => {
-      if (shutdownController.signal.aborted) {
-        return;
-      }
-      logger.info(`[util] Main | SIGNAL_RECEIVED | signal=${signal}`);
-      shutdownController.abort(`signal:${signal}`);
-      process.exitCode = 0;
-    });
+  try {
+    await bot.start({ signal: shutdownController.signal });
+  } finally {
+    removeShutdownHandlers();
   }
-
-  await bot.start({ signal: shutdownController.signal });
 } catch (error) {
   await notifyFatalErrorToSlack(error);
   logger.error(`[util] Main | FATAL | ${formatUnknownError(error)}`);

@@ -1,537 +1,724 @@
 # Database
 
-SQLite / PostgreSQL の metrics DB は、後から評価できる fact だけを保存する。
-分析結果は table に保存せず、SQL view で計算する。
+## Database 一覧
 
-参照元:
+| DB                | Path                                   | Owner                       | 内容                                  |
+| ----------------- | -------------------------------------- | --------------------------- | ------------------------------------- |
+| Market DB         | `data/market/<venue>/<yyyy-mm>.sqlite` | `market-data-collector`     | public market facts                   |
+| Run DB            | `data/runs/<venue>.sqlite`             | bot runtime / replay runner | private run facts and accounting      |
+| Legacy metrics DB | `data/mm.db`                           | current runtime             | 現行 metrics schema。移行完了まで維持 |
 
-- SQLite schema: `src/infrastructure/db/sqlite/schema.ts`
-- SQLite runtime DDL: `src/infrastructure/db/sqlite/bootstrap.ts`
-- PostgreSQL schema: `src/infrastructure/db/postgres/schema.ts`
-- PostgreSQL migrations: `src/infrastructure/db/postgres/migrations/`
+## Folder Structure
 
-## Core Metrics Tables
+```text
+data/
+  market/
+    <venue>/
+      <yyyy-mm>.sqlite
+      <yyyy-mm>.manifest.json
+  runs/
+    <venue>.sqlite
+  strategy-runs/
+    <timestamp>-<label>/
+      manifest.json
+      evaluation.json
+      report.md
+  metrics/
+    <run_id>/
+```
 
-| Table                        | 用途                               | Primary / unique key                                    |
-| ---------------------------- | ---------------------------------- | ------------------------------------------------------- |
-| `trading_runs`               | run 単位の分析軸                   | `id`                                                    |
-| `orderbook_snapshots`        | spread、staleness、markout join    | PK `id`, unique `(run_id, market, observed_at)`         |
-| `submitted_orders`           | 注文品質、reject/cancel/fill rate  | PK `id`, unique `(run_id, client_order_id)`             |
-| `trade_fills`                | PnL、fee、volume、fill 品質        | PK `id`, unique `(venue, venue_fill_id)`                |
-| `account_state_observations` | inventory、margin、equity risk     | PK `id`, unique `(run_id, market, observed_at)`         |
-| `runtime_health_events`      | skip / stale / runtime health fact | PK `id`, unique `(run_id, code, observed_at)`           |
-| `quote_decisions`            | side / level 別 quote 判断 fact    | PK `id`, unique `(run_id, quote_cycle_id, side, level)` |
-| `order_lifecycle_events`     | gateway raw lifecycle event        | PK `id`                                                 |
+## Market DB Table Roles
 
-`telemetry_events`, `markouts`, `runtime_incidents` は core metrics DB には作らない。
-Markout や run performance は保存済み fact から view で計算する。
-`quote_decisions` と `runtime_health_events` は分析結果ではなく edge 探索に必要な raw fact として保存する。
+Market DB は venue 別 file。DB には replay に必要な fact と、replay してはいけない時間帯だけを保存する。
+collector の起動情報は DB table にせず、同じ月の `<yyyy-mm>.manifest.json` に保存する。
 
-既存の `fills` と `ohlcv` は legacy / historical path 用に残っている。
-`reports` table は作らない。run 評価の入口は `trade_fills` と metrics views。
+| Table              | 必要度 | 何を保存するか                               |
+| ------------------ | ------ | -------------------------------------------- |
+| `book_snapshots`   | 必須   | replay input。L2 top-N book                  |
+| `public_trades`    | 必須   | replay / fill model input。public trade tape |
+| `funding_rates`    | 必須   | funding-aware signal / funding PnL input     |
+| `reference_prices` | 必須   | mark/index/oracle。basis と valuation input  |
+| `market_data_gaps` | 必須   | 欠損区間。replay で除外/警告するための記録   |
 
-## ER Diagram
-
-DB 上の外部キーは定義していない。以下の関係は `run_id`、`submitted_order_id`、
-`venue_order_id` による論理関係を示す。
+## Market DB ER 図
 
 ```mermaid
 erDiagram
-    trading_runs {
-        text id PK "run id"
-        text mode "live/paper/backtest"
-        text venue "bulk/hyperliquid/paper"
-        text market "market symbol"
-        text capital_mode "beta_mock/paper/backtest/real"
-        text strategy_name "strategy label"
-        text config_json "sanitized runtime config"
-        text git_sha
-        boolean git_dirty
-        bigint started_at "epoch ms"
-        bigint ended_at "epoch ms"
-        text status "running/completed/failed"
-        text stop_reason
-    }
-
-    orderbook_snapshots {
-        text id PK "run_id:market:observed_at"
-        text run_id FK "logical ref: trading_runs.id"
-        text venue
-        text market UK "unique: run_id, market, observed_at"
-        bigint observed_at UK "1s bucket, epoch ms"
+    book_snapshots {
+        text id PK
+        text market
+        bigint exchange_ts
+        bigint received_at
+        bigint observed_at
+        bigint ingest_seq
         double best_bid
         double best_ask
-        double mid_price
-        double micro_price
-        double mark_price
-        double spread_bps
-        bigint staleness_ms
-        text raw_json "minimal source payload"
+        double best_bid_size
+        double best_ask_size
+        text levels_json
     }
 
-    submitted_orders {
-        text id PK "client-side id"
-        text run_id FK "logical ref: trading_runs.id"
-        text venue
+    public_trades {
+        text id PK
         text market
-        text client_order_id UK "unique: run_id, client_order_id"
-        text venue_order_id "venue ack id"
-        text intent "quote/reduce/close"
-        text side "buy/sell"
-        text order_type "limit/market"
-        double limit_price
-        double quantity
-        text time_in_force
-        bigint submitted_at
-        bigint accepted_at
-        bigint rejected_at
-        bigint canceled_at
-        text final_status
-        text reject_reason
-        bigint latency_ms
-        text raw_json "response summary"
-    }
-
-    trade_fills {
-        text id PK "venue fill id or generated id"
-        text run_id FK "logical ref: trading_runs.id"
-        text submitted_order_id FK "logical ref: submitted_orders.id"
-        text venue
-        text market
-        text venue_fill_id UK "unique: venue, venue_fill_id"
-        text venue_order_id "join to submitted_orders.venue_order_id"
-        text side "buy/sell"
+        text venue_trade_id
+        text side
+        bigint trade_ts
+        bigint received_at
         double price
         double quantity
-        double fee
-        double trade_pnl
-        text maker_taker "maker/taker/unknown"
-        bigint filled_at "epoch ms"
-        text raw_json "fill summary"
+        text maker_side
     }
 
-    account_state_observations {
-        text id PK "run_id:market:observed_at"
-        text run_id FK "logical ref: trading_runs.id"
-        text venue
-        text market UK "unique: run_id, market, observed_at"
-        bigint observed_at UK "epoch ms"
-        double balance
-        double equity
-        double realized_pnl
-        double unrealized_pnl
-        double position_qty
-        double margin_ratio
-        text raw_json "account summary"
-    }
-
-    runtime_health_events {
-        text id PK "event id"
-        text run_id FK "logical ref: trading_runs.id"
-        text venue
+    funding_rates {
+        text id PK
         text market
-        bigint observed_at UK "epoch ms"
-        text level "info/warn/error"
-        text code UK "stable machine-readable code"
-        text message
-        text raw_json "event context"
-    }
-
-    quote_decisions {
-        text id PK "run_id:quote_cycle_id:side:level"
-        text run_id FK "logical ref: trading_runs.id"
-        text venue
-        text market
-        text quote_cycle_id UK "join to client_order_id prefix"
-        text side UK "buy/sell"
-        int level UK "ladder level"
-        text intent "quote/reduce/disabled"
-        double price
-        double quantity
-        double fair_price
-        double sigma
-        text policy "TIF policy"
-        double position_qty
-        double mid_price
-        double micro_price
-        double mark_price
-        double spread_bps
-        bigint staleness_ms
-        text control_reasons_json
-        bigint created_at
+        bigint effective_at
+        double funding_rate_bps
+        int interval_sec
+        bigint received_at
+        text source
         text raw_json
     }
 
-    order_lifecycle_events {
-        text id PK "raw lifecycle event id"
-        text run_id FK "logical ref: trading_runs.id"
+    reference_prices {
+        text id PK
+        text market
+        text price_type
+        bigint exchange_ts
+        bigint observed_at
+        bigint received_at
+        double price
+        text source
+        text raw_json
+    }
+
+    market_data_gaps {
+        text id PK
+        text market
+        text source
+        text gap_type
+        bigint from_ts
+        bigint to_ts
+        bigint duration_ms
+        text note
+    }
+```
+
+## Run DB ER 図
+
+```mermaid
+erDiagram
+    runs {
+        text id PK
+        text mode
         text venue
         text market
-        text action "submit/ack/cancel/reject/fill"
+        text strategy_name
+        text config_json
+        text config_hash
+        text git_sha
+        int git_dirty
+        text status
+        bigint started_at
+        bigint ended_at
+        text stop_reason
+    }
+
+    replay_runs {
+        text id PK
+        text run_id FK
+        text dataset_manifest_path
+        text market_db_path
+        bigint from_ts
+        bigint to_ts
+        text latency_model
+        text fill_model_version
+        bigint simulation_seed
+        bigint created_at
+    }
+
+    quote_cycles {
+        text id PK
+        text run_id FK
+        text market
+        bigint cycle_seq
+        bigint started_at
+        bigint completed_at
+        text book_snapshot_id
+        text status
+        double position_qty
+        text raw_json
+    }
+
+    quote_decisions {
+        text id PK
+        text quote_cycle_id FK
+        text run_id FK
+        text side
+        int level
+        text intent
+        double price
+        double quantity
+        double fair_price
+        text model_name
+        double alpha_drift_bps
+        double expected_funding_bps
+        double basis_bps
+        double target_inventory_qty
+        double inventory_error_qty
+        text reason_tags_json
+        bigint created_at
+    }
+
+    orders {
+        text id PK
+        text run_id FK
         text client_order_id
         text venue_order_id
+        text market
         text side
         text intent
         text order_type
+        text time_in_force
+        double limit_price
+        double quantity
+        text status
+        bigint submitted_at
+        bigint accepted_at
+        bigint canceled_at
+        bigint rejected_at
+        bigint filled_at
+        text reject_reason
+        text raw_json
+    }
+
+    order_events {
+        text id PK
+        text run_id FK
+        text order_id FK
+        text client_order_id
+        text venue_order_id
+        text action
+        text side
         double price
         double quantity
-        text time_in_force
         text status
+        bigint observed_at
         bigint latency_ms
+        text raw_json
+    }
+
+    fills {
+        text id PK
+        text run_id FK
+        text order_id FK
+        text venue_fill_id
+        text venue_order_id
+        text market
+        text side
+        double price
+        double quantity
+        double fee
+        double rebate
+        text maker_taker
+        bigint filled_at
+        text raw_json
+    }
+
+    position_snapshots {
+        text id PK
+        text run_id FK
+        text market
+        bigint observed_at
+        double position_qty
+        double entry_price
+        double mark_price
+        double unrealized_pnl
+        text raw_json
+    }
+
+    account_snapshots {
+        text id PK
+        text run_id FK
+        bigint observed_at
+        double balance
+        double equity
+        double margin_ratio
+        double realized_pnl
+        double unrealized_pnl
+        text raw_json
+    }
+
+    funding_accruals {
+        text id PK
+        text run_id FK
+        text market
+        double position_qty
+        double notional
+        double funding_rate_bps
+        bigint funding_interval_start
+        bigint funding_interval_end
+        bigint accrual_start
+        bigint accrual_end
+        double amount
+        text currency
+        text source
+        bigint created_at
+    }
+
+    ledger_entries {
+        text id PK
+        text run_id FK
+        text market
+        text source_table
+        text source_id
+        text entry_type
+        double amount
+        text currency
+        bigint realized_at
+        text raw_json
+    }
+
+    runtime_events {
+        text id PK
+        text run_id FK
+        text market
+        text level
+        text code
+        text message
         bigint observed_at
         text raw_json
     }
 
-    trading_runs ||--o{ orderbook_snapshots : "has snapshots"
-    trading_runs ||--o{ submitted_orders : "submits"
-    trading_runs ||--o{ trade_fills : "records fills"
-    trading_runs ||--o{ account_state_observations : "observes risk"
-    trading_runs ||--o{ runtime_health_events : "records health"
-    trading_runs ||--o{ quote_decisions : "records decisions"
-    trading_runs ||--o{ order_lifecycle_events : "records events"
-    submitted_orders ||..o{ trade_fills : "matched by submitted_order_id"
-    submitted_orders ||..o{ trade_fills : "matched by venue_order_id"
-    quote_decisions ||..o{ submitted_orders : "matched by quote_cycle_id side level"
-    orderbook_snapshots ||..o{ trade_fills : "markout horizon join"
+    runs ||--o{ replay_runs : has
+    runs ||--o{ quote_cycles : has
+    quote_cycles ||--o{ quote_decisions : has
+    runs ||--o{ orders : submits
+    orders ||--o{ order_events : emits
+    orders ||--o{ fills : fills
+    runs ||--o{ position_snapshots : observes
+    runs ||--o{ account_snapshots : observes
+    runs ||--o{ funding_accruals : accrues
+    runs ||--o{ ledger_entries : posts
+    runs ||--o{ runtime_events : emits
 ```
 
-## Table Columns
+## Market DB Tables
 
-型は論理型で記載する。SQLite では timestamp は `INTEGER`、PostgreSQL では `BIGINT`。
-SQLite の boolean は `INTEGER` として保存される。
+Key: 🔑 PK / 🔗 FK / ⭐ Unique key / 📌 Indexed。複合 key は対象列すべてに付ける。
 
-### `trading_runs`
+### `book_snapshots`
 
-| Column          | Type      | Null | Key | 用途                                             |
-| --------------- | --------- | ---- | --- | ------------------------------------------------ |
-| `id`            | `text`    | no   | PK  | run 集約キー                                     |
-| `mode`          | `text`    | no   | -   | `live` / `paper` / `backtest` 比較               |
-| `venue`         | `text`    | no   | -   | venue 別比較                                     |
-| `market`        | `text`    | no   | -   | market 別比較                                    |
-| `capital_mode`  | `text`    | no   | -   | `beta_mock` / `paper` / `backtest` / `real` 比較 |
-| `strategy_name` | `text`    | no   | -   | strategy 別比較                                  |
-| `config_json`   | `text`    | no   | -   | sanitized config snapshot                        |
-| `git_sha`       | `text`    | yes  | -   | 実装 version                                     |
-| `git_dirty`     | `boolean` | no   | -   | dirty worktree flag                              |
-| `started_at`    | `bigint`  | no   | -   | run 開始時刻 epoch ms                            |
-| `ended_at`      | `bigint`  | yes  | -   | run 終了時刻 epoch ms                            |
-| `status`        | `text`    | no   | -   | `running` / `completed` / `failed`               |
-| `stop_reason`   | `text`    | yes  | -   | 停止理由                                         |
+L2 book の snapshot。top-N levels は JSON で保存する。
 
-### `orderbook_snapshots`
+| Column          | Type     | Key | Required | Note                 |
+| --------------- | -------- | --- | -------- | -------------------- |
+| `id`            | `text`   | 🔑  | yes      | snapshot id          |
+| `market`        | `text`   | 📌  | yes      | venue market symbol  |
+| `exchange_ts`   | `bigint` |     | no       | venue timestamp      |
+| `received_at`   | `bigint` |     | yes      | local receive time   |
+| `observed_at`   | `bigint` | 📌  | yes      | normalized time      |
+| `ingest_seq`    | `bigint` | 📌  | yes      | collector sequence   |
+| `best_bid`      | `double` |     | yes      | top bid price        |
+| `best_ask`      | `double` |     | yes      | top ask price        |
+| `best_bid_size` | `double` |     | yes      | top bid quantity     |
+| `best_ask_size` | `double` |     | yes      | top ask quantity     |
+| `levels_json`   | `text`   |     | yes      | top-N bid/ask levels |
 
-| Column         | Type     | Null | Key     | 用途                            |
-| -------------- | -------- | ---- | ------- | ------------------------------- |
-| `id`           | `text`   | no   | PK      | row id                          |
-| `run_id`       | `text`   | no   | UK part | run 別 market condition         |
-| `venue`        | `text`   | no   | -       | venue 別分析                    |
-| `market`       | `text`   | no   | UK part | market 別分析                   |
-| `observed_at`  | `bigint` | no   | UK part | 1 秒 bucket timestamp           |
-| `best_bid`     | `double` | no   | -       | spread / execution comparison   |
-| `best_ask`     | `double` | no   | -       | spread / execution comparison   |
-| `mid_price`    | `double` | no   | -       | markout / fair price basis      |
-| `micro_price`  | `double` | no   | -       | imbalance-aware fair price      |
-| `mark_price`   | `double` | no   | -       | markout / paper-live comparison |
-| `spread_bps`   | `double` | no   | -       | market quality                  |
-| `staleness_ms` | `bigint` | no   | -       | stale feed rate                 |
-| `raw_json`     | `text`   | yes  | -       | minimal source payload          |
+Indexes:
 
-Unique: `(run_id, market, observed_at)`.
+- `idx_book_snapshots_market_time` (`market`, `observed_at`)
+- `idx_book_snapshots_market_seq` (`market`, `ingest_seq`)
 
-### `submitted_orders`
+### `public_trades`
 
-| Column            | Type     | Null | Key     | 用途                                                |
-| ----------------- | -------- | ---- | ------- | --------------------------------------------------- |
-| `id`              | `text`   | no   | PK      | client-side submitted order id                      |
-| `run_id`          | `text`   | no   | UK part | run 別 order quality                                |
-| `venue`           | `text`   | no   | -       | venue 別分析                                        |
-| `market`          | `text`   | no   | -       | market 別分析                                       |
-| `client_order_id` | `text`   | no   | UK part | submit tracking / duplicate prevention              |
-| `venue_order_id`  | `text`   | yes  | -       | venue ack id / fill join                            |
-| `intent`          | `text`   | no   | -       | `quote` / `reduce` / `close`                        |
-| `side`            | `text`   | no   | -       | `buy` / `sell`                                      |
-| `order_type`      | `text`   | no   | -       | `limit` / `market`                                  |
-| `limit_price`     | `double` | yes  | -       | quote aggressiveness                                |
-| `quantity`        | `double` | no   | -       | order size                                          |
-| `time_in_force`   | `text`   | no   | -       | TIF 別分析                                          |
-| `submitted_at`    | `bigint` | no   | -       | submit timestamp                                    |
-| `accepted_at`     | `bigint` | yes  | -       | ack timestamp                                       |
-| `rejected_at`     | `bigint` | yes  | -       | reject timestamp                                    |
-| `canceled_at`     | `bigint` | yes  | -       | cancel timestamp                                    |
-| `final_status`    | `text`   | no   | -       | submitted / accepted / rejected / canceled / filled |
-| `reject_reason`   | `text`   | yes  | -       | reject cause                                        |
-| `latency_ms`      | `bigint` | yes  | -       | submit-to-ack/reject latency                        |
-| `raw_json`        | `text`   | yes  | -       | response summary                                    |
+public trade tape。
 
-Unique: `(run_id, client_order_id)`.
+| Column           | Type     | Key  | Required | Note                   |
+| ---------------- | -------- | ---- | -------- | ---------------------- |
+| `id`             | `text`   | 🔑   | yes      | trade row id           |
+| `market`         | `text`   | 📌⭐ | yes      | venue market symbol    |
+| `venue_trade_id` | `text`   | ⭐   | no       | venue trade id         |
+| `side`           | `text`   |      | no       | aggressor side         |
+| `price`          | `double` |      | yes      | trade price            |
+| `quantity`       | `double` |      | yes      | trade quantity         |
+| `trade_ts`       | `bigint` | 📌   | yes      | venue trade time       |
+| `received_at`    | `bigint` |      | yes      | local receive time     |
+| `maker_side`     | `text`   |      | no       | maker side if known    |
+| `raw_json`       | `text`   |      | no       | source payload summary |
 
-### `trade_fills`
+Indexes:
 
-| Column               | Type     | Null | Key     | 用途                            |
-| -------------------- | -------- | ---- | ------- | ------------------------------- |
-| `id`                 | `text`   | no   | PK      | row id                          |
-| `run_id`             | `text`   | no   | -       | run 別 PnL / fill 分析          |
-| `submitted_order_id` | `text`   | yes  | -       | order-to-fill join              |
-| `venue`              | `text`   | no   | UK part | venue 別分析                    |
-| `market`             | `text`   | no   | -       | market 別分析                   |
-| `venue_fill_id`      | `text`   | no   | UK part | duplicate prevention            |
-| `venue_order_id`     | `text`   | yes  | -       | submitted order join            |
-| `side`               | `text`   | no   | -       | buy/sell 別 markout / inventory |
-| `price`              | `double` | no   | -       | execution price                 |
-| `quantity`           | `double` | no   | -       | executed quantity               |
-| `fee`                | `double` | no   | -       | net PnL                         |
-| `trade_pnl`          | `double` | no   | -       | realized PnL                    |
-| `maker_taker`        | `text`   | no   | -       | maker ratio / fee quality       |
-| `filled_at`          | `bigint` | no   | -       | fill timestamp                  |
-| `raw_json`           | `text`   | yes  | -       | fill summary                    |
+- `idx_public_trades_market_time` (`market`, `trade_ts`)
+- `idx_public_trades_venue_id` (`market`, `venue_trade_id`) ⭐
 
-Unique: `(venue, venue_fill_id)`.
+### `funding_rates`
 
-### `account_state_observations`
+market-level funding rate。
 
-| Column           | Type     | Null | Key     | 用途                   |
-| ---------------- | -------- | ---- | ------- | ---------------------- |
-| `id`             | `text`   | no   | PK      | row id                 |
-| `run_id`         | `text`   | no   | UK part | run 別 risk 分析       |
-| `venue`          | `text`   | no   | -       | venue 別 risk          |
-| `market`         | `text`   | no   | UK part | market 別 risk         |
-| `observed_at`    | `bigint` | no   | UK part | observation timestamp  |
-| `balance`        | `double` | yes  | -       | capital usage          |
-| `equity`         | `double` | yes  | -       | equity drawdown        |
-| `realized_pnl`   | `double` | yes  | -       | account-side PnL check |
-| `unrealized_pnl` | `double` | yes  | -       | inventory risk         |
-| `position_qty`   | `double` | yes  | -       | max inventory / skew   |
-| `margin_ratio`   | `double` | yes  | -       | margin risk            |
-| `raw_json`       | `text`   | yes  | -       | account summary        |
+| Column             | Type      | Key | Required | Note                   |
+| ------------------ | --------- | --- | -------- | ---------------------- |
+| `id`               | `text`    | 🔑  | yes      | funding row id         |
+| `market`           | `text`    | ⭐  | yes      | venue market symbol    |
+| `funding_rate_bps` | `double`  |     | yes      | funding rate in bps    |
+| `interval_sec`     | `integer` |     | yes      | funding interval       |
+| `effective_at`     | `bigint`  | ⭐  | yes      | funding effective time |
+| `received_at`      | `bigint`  |     | yes      | local receive time     |
+| `source`           | `text`    |     | yes      | venue/source name      |
+| `raw_json`         | `text`    |     | no       | source payload summary |
 
-Unique: `(run_id, market, observed_at)`.
+Indexes:
 
-### `runtime_health_events`
+- `idx_funding_rates_market_effective` (`market`, `effective_at`) ⭐
 
-| Column        | Type     | Null | Key     | 用途                          |
-| ------------- | -------- | ---- | ------- | ----------------------------- |
-| `id`          | `text`   | no   | PK      | event id                      |
-| `run_id`      | `text`   | no   | UK part | run 別 health / skip 分析     |
-| `venue`       | `text`   | no   | -       | venue 別分析                  |
-| `market`      | `text`   | no   | -       | market 別分析                 |
-| `observed_at` | `bigint` | no   | UK part | event timestamp               |
-| `level`       | `text`   | no   | -       | `info` / `warn` / `error`     |
-| `code`        | `text`   | no   | UK part | stable code                   |
-| `message`     | `text`   | no   | -       | human-readable summary        |
-| `raw_json`    | `text`   | yes  | -       | skip reason / runtime context |
+### `reference_prices`
 
-Unique: `(run_id, code, observed_at)`.
+mark/index/oracle price。
+
+| Column        | Type     | Key | Required | Note                  |
+| ------------- | -------- | --- | -------- | --------------------- |
+| `id`          | `text`   | 🔑  | yes      | price row id          |
+| `market`      | `text`   | 📌  | yes      | venue market symbol   |
+| `price_type`  | `text`   | 📌  | yes      | mark / index / oracle |
+| `price`       | `double` |     | yes      | observed price        |
+| `exchange_ts` | `bigint` |     | no       | source timestamp      |
+| `observed_at` | `bigint` | 📌  | yes      | normalized time       |
+| `received_at` | `bigint` |     | yes      | local receive time    |
+| `source`      | `text`   |     | yes      | venue/source name     |
+| `raw_json`    | `text`   |     | no       | source summary        |
+
+Indexes:
+
+- `idx_reference_prices_market_type_time` (`market`, `price_type`, `observed_at`)
+
+### `market_data_gaps`
+
+market data collection gap。backtest input ではなく、欠損区間を避ける/評価から除外するための ops/audit table。
+
+| Column        | Type     | Key | Required | Note                    |
+| ------------- | -------- | --- | -------- | ----------------------- |
+| `id`          | `text`   | 🔑  | yes      | gap row id              |
+| `market`      | `text`   | 📌  | no       | nullable venue-wide gap |
+| `source`      | `text`   |     | yes      | stream/source name      |
+| `gap_type`    | `text`   |     | yes      | reconnect/stale/seq gap |
+| `from_ts`     | `bigint` | 📌  | yes      | gap start               |
+| `to_ts`       | `bigint` | 📌  | yes      | gap end                 |
+| `duration_ms` | `bigint` |     | yes      | gap length              |
+| `note`        | `text`   |     | no       | nullable                |
+
+Indexes:
+
+- `idx_market_data_gaps_market_time` (`market`, `from_ts`, `to_ts`)
+
+## Run DB Tables
+
+Key: 🔑 PK / 🔗 FK / ⭐ Unique key / 📌 Indexed。複合 key は対象列すべてに付ける。
+
+### `runs`
+
+bot / replay の実行単位。
+
+| Column          | Type      | Key | Required | Note                  |
+| --------------- | --------- | --- | -------- | --------------------- |
+| `id`            | `text`    | 🔑  | yes      | run id                |
+| `mode`          | `text`    | 📌  | yes      | live/paper/backtest   |
+| `venue`         | `text`    |     | yes      | e.g. `bulk`           |
+| `market`        | `text`    | 📌  | yes      | venue market symbol   |
+| `strategy_name` | `text`    |     | yes      | strategy id           |
+| `config_json`   | `text`    |     | yes      | sanitized config      |
+| `config_hash`   | `text`    |     | yes      | stable config hash    |
+| `git_sha`       | `text`    |     | no       | nullable              |
+| `git_dirty`     | `integer` |     | yes      | 0 / 1                 |
+| `started_at`    | `bigint`  | 📌  | yes      | epoch ms              |
+| `ended_at`      | `bigint`  |     | no       | epoch ms              |
+| `status`        | `text`    |     | yes      | running/completed/... |
+| `stop_reason`   | `text`    |     | no       | nullable              |
+
+Indexes:
+
+- `idx_runs_started` (`started_at`)
+- `idx_runs_mode_market_started` (`mode`, `market`, `started_at`)
+
+### `replay_runs`
+
+backtest/replay の再現情報。
+
+| Column                  | Type     | Key  | Required | Note                   |
+| ----------------------- | -------- | ---- | -------- | ---------------------- |
+| `id`                    | `text`   | 🔑   | yes      | replay row id          |
+| `run_id`                | `text`   | 🔗⭐ | yes      | `runs.id`              |
+| `dataset_manifest_path` | `text`   |      | yes      | manifest path          |
+| `market_db_path`        | `text`   |      | yes      | replay source DB       |
+| `from_ts`               | `bigint` |      | yes      | replay start           |
+| `to_ts`                 | `bigint` |      | yes      | replay end             |
+| `latency_model`         | `text`   |      | yes      | latency model id       |
+| `fill_model_version`    | `text`   |      | yes      | fill simulator version |
+| `simulation_seed`       | `bigint` |      | yes      | deterministic seed     |
+| `created_at`            | `bigint` |      | yes      | epoch ms               |
+
+Indexes:
+
+- `idx_replay_runs_run` (`run_id`) ⭐
+
+### `quote_cycles`
+
+quote decision cycle。
+
+| Column             | Type     | Key  | Required | Note                      |
+| ------------------ | -------- | ---- | -------- | ------------------------- |
+| `id`               | `text`   | 🔑   | yes      | cycle id                  |
+| `run_id`           | `text`   | 🔗⭐ | yes      | `runs.id`                 |
+| `market`           | `text`   |      | yes      | venue market symbol       |
+| `cycle_seq`        | `bigint` | ⭐   | yes      | run-local sequence        |
+| `started_at`       | `bigint` | 📌   | yes      | epoch ms                  |
+| `completed_at`     | `bigint` |      | no       | epoch ms                  |
+| `status`           | `text`   |      | yes      | quoted/skipped/failed     |
+| `book_snapshot_id` | `text`   |      | no       | logical Market DB ref     |
+| `position_qty`     | `double` |      | no       | position at decision time |
+| `raw_json`         | `text`   |      | no       | compact context           |
+
+Indexes:
+
+- `idx_quote_cycles_run_seq` (`run_id`, `cycle_seq`) ⭐
+- `idx_quote_cycles_run_time` (`run_id`, `started_at`)
 
 ### `quote_decisions`
 
-| Column                 | Type     | Null | Key     | 用途                                  |
-| ---------------------- | -------- | ---- | ------- | ------------------------------------- |
-| `id`                   | `text`   | no   | PK      | decision row id                       |
-| `run_id`               | `text`   | no   | UK part | run 別 quote 判断                     |
-| `venue`                | `text`   | no   | -       | venue 別分析                          |
-| `market`               | `text`   | no   | -       | market 別分析                         |
-| `quote_cycle_id`       | `text`   | no   | UK part | client order id prefix                |
-| `side`                 | `text`   | no   | UK part | `buy` / `sell`                        |
-| `level`                | `int`    | no   | UK part | ladder level                          |
-| `intent`               | `text`   | no   | -       | `quote` / `reduce` / `disabled`       |
-| `price`                | `double` | no   | -       | planned quote price                   |
-| `quantity`             | `double` | no   | -       | planned quote size                    |
-| `fair_price`           | `double` | no   | -       | quote generation fair price           |
-| `sigma`                | `double` | no   | -       | strategy volatility input             |
-| `policy`               | `text`   | no   | -       | TIF policy                            |
-| `position_qty`         | `double` | no   | -       | inventory context                     |
-| `mid_price`            | `double` | no   | -       | market context at decision            |
-| `micro_price`          | `double` | no   | -       | micro price at decision               |
-| `mark_price`           | `double` | no   | -       | mark price at decision                |
-| `spread_bps`           | `double` | no   | -       | market spread at decision             |
-| `staleness_ms`         | `bigint` | no   | -       | component freshness at decision       |
-| `control_reasons_json` | `text`   | no   | -       | quote control / gate reason tags      |
-| `created_at`           | `bigint` | no   | -       | quote generation timestamp            |
-| `raw_json`             | `text`   | yes  | -       | implementation-specific decision data |
+bot が出した quote intent。
 
-Unique: `(run_id, quote_cycle_id, side, level)`.
+| Column                 | Type      | Key  | Required | Note                     |
+| ---------------------- | --------- | ---- | -------- | ------------------------ |
+| `id`                   | `text`    | 🔑   | yes      | decision id              |
+| `run_id`               | `text`    | 🔗📌 | yes      | `runs.id`                |
+| `quote_cycle_id`       | `text`    | 🔗⭐ | yes      | `quote_cycles.id`        |
+| `side`                 | `text`    | ⭐   | yes      | buy/sell                 |
+| `level`                | `integer` | ⭐   | yes      | ladder level             |
+| `intent`               | `text`    |      | yes      | quote/reduce/disabled    |
+| `price`                | `double`  |      | yes      | planned price            |
+| `quantity`             | `double`  |      | yes      | planned quantity         |
+| `fair_price`           | `double`  |      | yes      | model fair price         |
+| `model_name`           | `text`    |      | yes      | quote model id           |
+| `alpha_drift_bps`      | `double`  |      | no       | funding-aware diagnostic |
+| `expected_funding_bps` | `double`  |      | no       | funding-aware diagnostic |
+| `basis_bps`            | `double`  |      | no       | funding-aware diagnostic |
+| `target_inventory_qty` | `double`  |      | no       | funding-aware diagnostic |
+| `inventory_error_qty`  | `double`  |      | no       | funding-aware diagnostic |
+| `reason_tags_json`     | `text`    |      | no       | gate/control reasons     |
+| `created_at`           | `bigint`  | 📌   | yes      | epoch ms                 |
 
-### `order_lifecycle_events`
+Indexes:
 
-| Column            | Type     | Null | Key | 用途                                  |
-| ----------------- | -------- | ---- | --- | ------------------------------------- |
-| `id`              | `text`   | no   | PK  | event id                              |
-| `run_id`          | `text`   | no   | -   | run 別 event 分析                     |
-| `venue`           | `text`   | no   | -   | venue 別分析                          |
-| `market`          | `text`   | no   | -   | market 別分析                         |
-| `action`          | `text`   | no   | -   | submit / ack / cancel / reject / fill |
-| `client_order_id` | `text`   | yes  | -   | client order id                       |
-| `venue_order_id`  | `text`   | yes  | -   | venue order id                        |
-| `side`            | `text`   | yes  | -   | buy / sell                            |
-| `intent`          | `text`   | yes  | -   | quote / reduce / close                |
-| `order_type`      | `text`   | yes  | -   | limit / market                        |
-| `price`           | `double` | yes  | -   | event price                           |
-| `quantity`        | `double` | yes  | -   | event quantity                        |
-| `time_in_force`   | `text`   | yes  | -   | TIF                                   |
-| `status`          | `text`   | yes  | -   | venue / normalized status             |
-| `latency_ms`      | `bigint` | yes  | -   | observed latency                      |
-| `observed_at`     | `bigint` | no   | -   | event timestamp                       |
-| `raw_json`        | `text`   | yes  | -   | raw event summary                     |
+- `idx_quote_decisions_cycle_side_level` (`quote_cycle_id`, `side`, `level`) ⭐
+- `idx_quote_decisions_run_created` (`run_id`, `created_at`)
 
-## Fact Sources
+### `orders`
 
-| Table                        | 保存タイミング                                                                                                                                                                          |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `trading_runs`               | `Bot.start()` で UUID を発行し、mode / venue / market / capital mode / strategy / sanitized config / git metadata を保存する。終了時に `ended_at`, `status`, `stop_reason` を更新する。 |
-| `orderbook_snapshots`        | market snapshot を 1 秒 bucket に丸め、top-of-book, mid, micro price, mark price, spread, staleness を upsert する。                                                                    |
-| `submitted_orders`           | order gateway の submit / ack / reject / cancel event から client order id 単位で upsert する。                                                                                         |
-| `trade_fills`                | `syncFills()` / fill subscription 由来の normalized fill を `(venue, venue_fill_id)` で upsert する。                                                                                   |
-| `account_state_observations` | snapshot に account risk 情報がある場合、低頻度 risk observation として保存する。                                                                                                       |
-| `runtime_health_events`      | guarded skip、no active orders、runtime health signal を発生時点の raw fact として保存する。                                                                                            |
-| `quote_decisions`            | quote cycle ごとに side / level / intent / price / size / freshness / control reason を保存する。                                                                                       |
-| `order_lifecycle_events`     | gateway event 単位で submit / ack / cancel / reject / fill の raw lifecycle を保存する。                                                                                                |
+order state projection。
 
-## Analysis Views
+| Column            | Type     | Key  | Required | Note                |
+| ----------------- | -------- | ---- | -------- | ------------------- |
+| `id`              | `text`   | 🔑   | yes      | order id            |
+| `run_id`          | `text`   | 🔗⭐ | yes      | `runs.id`           |
+| `client_order_id` | `text`   | ⭐   | yes      | bot-generated id    |
+| `venue_order_id`  | `text`   | 📌   | no       | venue ack id        |
+| `market`          | `text`   |      | yes      | venue market symbol |
+| `side`            | `text`   |      | yes      | buy/sell            |
+| `intent`          | `text`   |      | yes      | quote/reduce/close  |
+| `order_type`      | `text`   |      | yes      | limit/market        |
+| `time_in_force`   | `text`   |      | yes      | e.g. GTC            |
+| `limit_price`     | `double` |      | no       | nullable            |
+| `quantity`        | `double` |      | yes      | order quantity      |
+| `status`          | `text`   | 📌   | yes      | normalized state    |
+| `submitted_at`    | `bigint` |      | yes      | epoch ms            |
+| `accepted_at`     | `bigint` |      | no       | epoch ms            |
+| `canceled_at`     | `bigint` |      | no       | epoch ms            |
+| `rejected_at`     | `bigint` |      | no       | epoch ms            |
+| `filled_at`       | `bigint` |      | no       | epoch ms            |
+| `reject_reason`   | `text`   |      | no       | nullable            |
+| `raw_json`        | `text`   |      | no       | venue response      |
 
-| View                          | 内容                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------- |
-| `v_run_pnl`                   | notional, fee, trade PnL, net PnL, PnL per notional                                |
-| `v_equity_curve`              | fill 順の cumulative net PnL                                                       |
-| `v_run_drawdown`              | equity curve から max drawdown                                                     |
-| `v_fill_markouts`             | fill ごとの future mid markout と fee / trade PnL / order join key                 |
-| `v_fill_context`              | fill -> submitted order -> quote decision -> markout を joinした edge探索用context |
-| `v_edge_quote_bucket_quality` | side / level / intent / quote age bucket ごとの fill count, markout, fee, net EV   |
-| `v_runtime_health_summary`    | runtime health event の code / level 別件数と最新発生時刻                          |
-| `v_order_quality`             | submit 数、reject rate、cancel rate、fill rate、avg latency                        |
-| `v_markout_quality`           | avg markout、adverse selection rate、markout coverage                              |
-| `v_market_quality`            | avg/p95 spread、stale rate、observation count                                      |
-| `v_inventory_risk`            | max abs position、avg position、min margin ratio、equity drawdown                  |
-| `v_run_performance`           | run 単位の最終評価入口                                                             |
+Indexes:
 
-`v_fill_markouts` は OHLCV を参照しない。Markout の価格 fact は `orderbook_snapshots` から取る。
+- `idx_orders_run_client` (`run_id`, `client_order_id`) ⭐
+- `idx_orders_run_venue_order` (`run_id`, `venue_order_id`)
+- `idx_orders_run_status` (`run_id`, `status`)
 
-## View Columns
+### `order_events`
 
-### `v_run_pnl`
+order lifecycle event stream。
 
-| Column             | Type     | 内容                     |
-| ------------------ | -------- | ------------------------ |
-| `run_id`           | `text`   | run id                   |
-| `notional`         | `double` | `SUM(price * quantity)`  |
-| `fee`              | `double` | total fee                |
-| `trade_pnl`        | `double` | total realized trade PnL |
-| `net_pnl`          | `double` | `trade_pnl - fee`        |
-| `pnl_per_notional` | `double` | `net_pnl / notional`     |
+| Column            | Type     | Key  | Required | Note                     |
+| ----------------- | -------- | ---- | -------- | ------------------------ |
+| `id`              | `text`   | 🔑   | yes      | event id                 |
+| `run_id`          | `text`   | 🔗📌 | yes      | `runs.id`                |
+| `order_id`        | `text`   | 🔗📌 | no       | `orders.id` when known   |
+| `client_order_id` | `text`   |      | no       | bot-generated id         |
+| `venue_order_id`  | `text`   |      | no       | venue order id           |
+| `action`          | `text`   |      | yes      | submit/ack/reject/cancel |
+| `side`            | `text`   |      | no       | buy/sell                 |
+| `price`           | `double` |      | no       | event price              |
+| `quantity`        | `double` |      | no       | event quantity           |
+| `status`          | `text`   |      | no       | normalized status        |
+| `latency_ms`      | `bigint` |      | no       | observed latency         |
+| `observed_at`     | `bigint` | 📌   | yes      | epoch ms                 |
+| `raw_json`        | `text`   |      | no       | venue payload            |
 
-### `v_equity_curve`
+Indexes:
 
-| Column               | Type     | 内容                         |
-| -------------------- | -------- | ---------------------------- |
-| `fill_id`            | `text`   | fill id                      |
-| `run_id`             | `text`   | run id                       |
-| `filled_at`          | `bigint` | fill timestamp               |
-| `cumulative_net_pnl` | `double` | fill 順の cumulative net PnL |
+- `idx_order_events_run_time` (`run_id`, `observed_at`)
+- `idx_order_events_order_time` (`order_id`, `observed_at`)
 
-### `v_run_drawdown`
+### `fills`
 
-| Column         | Type     | 内容                                    |
-| -------------- | -------- | --------------------------------------- |
-| `run_id`       | `text`   | run id                                  |
-| `max_drawdown` | `double` | equity curve の peak-to-trough drawdown |
+execution fact。
 
-### `v_order_quality`
+| Column           | Type     | Key  | Required | Note                |
+| ---------------- | -------- | ---- | -------- | ------------------- |
+| `id`             | `text`   | 🔑   | yes      | fill row id         |
+| `run_id`         | `text`   | 🔗⭐ | yes      | `runs.id`           |
+| `order_id`       | `text`   | 🔗📌 | no       | `orders.id`         |
+| `venue_fill_id`  | `text`   | ⭐   | yes      | venue/generated id  |
+| `venue_order_id` | `text`   |      | no       | venue order id      |
+| `market`         | `text`   |      | yes      | venue market symbol |
+| `side`           | `text`   |      | yes      | buy/sell            |
+| `price`          | `double` |      | yes      | execution price     |
+| `quantity`       | `double` |      | yes      | executed quantity   |
+| `fee`            | `double` |      | yes      | fee amount          |
+| `rebate`         | `double` |      | yes      | rebate amount       |
+| `maker_taker`    | `text`   |      | yes      | maker/taker/unknown |
+| `filled_at`      | `bigint` | 📌   | yes      | epoch ms            |
+| `raw_json`       | `text`   |      | no       | fill summary        |
 
-| Column            | Type      | 内容                                 |
-| ----------------- | --------- | ------------------------------------ |
-| `run_id`          | `text`    | run id                               |
-| `submitted_count` | `integer` | submitted order count                |
-| `reject_rate`     | `double`  | rejected / submitted                 |
-| `cancel_rate`     | `double`  | canceled / submitted                 |
-| `fill_rate`       | `double`  | filled / submitted                   |
-| `avg_latency_ms`  | `double`  | average submit-to-ack/reject latency |
+Indexes:
 
-### `v_fill_markouts`
+- `idx_fills_run_time` (`run_id`, `filled_at`)
+- `idx_fills_run_venue_fill` (`run_id`, `venue_fill_id`) ⭐
+- `idx_fills_order` (`order_id`)
 
-| Column             | Type      | 内容                            |
-| ------------------ | --------- | ------------------------------- |
-| `fill_id`          | `text`    | fill id                         |
-| `run_id`           | `text`    | run id                          |
-| `market`           | `text`    | market                          |
-| `side`             | `text`    | buy/sell                        |
-| `price`            | `double`  | fill price                      |
-| `filled_at`        | `bigint`  | fill timestamp                  |
-| `mid_5s`           | `double`  | `filled_at + 5s` の mid price   |
-| `markout_5s_bps`   | `double`  | signed 5s markout bps           |
-| `adverse_5s`       | `integer` | 5s markout が adverse なら 1    |
-| `mid_30s`          | `double`  | `filled_at + 30s` の mid price  |
-| `markout_30s_bps`  | `double`  | signed 30s markout bps          |
-| `mid_300s`         | `double`  | `filled_at + 300s` の mid price |
-| `markout_300s_bps` | `double`  | signed 300s markout bps         |
+### `position_snapshots`
 
-### `v_markout_quality`
+position timeline。
 
-| Column                      | Type     | 内容                               |
-| --------------------------- | -------- | ---------------------------------- |
-| `run_id`                    | `text`   | run id                             |
-| `avg_markout_5s_bps`        | `double` | average 5s markout                 |
-| `adverse_selection_rate_5s` | `double` | adverse 5s markout ratio           |
-| `markout_5s_coverage`       | `double` | 5s markout が計算できた fill ratio |
+| Column           | Type     | Key  | Required | Note                 |
+| ---------------- | -------- | ---- | -------- | -------------------- |
+| `id`             | `text`   | 🔑   | yes      | snapshot id          |
+| `run_id`         | `text`   | 🔗⭐ | yes      | `runs.id`            |
+| `market`         | `text`   | ⭐   | yes      | venue market symbol  |
+| `observed_at`    | `bigint` | ⭐   | yes      | epoch ms             |
+| `position_qty`   | `double` |      | yes      | signed base quantity |
+| `entry_price`    | `double` |      | no       | nullable             |
+| `mark_price`     | `double` |      | no       | valuation price      |
+| `unrealized_pnl` | `double` |      | no       | venue/account value  |
+| `raw_json`       | `text`   |      | no       | source summary       |
 
-### `v_market_quality`
+Indexes:
 
-| Column              | Type      | 内容                         |
-| ------------------- | --------- | ---------------------------- |
-| `run_id`            | `text`    | run id                       |
-| `market`            | `text`    | market                       |
-| `avg_spread_bps`    | `double`  | average spread               |
-| `p95_spread_bps`    | `double`  | spread の p95                |
-| `stale_rate`        | `double`  | `staleness_ms > 1000` の比率 |
-| `observation_count` | `integer` | orderbook snapshot count     |
+- `idx_position_snapshots_run_market_time` (`run_id`, `market`, `observed_at`) ⭐
 
-### `v_inventory_risk`
+### `account_snapshots`
 
-| Column             | Type     | 内容                                   |
-| ------------------ | -------- | -------------------------------------- |
-| `run_id`           | `text`   | run id                                 |
-| `max_abs_position` | `double` | max `ABS(position_qty)`                |
-| `avg_position`     | `double` | average position                       |
-| `min_margin_ratio` | `double` | minimum margin ratio                   |
-| `equity_drawdown`  | `double` | account equity peak-to-trough drawdown |
+account equity/risk timeline。
 
-### `v_run_performance`
+| Column           | Type     | Key  | Required | Note                |
+| ---------------- | -------- | ---- | -------- | ------------------- |
+| `id`             | `text`   | 🔑   | yes      | snapshot id         |
+| `run_id`         | `text`   | 🔗⭐ | yes      | `runs.id`           |
+| `observed_at`    | `bigint` | ⭐   | yes      | epoch ms            |
+| `balance`        | `double` |      | no       | account balance     |
+| `equity`         | `double` |      | no       | account equity      |
+| `margin_ratio`   | `double` |      | no       | venue risk metric   |
+| `realized_pnl`   | `double` |      | no       | venue/account value |
+| `unrealized_pnl` | `double` |      | no       | venue/account value |
+| `raw_json`       | `text`   |      | no       | source summary      |
 
-| Column                      | Type      | 内容                     |
-| --------------------------- | --------- | ------------------------ |
-| `run_id`                    | `text`    | run id                   |
-| `mode`                      | `text`    | runtime mode             |
-| `venue`                     | `text`    | venue                    |
-| `market`                    | `text`    | market                   |
-| `capital_mode`              | `text`    | capital mode             |
-| `strategy_name`             | `text`    | strategy                 |
-| `started_at`                | `bigint`  | run start                |
-| `ended_at`                  | `bigint`  | run end                  |
-| `status`                    | `text`    | run status               |
-| `notional`                  | `double`  | from `v_run_pnl`         |
-| `fee`                       | `double`  | from `v_run_pnl`         |
-| `trade_pnl`                 | `double`  | from `v_run_pnl`         |
-| `net_pnl`                   | `double`  | from `v_run_pnl`         |
-| `pnl_per_notional`          | `double`  | from `v_run_pnl`         |
-| `max_drawdown`              | `double`  | from `v_run_drawdown`    |
-| `submitted_count`           | `integer` | from `v_order_quality`   |
-| `reject_rate`               | `double`  | from `v_order_quality`   |
-| `cancel_rate`               | `double`  | from `v_order_quality`   |
-| `fill_rate`                 | `double`  | from `v_order_quality`   |
-| `avg_latency_ms`            | `double`  | from `v_order_quality`   |
-| `avg_markout_5s_bps`        | `double`  | from `v_markout_quality` |
-| `adverse_selection_rate_5s` | `double`  | from `v_markout_quality` |
-| `markout_5s_coverage`       | `double`  | from `v_markout_quality` |
-| `avg_spread_bps`            | `double`  | from `v_market_quality`  |
-| `p95_spread_bps`            | `double`  | from `v_market_quality`  |
-| `stale_rate`                | `double`  | from `v_market_quality`  |
-| `max_abs_position`          | `double`  | from `v_inventory_risk`  |
-| `avg_position`              | `double`  | from `v_inventory_risk`  |
-| `min_margin_ratio`          | `double`  | from `v_inventory_risk`  |
-| `equity_drawdown`           | `double`  | from `v_inventory_risk`  |
+Indexes:
 
-## OHLCV Policy
+- `idx_account_snapshots_run_time` (`run_id`, `observed_at`) ⭐
 
-Bulk live / paper の成績評価には OHLCV を使わない。
-評価に必要な価格 fact は `orderbook_snapshots` に保存する。
+### `funding_accruals`
 
-OHLCV は backtest / historical cache、または venue candle をそのまま残したい reporting path 用の別枠として扱う。
-top-of-book や ticker だけの snapshot から volume=0 candle は作らない。
+funding cashflow fact。
+
+| Column                   | Type     | Key  | Required | Note                  |
+| ------------------------ | -------- | ---- | -------- | --------------------- |
+| `id`                     | `text`   | 🔑   | yes      | accrual id            |
+| `run_id`                 | `text`   | 🔗📌 | yes      | `runs.id`             |
+| `market`                 | `text`   | 📌   | yes      | venue market symbol   |
+| `position_qty`           | `double` |      | yes      | signed position       |
+| `notional`               | `double` |      | yes      | position notional     |
+| `funding_rate_bps`       | `double` |      | yes      | applied funding rate  |
+| `funding_interval_start` | `bigint` |      | yes      | source interval start |
+| `funding_interval_end`   | `bigint` |      | yes      | source interval end   |
+| `accrual_start`          | `bigint` |      | yes      | held interval start   |
+| `accrual_end`            | `bigint` | 📌   | yes      | held interval end     |
+| `amount`                 | `double` |      | yes      | signed cashflow       |
+| `currency`               | `text`   |      | yes      | quote currency        |
+| `source`                 | `text`   |      | yes      | venue/replay          |
+| `created_at`             | `bigint` |      | yes      | epoch ms              |
+
+Indexes:
+
+- `idx_funding_accruals_run_market_end` (`run_id`, `market`, `accrual_end`)
+
+### `ledger_entries`
+
+accounting source of truth。
+
+| Column         | Type     | Key  | Required | Note                        |
+| -------------- | -------- | ---- | -------- | --------------------------- |
+| `id`           | `text`   | 🔑   | yes      | ledger entry id             |
+| `run_id`       | `text`   | 🔗📌 | yes      | `runs.id`                   |
+| `market`       | `text`   |      | no       | nullable account-wide entry |
+| `source_table` | `text`   | ⭐   | no       | fills/funding_accruals/etc  |
+| `source_id`    | `text`   | ⭐   | no       | source row id               |
+| `entry_type`   | `text`   | ⭐📌 | yes      | trade/funding/fee/etc       |
+| `amount`       | `double` |      | yes      | signed amount               |
+| `currency`     | `text`   |      | yes      | accounting currency         |
+| `realized_at`  | `bigint` | 📌   | yes      | epoch ms                    |
+| `raw_json`     | `text`   |      | no       | source summary              |
+
+Indexes:
+
+- `idx_ledger_entries_run_time` (`run_id`, `realized_at`)
+- `idx_ledger_entries_source` (`source_table`, `source_id`, `entry_type`) ⭐
+- `idx_ledger_entries_run_type` (`run_id`, `entry_type`)
+
+### `runtime_events`
+
+runtime health / incident fact。
+
+| Column        | Type     | Key  | Required | Note                         |
+| ------------- | -------- | ---- | -------- | ---------------------------- |
+| `id`          | `text`   | 🔑   | yes      | event id                     |
+| `run_id`      | `text`   | 🔗📌 | yes      | `runs.id`                    |
+| `market`      | `text`   |      | no       | nullable run-wide event      |
+| `level`       | `text`   |      | yes      | info/warn/error              |
+| `code`        | `text`   | 📌   | yes      | stable machine-readable code |
+| `message`     | `text`   |      | yes      | short message                |
+| `observed_at` | `bigint` | 📌   | yes      | epoch ms                     |
+| `raw_json`    | `text`   |      | no       | context                      |
+
+Indexes:
+
+- `idx_runtime_events_run_time` (`run_id`, `observed_at`)
+- `idx_runtime_events_run_code` (`run_id`, `code`)
+
+## Logical Cross-DB References
+
+| From                                | To                                                     | Note                                    |
+| ----------------------------------- | ------------------------------------------------------ | --------------------------------------- |
+| `quote_cycles.book_snapshot_id`     | Market DB `book_snapshots.id`                          | SQLite file 分割のため physical FK なし |
+| `replay_runs.market_db_path`        | `data/market/<venue>/<yyyy-mm>.sqlite`                 | replay source                           |
+| `replay_runs.dataset_manifest_path` | `data/strategy-runs/<timestamp>-<label>/manifest.json` | replay dataset definition               |
+
+## PnL Source
+
+| Metric        | Source                                                   |
+| ------------- | -------------------------------------------------------- |
+| trade PnL     | `ledger_entries.entry_type = 'realized_trade_pnl'`       |
+| inventory PnL | `ledger_entries.entry_type = 'unrealized_inventory_pnl'` |
+| fee           | `ledger_entries.entry_type = 'fee'`                      |
+| rebate        | `ledger_entries.entry_type = 'rebate'`                   |
+| funding PnL   | `ledger_entries.entry_type = 'funding_pnl'`              |
+| net PnL       | `SUM(ledger_entries.amount)`                             |

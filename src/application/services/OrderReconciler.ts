@@ -55,6 +55,7 @@ export interface OrderReconcilerOptions {
   maxRestingMs: number;
   exchangeDropQuoteCooldownMs: number;
   exchangeOpenOrderSyncIntervalMs: number;
+  postCancelOpenOrderSyncMode: "blocking" | "interval";
   nowMs: () => number;
 }
 
@@ -99,6 +100,7 @@ const defaultOptions: OrderReconcilerOptions = {
   maxRestingMs: 30_000,
   exchangeDropQuoteCooldownMs: 1_500,
   exchangeOpenOrderSyncIntervalMs: 0,
+  postCancelOpenOrderSyncMode: "blocking",
   nowMs: Date.now,
 };
 
@@ -196,6 +198,9 @@ export class OrderReconciler {
     }
 
     await Promise.all(cancellations);
+    if (cancellations.length > 0 && this.options.postCancelOpenOrderSyncMode === "blocking") {
+      await this.syncExchangeOpenOrders({ force: true });
+    }
     const placedOrders = await Promise.all(ordersToPlace.map(async (target) => this.place(target)));
     return [
       ...activeOrders,
@@ -308,12 +313,13 @@ export class OrderReconciler {
     return sizeDeltaRatio >= this.options.sizeReplaceThresholdRatio;
   }
 
-  private async syncExchangeOpenOrders(): Promise<boolean> {
+  private async syncExchangeOpenOrders(options: { force?: boolean } = {}): Promise<boolean> {
     if (this.orderGateway.getOpenOrders === undefined) {
       return false;
     }
     const nowMs = this.options.nowMs();
     if (
+      options.force !== true &&
       this.options.exchangeOpenOrderSyncIntervalMs > 0 &&
       this.lastExchangeOpenOrderSyncAtMs !== null &&
       nowMs - this.lastExchangeOpenOrderSyncAtMs < this.options.exchangeOpenOrderSyncIntervalMs

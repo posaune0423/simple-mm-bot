@@ -1,13 +1,25 @@
-import type { AppConfig } from "../../config";
+import { match } from "ts-pattern";
+import type { QuoteEngineStrategyConfig } from "../../config";
 import { AvellanedaStoikovQuoteModel } from "../../domain/quote-models/AvellanedaStoikovQuoteModel";
+import { FundingAwareQuoteModel } from "../../domain/quote-models/FundingAwareQuoteModel";
 import type { QuoteModel } from "../../domain/quote-models/QuoteModel";
 
-type QuoteModelConfig = AppConfig["quoteEngine"]["strategy"];
+type QuoteModelConfig = QuoteEngineStrategyConfig;
 
 export function buildQuoteModel(quoteModelConfig: QuoteModelConfig): QuoteModel {
-  const modelType: string = quoteModelConfig.type;
-  if (modelType !== "avellaneda-stoikov") {
-    throw new Error(`Unsupported quote model type: ${modelType}`);
-  }
-  return new AvellanedaStoikovQuoteModel(quoteModelConfig.params);
+  return match(quoteModelConfig)
+    .with({ type: "avellaneda-stoikov" }, ({ params }) => new AvellanedaStoikovQuoteModel(params))
+    .with(
+      { type: "funding-aware" },
+      ({ params }) =>
+        new FundingAwareQuoteModel({
+          gamma: params.gamma,
+          kappa: params.kappa,
+          kInv: params.kInv,
+          funding: {
+            spreadWideningBpsPerAbsFundingBps: params.funding.spreadWideningBpsPerAbsFundingBps,
+          },
+        }),
+    )
+    .exhaustive();
 }

@@ -4,6 +4,7 @@ import * as v from "valibot";
 import { parse as parseYaml } from "yaml";
 
 import type { AvellanedaStoikovParams } from "./domain/quote-models/AvellanedaStoikovQuoteModel.ts";
+import type { FundingAwareQuoteModelParams } from "./domain/quote-models/FundingAwareQuoteModel.ts";
 import type { BookPriceSource } from "./domain/services/FairPriceCalculator.ts";
 import { env } from "./env.ts";
 import { fromResult, tryCatch, tryCatchAsync } from "./utils/result.ts";
@@ -28,6 +29,7 @@ const quoteSizingSchema = v.object({
   askSizeMultiplier: v.optional(nonNegativeNumberSchema),
   bidDistanceMultiplier: v.optional(positiveNumberSchema),
   askDistanceMultiplier: v.optional(positiveNumberSchema),
+  reduceQuoteMinPositionQty: v.optional(nonNegativeNumberSchema),
 });
 const quoteLevelSchema = v.object({
   halfSpreadBps: positiveNumberSchema,
@@ -36,11 +38,18 @@ const quoteLevelSchema = v.object({
 const markoutFeedbackGateSchema = v.optional(
   v.object({
     enabled: v.optional(v.boolean(), false),
+    action: v.optional(v.picklist(["disable", "tag", "rebalance"]), "disable"),
     minAverageMarkoutBps: v.optional(v.number(), 0),
+    maxAdverseSelectionRate: v.optional(zeroToOneNumberSchema),
     minSamples: v.optional(positiveIntegerSchema, 20),
     lookbackFills: v.optional(positiveIntegerSchema, 100),
     maxFillAgeMs: v.optional(positiveIntegerSchema),
     horizonsSec: v.optional(v.pipe(v.array(positiveIntegerSchema), v.minLength(1)), [5, 30, 300]),
+    toxicDistanceMultiplier: v.optional(positiveNumberSchema),
+    toxicSizeMultiplier: v.optional(nonNegativeNumberSchema),
+    disableToxicIncreaseExposure: v.optional(v.boolean()),
+    compensatingDistanceMultiplier: v.optional(positiveNumberSchema),
+    compensatingSizeMultiplier: v.optional(nonNegativeNumberSchema),
   }),
   {
     enabled: false,
@@ -57,10 +66,84 @@ const avellanedaStoikovParamsSchema = v.object({
   kInv: v.pipe(v.number(), v.minValue(0), v.maxValue(2)),
 }) satisfies v.GenericSchema<unknown, AvellanedaStoikovParams>;
 
-const strategySchema = v.object({
-  type: v.literal("avellaneda-stoikov"),
-  params: avellanedaStoikovParamsSchema,
+const alphaConfigSchema = v.object({
+  enabled: v.optional(v.boolean(), false),
+  source: v.optional(v.picklist(["none", "allora"]), "none"),
+  chainSlug: v.optional(v.picklist(["testnet", "mainnet"]), "testnet"),
+  asset: v.optional(v.picklist(["BTC", "ETH"]), "BTC"),
+  timeframe: v.optional(v.picklist(["5m", "8h"]), "5m"),
+  pollIntervalMs: v.optional(positiveIntegerSchema, 60_000),
+  staleMs: v.optional(positiveIntegerSchema, 420_000),
+  calibrationWeight: v.optional(nonNegativeNumberSchema, 0.04),
+  minAlphaDriftBps: v.optional(nonNegativeNumberSchema, 0.25),
+  maxAlphaDriftBps: v.optional(positiveNumberSchema, 3),
+  maxRawDriftBps: v.optional(positiveNumberSchema, 200),
+  maxCiWidthBps: v.optional(positiveNumberSchema, 250),
 });
+
+const targetInventoryConfigSchema = v.object({
+  maxQty: nonNegativeNumberSchema,
+  alphaQtyPerBps: nonNegativeNumberSchema,
+});
+
+const fundingConfigSchema = v.object({
+  rateHorizonSec: positiveNumberSchema,
+  holdingHorizonSec: positiveNumberSchema,
+  spreadWideningBpsPerAbsFundingBps: nonNegativeNumberSchema,
+});
+
+export type FundingAwareStrategyParams = Readonly<{
+  gamma: number;
+  kappa: number;
+  kInv: number;
+  alpha: Readonly<{
+    enabled: boolean;
+    source: "none" | "allora";
+    chainSlug: "testnet" | "mainnet";
+    asset: "BTC" | "ETH";
+    timeframe: "5m" | "8h";
+    pollIntervalMs: number;
+    staleMs: number;
+    calibrationWeight: number;
+    minAlphaDriftBps: number;
+    maxAlphaDriftBps: number;
+    maxRawDriftBps: number;
+    maxCiWidthBps: number;
+  }>;
+  targetInventory: Readonly<{
+    maxQty: number;
+    alphaQtyPerBps: number;
+  }>;
+  funding: FundingAwareQuoteModelParams["funding"] &
+    Readonly<{
+      rateHorizonSec: number;
+      holdingHorizonSec: number;
+    }>;
+}>;
+
+export type QuoteEngineStrategyConfig =
+  | Readonly<{ type: "avellaneda-stoikov"; params: AvellanedaStoikovParams }>
+  | Readonly<{ type: "funding-aware"; params: FundingAwareStrategyParams }>;
+
+const fundingAwareParamsSchema = v.object({
+  gamma: v.pipe(v.number(), v.minValue(0), v.maxValue(0.5)),
+  kappa: positiveNumberSchema,
+  kInv: v.pipe(v.number(), v.minValue(0), v.maxValue(2)),
+  alpha: alphaConfigSchema,
+  targetInventory: targetInventoryConfigSchema,
+  funding: fundingConfigSchema,
+}) satisfies v.GenericSchema<unknown, FundingAwareStrategyParams>;
+
+const strategySchema = v.variant("type", [
+  v.object({
+    type: v.literal("avellaneda-stoikov"),
+    params: avellanedaStoikovParamsSchema,
+  }),
+  v.object({
+    type: v.literal("funding-aware"),
+    params: fundingAwareParamsSchema,
+  }),
+]);
 
 const shutdownSchema = v.optional(
   v.object({
@@ -101,6 +184,7 @@ const commonConfigEntries = {
     intervalMs: positiveIntegerSchema,
     maxRestingMs: v.optional(positiveIntegerSchema),
     exchangeOpenOrderSyncIntervalMs: v.optional(positiveIntegerSchema),
+    postCancelOpenOrderSyncMode: v.optional(v.picklist(["blocking", "interval"]), "blocking"),
   }),
   shutdown: shutdownSchema,
   paper: v.optional(
@@ -144,6 +228,7 @@ const appConfigSchema = v.variant("venue", [
         timeoutMs: v.optional(positiveIntegerSchema),
         maxLeverage: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(50))),
         marketWsReconnectAfterMs: v.optional(positiveIntegerSchema),
+        fillPollIntervalMs: v.optional(positiveIntegerSchema, 2_000),
         privateKey: v.optional(v.string()),
       }),
     }),

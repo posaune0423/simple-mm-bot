@@ -3,7 +3,10 @@ import type { Fill } from "../domain/types/Fill.ts";
 import { isFlatPositionQty } from "../domain/types/Position.ts";
 import type { IMarketFeed, MarketSnapshot } from "../domain/ports/IMarketFeed.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
-import { isRecoverableVenueError } from "../domain/ports/RecoverableVenueError.ts";
+import {
+  isRecoverableVenueError,
+  type RecoverableVenueError,
+} from "../domain/ports/RecoverableVenueError.ts";
 import { stringifyError } from "../utils/errors.ts";
 import { LOG_ORANGE, LOG_RESET, logger } from "../utils/logger.ts";
 import type { MetricsRecorder } from "./services/MetricsRecorder.ts";
@@ -24,6 +27,7 @@ interface UseCases {
 type TickResult = "continue" | "stop";
 type RiskTickAction = "quote" | "pause_quoting" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
+type RuntimeDisposable = { start?: () => void; stop: () => void };
 
 interface BotStartOptions {
   maxTicks?: number;
@@ -34,6 +38,7 @@ interface BotOptions {
   closePositionPolicy: ShutdownClosePositionPolicy;
   eventTaskDrainTimeoutMs?: number;
   positionSyncIntervalMs?: number;
+  runtimeDisposables?: readonly RuntimeDisposable[];
 }
 
 export class Bot {
@@ -44,6 +49,7 @@ export class Bot {
   private eventTasks: Promise<void> = Promise.resolve();
   private pauseQuoteCancelCompleted = false;
   private lastPositionSyncAtMs = 0;
+  private marketFeedConnected = false;
   private readonly unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -69,8 +75,9 @@ export class Bot {
     try {
       await this.metrics?.start(Date.now());
       if (!this.wasStopRequested()) {
-        shouldCleanup = true;
         await this.connectAndSubscribe();
+        shouldCleanup = true;
+        this.startRuntimeDisposables();
         await this.runLoop(startOptions.maxTicks, startOptions.signal);
       }
     } catch (err) {
@@ -84,9 +91,10 @@ export class Bot {
       }
     } finally {
       removeAbortListener();
-      if (shouldCleanup) {
+      if (shouldCleanup || this.marketFeedConnected) {
         closePositionError = await this.cleanup();
       } else {
+        closePositionError = this.stopRuntimeDisposables();
         this.running = false;
       }
       const metricsWithDrain = this.metrics as
@@ -116,6 +124,7 @@ export class Bot {
     this.emergencyStopRequested = false;
     this.pauseQuoteCancelCompleted = false;
     this.lastPositionSyncAtMs = 0;
+    this.marketFeedConnected = false;
     this.eventTasks = Promise.resolve();
     this.unsubscribers.splice(0);
   }
@@ -162,6 +171,7 @@ export class Bot {
 
   private async connectAndSubscribe(): Promise<void> {
     await this.marketFeed.connect();
+    this.marketFeedConnected = true;
     logger.info("[application] Bot | MARKET_FEED_CONNECTED |");
     await this.syncInitialFills();
     await this.useCases.initializePosition?.execute();
@@ -363,9 +373,23 @@ export class Bot {
 
   private async cleanup(): Promise<unknown> {
     let closePositionError: unknown;
+    const recordCleanupFailure = (event: string, err: unknown) => {
+      closePositionError ??= err;
+      logger.error(`[application] Bot | ${event} | error=${stringifyError(err)}`);
+    };
+    const runCleanupStep = async (event: string, step: () => void | Promise<void>) => {
+      await Promise.resolve()
+        .then(step)
+        .catch((err) => recordCleanupFailure(event, err));
+    };
     this.running = false;
     logger.info("[application] Bot | CLEANUP_STARTED |");
-    await this.orderGateway.stopBackgroundSync?.();
+    if (this.orderGateway.stopBackgroundSync !== undefined) {
+      await runCleanupStep("CLEANUP_STOP_BACKGROUND_SYNC_FAILED", (): void | Promise<void> =>
+        this.orderGateway.stopBackgroundSync?.(),
+      );
+    }
+    logger.info("[application] Bot | CLEANUP_CANCEL_ALL_STARTED |");
     await this.orderGateway
       .cancelAll()
       .catch((err) =>
@@ -373,22 +397,45 @@ export class Bot {
           `[application] Bot | CLEANUP_CANCEL_ALL_FAILED | error=${stringifyError(err)}`,
         ),
       );
+    logger.info("[application] Bot | CLEANUP_CANCEL_ALL_COMPLETE |");
     await this.syncCleanupFills("after_cancel_all");
     if (this.shouldClosePositionOnCleanup()) {
+      logger.info("[application] Bot | CLEANUP_CLOSE_POSITION_STARTED |");
       await this.useCases.closePosition.execute().catch((err) => {
         closePositionError = err;
         logger.error(
           `[application] Bot | CLEANUP_CLOSE_POSITION_FAILED | error=${stringifyError(err)}`,
         );
       });
+      if (closePositionError === undefined) {
+        logger.info("[application] Bot | CLEANUP_CLOSE_POSITION_COMPLETE |");
+      }
       await this.syncCleanupFills("after_close_position");
+    } else {
+      logger.info(
+        `[application] Bot | CLEANUP_CLOSE_POSITION_SKIPPED | policy=${this.options.closePositionPolicy} emergencyStop=${this.emergencyStopRequested}`,
+      );
     }
-    await this.marketFeed.disconnect();
+    await runCleanupStep("CLEANUP_DISCONNECT_FAILED", async () => {
+      await this.marketFeed.disconnect();
+    });
+    this.marketFeedConnected = false;
+    closePositionError ??= this.stopRuntimeDisposables();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
-      unsubscribe();
+      try {
+        unsubscribe();
+      } catch (err) {
+        recordCleanupFailure("CLEANUP_UNSUBSCRIBE_FAILED", err);
+      }
     }
-    await this.drainEventTasks();
-    await this.orderGateway.dispose?.();
+    await runCleanupStep("CLEANUP_EVENT_TASK_DRAIN_FAILED", async () => {
+      await this.drainEventTasks();
+    });
+    if (this.orderGateway.dispose !== undefined) {
+      await runCleanupStep("CLEANUP_DISPOSE_FAILED", (): void | Promise<void> =>
+        this.orderGateway.dispose?.(),
+      );
+    }
     if (closePositionError === undefined) {
       logger.info(`[application] Bot | CLEANUP_COMPLETE | quotedCount=${this.quotedCount}`);
     } else {
@@ -401,6 +448,27 @@ export class Bot {
 
   private shouldClosePositionOnCleanup(): boolean {
     return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
+  }
+
+  private startRuntimeDisposables(): void {
+    for (const disposable of this.options.runtimeDisposables ?? []) {
+      disposable.start?.();
+    }
+  }
+
+  private stopRuntimeDisposables(): unknown {
+    let firstError: unknown;
+    for (const disposable of this.options.runtimeDisposables ?? []) {
+      try {
+        disposable.stop();
+      } catch (error) {
+        firstError ??= error;
+        logger.error(
+          `[application] Bot | RUNTIME_DISPOSABLE_STOP_FAILED | error=${stringifyError(error)}`,
+        );
+      }
+    }
+    return firstError;
   }
 
   private async cancelOpenOrdersForPause(
@@ -550,13 +618,25 @@ function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): Bo
 }
 
 function recoverableRuntimeErrorMessageOrThrow(error: unknown): string {
-  return match(error)
-    .with(P.when(isRecoverableVenueError), (recoverableError) =>
-      stringifyError(recoverableError.cause ?? recoverableError),
-    )
-    .otherwise((fatalError) => {
-      throw fatalError;
-    });
+  const recoverableError = directRecoverableVenueError(error);
+  if (recoverableError === null) {
+    throw error;
+  }
+  return stringifyError(recoverableError.cause ?? recoverableError);
+}
+
+function directRecoverableVenueError(error: unknown): RecoverableVenueError | null {
+  if (isRecoverableVenueError(error)) {
+    return error;
+  }
+  if (typeof error === "object" && error !== null) {
+    const cause = (error as { cause?: unknown }).cause;
+    if (isRecoverableVenueError(cause)) {
+      return cause;
+    }
+  }
+
+  return null;
 }
 
 function stopReasonFromSignal(signal: AbortSignal): string {

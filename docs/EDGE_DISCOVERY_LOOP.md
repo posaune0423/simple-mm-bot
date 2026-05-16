@@ -214,6 +214,62 @@ Hypothesis:
 - `QuoteEngine`、`QuoteModel`、`Strategy` は domain の pure logic として保ち、DB、Bulk SDK、timer、logger には依存させない。
 - `QuotingCycleService` の hot path budget は、market snapshot取得、position取得、pure quote compute、order reconcile に集中させる。metrics record、quality scan、report用集計は quote生成を待たせない。
 
+## Open Issue: 1000ms+ Quote Age Toxicity
+
+2026-05-15 の Bulk BTC-USD live run `66feb9eb-daff-4273-9ea7-a5c12d8afbc6` では、feed staleness そのものよりも、open quote が `1000ms` を超えて残った後にfillされる bucket が悪化していた。
+
+観測事実:
+
+| metric                 |         value |
+| ---------------------- | ------------: |
+| fills                  |          `94` |
+| markout coverage       |    `5s 97.9%` |
+| avg quote age at fill  |      `1268ms` |
+| avg gateway latency    |       `248ms` |
+| snapshot freshness     |       `217ms` |
+| stale rate             |        `0.1%` |
+| reconcile p95          |       `734ms` |
+| avg 5s markout         | `-0.0972 bps` |
+| avg 30s markout        | `-0.3068 bps` |
+| avg 300s markout       | `-0.3560 bps` |
+| adverse selection rate |       `52.2%` |
+
+Quote-age bucket:
+
+| quote_age_ms | fills |     notional | vw 5s markout | vw 30s markout | verdict            |
+| ------------ | ----: | -----------: | ------------: | -------------: | ------------------ |
+| `250-500`    |   `4` |  `$4,000.14` | `-0.3945 bps` |  `+0.7111 bps` | sample too small   |
+| `500-1000`   |  `22` | `$20,903.30` | `+0.6446 bps` |  `+1.0743 bps` | positive_candidate |
+| `1000-3000`  |  `69` | `$65,134.34` | `-0.1583 bps` |  `-0.4482 bps` | negative           |
+
+Interpretation:
+
+- `snapshot freshness` と `stale rate` は致命的ではないため、一次原因は market feed の単純な stale ではない。
+- `1000-3000ms` bucket がfillの大半を占め、5s/30s VW markout が負なので、古くなったquoteがpick offされている可能性が高い。
+- `500-1000ms` bucket は正なので、quoteを単純に広げるより、`1000ms` を超える前にcancel/replaceする lifecycle 改善を先に検証する。
+- Bulk ではcancel orderが優先される前提なので、古いquoteを残すより、少しでも早くcancel/replace requestを出す価値が高い。
+- ただし volume / fill rate を守るため、open quoteを一律停止するのではなく、quote age、side、intent、level、external move を組み合わせた bad bucket removal として扱う。
+
+Hypothesis:
+
+```text
+Hypothesis:
+  signal: quoteAgeMs + side + intent + level + market move since quote
+  action: quoteAgeMs が 1000ms に近づいた open quote を優先的に cancel/replace する
+  expected effect: 1000-3000ms bucket の fill count と 30s tail loss を下げ、500-1000ms bucket の良いfillは残す
+  required data: quote creation time, cancel request time, cancel ack time, fill time, side, intent, level, market move since quote, external mid move if available
+  bucket table: quoteAgeMs bucket x side x intent x level x cancel-before-fill state
+  decision rule: 1000-3000ms bucket の VW 5s/30s markout と tail が改善し、total notional/min と fill rate が大きく悪化しないなら positive_candidate
+  next hypothesis: stale quote toxicity は全side共通か、external move検知後だけ悪化するか
+```
+
+Implementation issue:
+
+- `OrderReconciler` の hot path で、age cap 到達前の cancel/replace 判定を優先する。
+- cancel/replace は place より先に出し、unknown state fallback の `cancelAll()` には安易に逃げない。
+- `maxRestingMs` は venue上の実効寿命ではなく、bot側の cancel request deadline として扱う。
+- acceptance criteria は、次のlive canaryで `1000-3000ms` bucket の fill share と 30s VW markout が改善し、同時に notional/min、fill rate、maker ratio が大きく低下しないこと。
+
 ## Agent Output Template
 
 agentは探索結果を次の形で残す。
