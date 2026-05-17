@@ -1,0 +1,73 @@
+name: Sync Hetzner Infra
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - infra/hetzner/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-hetzner-infra
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$VPS_HOST"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/hetzner_deploy_key
+          chmod 600 ~/.ssh/hetzner_deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Check Runtime Directory
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/hetzner_deploy_key -o IdentitiesOnly=yes "$VPS_USER@$VPS_HOST" \
+            'test -d /opt/mmbot && test -w /opt/mmbot'
+
+      - name: Sync Infra Files
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          rsync -az --delete \
+            --exclude=.env \
+            --exclude=data/ \
+            --exclude=backups/ \
+            --exclude=logs/ \
+            -e "ssh -i ~/.ssh/hetzner_deploy_key -o IdentitiesOnly=yes" \
+            infra/hetzner/ "$VPS_USER@$VPS_HOST:/opt/mmbot/"
+
+      - name: Validate Remote Compose
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/hetzner_deploy_key -o IdentitiesOnly=yes "$VPS_USER@$VPS_HOST" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/mmbot
+          chmod +x /opt/mmbot/scripts/*.sh /opt/mmbot/local/*.sh
+          docker compose --env-file .env \
+            -f compose.infra.yml \
+            -f compose.workers.yml \
+            -f compose.bots.yml \
+            config -q
+          REMOTE

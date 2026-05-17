@@ -14,6 +14,20 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg17
+        env:
+          POSTGRES_USER: mm
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mm_bot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mm -d mm_bot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -22,7 +36,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -35,5 +49,21 @@ jobs:
       - name: Run Check
         run: bun run check
 
+      - name: Run Lint
+        run: bun run lint
+
+      - name: Run DB Migrations
+        env:
+          DATABASE_URL: postgresql://mm:postgres@127.0.0.1:5432/mm_bot
+        run: bun run db:migrate
+
       - name: Run Unit And Integration Tests
+        env:
+          DATABASE_URL: postgresql://mm:postgres@127.0.0.1:5432/mm_bot
+          TEST_DATABASE_URL: postgresql://mm:postgres@127.0.0.1:5432/mm_bot
         run: bun run test
+
+      - name: Run actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color

@@ -11,4 +11,4 @@ ENV MODE=live
 ENV CONFIG_VENUE=bulk
 ENV CONFIG_PRESET=beta
 
-CMD ["bun", "run", "src/main.ts", "run"]
+CMD ["bun", "run", "src/main.ts"]

@@ -1,0 +1,9 @@
+venue: bulk
+symbol: BTC-USD
+depth: 10
+flushIntervalMs: 250
+maxBatchSize: 1000
+connections:
+  bulk:
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    wsUrl: wss://exchange-ws1.bulk.trade

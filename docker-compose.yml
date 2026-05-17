@@ -1,11 +1,11 @@
 services:
   timescaledb:
     image: timescale/timescaledb:latest-pg17
-    container_name: simple-mm-timescaledb
+    container_name: simple-mm-local-timescaledb
     restart: unless-stopped
     environment:
       POSTGRES_USER: mm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mm}
       POSTGRES_DB: mm_bot
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
@@ -17,24 +17,76 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   market-data-recorder-bulk:
     platform: linux/amd64
+    image: simple-mm-bot:local
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: simple-mm-recorder-bulk
+    container_name: simple-mm-local-recorder-bulk
     restart: unless-stopped
+    profiles:
+      - worker
     depends_on:
       timescaledb:
         condition: service_healthy
+    volumes:
+      - ./infra/hetzner/configs:/app/configs:ro
+      - ./logs:/app/logs
     environment:
-      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD}@timescaledb:5432/mm_bot
-      RECORDER_VENUE: bulk
-      RECORDER_SYMBOL: BTC-USD
-      RECORDER_DEPTH: 10
-      BULK_HTTP_URL: ${BULK_HTTP_URL}
-      BULK_WS_URL: ${BULK_WS_URL}
-      RECORDER_FLUSH_INTERVAL_MS: 250
-      RECORDER_MAX_BATCH_SIZE: 1000
+      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:-mm}@timescaledb:5432/mm_bot
+      RECORDER_CONFIG_PATH: /app/configs/worker.bulk.btc.yml
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: ["bun", "run", "record:market-data"]
+
+  mmbot-main:
+    platform: linux/amd64
+    image: simple-mm-bot:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: simple-mm-local-main
+    restart: unless-stopped
+    profiles:
+      - bot
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./infra/hetzner/configs:/app/configs:ro
+      - ./logs:/app/logs
+    environment:
+      CONFIG_PATH: /app/configs/bot.main.yml
+      MODE: ${MODE:-paper}
+      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:-mm}@timescaledb:5432/mm_bot
+      BULK_PRIVATE_KEY: ${BULK_PRIVATE_KEY:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["bun", "run", "src/main.ts"]
+
+  mmbot-canary:
+    platform: linux/amd64
+    image: simple-mm-bot:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: simple-mm-local-canary
+    restart: "no"
+    profiles:
+      - canary
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./infra/hetzner/configs:/app/configs:ro
+      - ./logs:/app/logs
+    environment:
+      CONFIG_PATH: /app/configs/bot.canary.yml
+      MODE: ${MODE:-paper}
+      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:-mm}@timescaledb:5432/mm_bot
+      BULK_PRIVATE_KEY: ${BULK_CANARY_PRIVATE_KEY:-${BULK_PRIVATE_KEY:-}}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["bun", "run", "src/main.ts"]

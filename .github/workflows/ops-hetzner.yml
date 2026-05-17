@@ -1,0 +1,66 @@
+name: Ops Hetzner
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        required: true
+        description: Operation to run on the Hetzner VPS
+        options:
+          - pull-images
+          - start-infra
+          - start-workers
+          - restart-worker
+          - start-bot
+          - stop-bot
+          - restart-bot
+          - start-canary
+          - stop-canary
+          - restart-canary
+          - logs-bot
+          - logs-worker
+      confirm:
+        type: string
+        required: true
+        description: Type yes
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-hetzner
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Require Confirmation
+        if: ${{ inputs.confirm != 'yes' }}
+        run: |
+          echo "confirm must be yes" >&2
+          exit 1
+
+      - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$VPS_HOST"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/hetzner_deploy_key
+          chmod 600 ~/.ssh/hetzner_deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Run Operation
+        env:
+          ACTION: ${{ inputs.action }}
+          CONFIRM: ${{ inputs.confirm }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/hetzner_deploy_key -o IdentitiesOnly=yes "$VPS_USER@$VPS_HOST" \
+            "cd /opt/mmbot && ACTION='$ACTION' CONFIRM='$CONFIRM' /opt/mmbot/scripts/dispatch-action.sh"

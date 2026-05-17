@@ -1,0 +1,40 @@
+services:
+  mmbot-main:
+    platform: linux/amd64
+    image: ${MMBOT_IMAGE:-ghcr.io/posaune0423/simple-mm-bot:main}
+    container_name: mmbot-main
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./logs:/app/logs
+    environment:
+      CONFIG_PATH: /app/configs/bot.main.yml
+      MODE: live
+      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@timescaledb:5432/mm_bot
+      BULK_PRIVATE_KEY: ${BULK_PRIVATE_KEY:?BULK_PRIVATE_KEY is required}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["bun", "run", "src/main.ts"]
+
+  mmbot-canary:
+    platform: linux/amd64
+    image: ${MMBOT_IMAGE:-ghcr.io/posaune0423/simple-mm-bot:main}
+    container_name: mmbot-canary
+    restart: "no"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./logs:/app/logs
+    environment:
+      CONFIG_PATH: /app/configs/bot.canary.yml
+      MODE: live
+      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@timescaledb:5432/mm_bot
+      BULK_PRIVATE_KEY: ${BULK_CANARY_PRIVATE_KEY:-${BULK_PRIVATE_KEY:?BULK_PRIVATE_KEY is required}}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["bun", "run", "src/main.ts"]

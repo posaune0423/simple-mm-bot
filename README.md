@@ -60,6 +60,10 @@ Run the Bulk market data recorder:
 docker compose up -d --build market-data-recorder-bulk
 ```
 
+Root `docker-compose.yml` is the local development wrapper with the same service
+names as Hetzner production. It builds the local working tree and defaults
+Docker bot containers to paper mode.
+
 Run the bot:
 
 ```bash
@@ -119,6 +123,12 @@ Facts are separated by responsibility:
 The market-data recorder writes only `market_data_*` tables. Bot runtime writes only `bot_*` tables.
 
 See [docs/DATABASE.md](./docs/DATABASE.md) for the schema and [docs/DATA_FOUNDATION.md](./docs/DATA_FOUNDATION.md) for recorder operations.
+
+## Infra And Hetzner
+
+Start with [docs/infra](./docs/infra/README.md) for the concise Docker,
+Hetzner, and local DB tunnel map. Production VPS files live under
+[infra/hetzner](./infra/hetzner); `/opt/mmbot` is only the runtime mirror.
 
 ## Verification Status
 

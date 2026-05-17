@@ -64,6 +64,10 @@ bun run db:migrate
 docker compose up -d --build market-data-recorder-bulk
 ```
 
+Root `docker-compose.yml` mirrors the Hetzner worker service shape and mounts
+`infra/hetzner/configs/worker.bulk.btc.yml` as the recorder config. Production
+uses the same config path inside the GHCR image.
+
 Useful checks:
 
 ```bash

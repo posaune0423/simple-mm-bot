@@ -8,14 +8,20 @@ export function buildRecorderClient(params: {
   venue: RecorderVenue;
   symbol: string;
   depth: number;
+  connections: {
+    bulk: {
+      httpUrl: string;
+      wsUrl: string;
+    };
+  };
 }): IMarketDataRecorderClient {
   return match(params.venue)
     .with(
       "bulk",
       () =>
         new BulkMarketDataRecorderClient({
-          httpUrl: requireEnv("BULK_HTTP_URL"),
-          wsUrl: requireEnv("BULK_WS_URL"),
+          httpUrl: params.connections.bulk.httpUrl,
+          wsUrl: params.connections.bulk.wsUrl,
           symbol: params.symbol,
           depth: params.depth,
         }),
@@ -24,12 +30,4 @@ export function buildRecorderClient(params: {
       throw new Error(`Recorder venue not implemented yet: ${venue}`);
     })
     .exhaustive();
-}
-
-function requireEnv(name: string): string {
-  const value = Bun.env[name];
-  if (value === undefined || value.trim() === "") {
-    throw new Error(`${name} is required`);
-  }
-  return value;
 }
