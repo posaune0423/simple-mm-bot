@@ -15,7 +15,6 @@ import {
 export type FundingAwarePmmStrategyConfig = Readonly<{
   alpha: Readonly<{
     enabled: boolean;
-    source: "none" | "allora";
   }>;
   targetInventory: Readonly<{
     maxQty: number;
@@ -87,7 +86,7 @@ export class FundingAwarePmmStrategy implements Strategy {
   }
 
   private alphaDrift(nowMs: number): number {
-    if (!this.config.alpha.enabled || this.config.alpha.source === "none") {
+    if (!this.config.alpha.enabled) {
       return 0;
     }
     return this.alphaProvider?.current(nowMs).alphaDriftBps ?? 0;

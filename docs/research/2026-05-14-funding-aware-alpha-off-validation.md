@@ -9,7 +9,7 @@ Sources:
 
 ## Objective
 
-Allora API key is not available, so this validation keeps alpha disabled and checks that the funding-aware strategy follows the paper before comparing it with the current simple PMM baseline.
+This validation keeps alpha disabled and checks that the funding-aware strategy follows the paper before comparing it with the current simple PMM baseline.
 
 ## Paper Alignment
 
@@ -24,8 +24,7 @@ This means positive funding lowers both bid and ask around the adjusted reservat
 
 Clean Architecture boundaries:
 
-- Domain strategy depends on `AlphaDriftProvider` port, not Allora SDK.
-- Allora SDK import is confined to `src/infrastructure/allora/AlloraPredictionCache.ts`.
+- Domain strategy depends on `AlphaDriftProvider` port for optional alpha drift injection in tests.
 - Quote construction exits through existing value-object boundaries: `Price`, `BasisPoints`, and `ModelQuote`.
 
 ## Test Evidence
@@ -65,7 +64,6 @@ Both runs completed without runtime errors. In this short alpha-off comparison, 
 verdict:
   pmm: stronger short paper result in this run
   funding-aware: paper-aligned and runnable, but not selected on 1-minute paper performance
-  funding-aware-allora: not tested because ALLORA_API_KEY is unavailable
 selected: pmm for now
 reason: funding-aware alpha-off is validated against the paper and runs, but the short paper result has lower net PnL and fill rate than baseline
 blocked_by: longer paper canary and live funding/oracle/index coverage before relying on funding-aware edge

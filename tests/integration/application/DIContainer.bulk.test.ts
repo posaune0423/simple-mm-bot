@@ -71,40 +71,6 @@ function configWithoutBulkPrivateKey(): LoadedAppConfig {
   return appConfig;
 }
 
-function fundingAwareStrategy(alphaEnabled: boolean): LoadedAppConfig["quoteEngine"]["strategy"] {
-  return {
-    type: "funding-aware",
-    params: {
-      gamma: 0,
-      kappa: 625,
-      kInv: 2,
-      alpha: {
-        enabled: alphaEnabled,
-        source: alphaEnabled ? "allora" : "none",
-        chainSlug: "testnet",
-        asset: "BTC",
-        timeframe: "5m",
-        pollIntervalMs: 60_000,
-        staleMs: 420_000,
-        calibrationWeight: 0.04,
-        minAlphaDriftBps: 0.25,
-        maxAlphaDriftBps: 3,
-        maxRawDriftBps: 200,
-        maxCiWidthBps: 250,
-      },
-      targetInventory: {
-        maxQty: 0.35,
-        alphaQtyPerBps: 0.025,
-      },
-      funding: {
-        rateHorizonSec: 3600,
-        holdingHorizonSec: 300,
-        spreadWideningBpsPerAbsFundingBps: 0.1,
-      },
-    },
-  };
-}
-
 describe("DIContainer Bulk venue", () => {
   let previousDatabaseUrl: string | undefined;
 
@@ -190,31 +156,5 @@ describe("DIContainer Bulk venue", () => {
     };
 
     expect(internals.metrics.options.strategyName).toBe("avellaneda-stoikov");
-  });
-
-  test("creates Allora runtime provider only when funding-aware alpha uses Allora", async () => {
-    const pmmBot = await new DIContainer(config("paper")).buildBot();
-    const fundingWithoutAlloraBot = await new DIContainer(
-      config("paper", fundingAwareStrategy(false)),
-    ).buildBot();
-    const fundingWithAlloraBot = await new DIContainer(
-      config("paper", fundingAwareStrategy(true)),
-    ).buildBot();
-
-    const pmmInternals = pmmBot as unknown as {
-      options: { runtimeDisposables?: readonly unknown[] };
-    };
-    const fundingWithoutAlloraInternals = fundingWithoutAlloraBot as unknown as {
-      options: { runtimeDisposables?: readonly unknown[] };
-    };
-    const fundingWithAlloraInternals = fundingWithAlloraBot as unknown as {
-      options: { runtimeDisposables?: readonly { start?: () => void; stop: () => void }[] };
-    };
-
-    expect(pmmInternals.options.runtimeDisposables).toEqual([]);
-    expect(fundingWithoutAlloraInternals.options.runtimeDisposables).toEqual([]);
-    expect(fundingWithAlloraInternals.options.runtimeDisposables).toHaveLength(1);
-    expect(fundingWithAlloraInternals.options.runtimeDisposables?.[0]?.start).toBeFunction();
-    expect(fundingWithAlloraInternals.options.runtimeDisposables?.[0]?.stop).toBeFunction();
   });
 });

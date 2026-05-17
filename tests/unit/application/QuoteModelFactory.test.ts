@@ -33,17 +33,6 @@ describe("buildQuoteModel", () => {
         kInv: 2,
         alpha: {
           enabled: false,
-          source: "none",
-          chainSlug: "testnet",
-          asset: "BTC",
-          timeframe: "5m",
-          pollIntervalMs: 60_000,
-          staleMs: 420_000,
-          calibrationWeight: 0.04,
-          minAlphaDriftBps: 0.25,
-          maxAlphaDriftBps: 3,
-          maxRawDriftBps: 200,
-          maxCiWidthBps: 250,
         },
         targetInventory: {
           maxQty: 0.35,

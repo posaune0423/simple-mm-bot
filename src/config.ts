@@ -68,17 +68,6 @@ const avellanedaStoikovParamsSchema = v.object({
 
 const alphaConfigSchema = v.object({
   enabled: v.optional(v.boolean(), false),
-  source: v.optional(v.picklist(["none", "allora"]), "none"),
-  chainSlug: v.optional(v.picklist(["testnet", "mainnet"]), "testnet"),
-  asset: v.optional(v.picklist(["BTC", "ETH"]), "BTC"),
-  timeframe: v.optional(v.picklist(["5m", "8h"]), "5m"),
-  pollIntervalMs: v.optional(positiveIntegerSchema, 60_000),
-  staleMs: v.optional(positiveIntegerSchema, 420_000),
-  calibrationWeight: v.optional(nonNegativeNumberSchema, 0.04),
-  minAlphaDriftBps: v.optional(nonNegativeNumberSchema, 0.25),
-  maxAlphaDriftBps: v.optional(positiveNumberSchema, 3),
-  maxRawDriftBps: v.optional(positiveNumberSchema, 200),
-  maxCiWidthBps: v.optional(positiveNumberSchema, 250),
 });
 
 const targetInventoryConfigSchema = v.object({
@@ -98,17 +87,6 @@ export type FundingAwareStrategyParams = Readonly<{
   kInv: number;
   alpha: Readonly<{
     enabled: boolean;
-    source: "none" | "allora";
-    chainSlug: "testnet" | "mainnet";
-    asset: "BTC" | "ETH";
-    timeframe: "5m" | "8h";
-    pollIntervalMs: number;
-    staleMs: number;
-    calibrationWeight: number;
-    minAlphaDriftBps: number;
-    maxAlphaDriftBps: number;
-    maxRawDriftBps: number;
-    maxCiWidthBps: number;
   }>;
   targetInventory: Readonly<{
     maxQty: number;

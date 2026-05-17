@@ -37,7 +37,6 @@ simple-mm-bot/
 │   │   ├── hyperliquid/
 │   │   └── paper/
 │   ├── infrastructure/
-│   │   ├── allora/
 │   │   ├── db/
 │   │   │   └── postgres/
 │   │   │       ├── client.ts

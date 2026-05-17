@@ -94,7 +94,7 @@ describe("FundingAwarePmmStrategy", () => {
     const quoteEngine = new StubQuoteEngine();
     const strategy = new FundingAwarePmmStrategy(quoteEngine as never, {
       ...config(),
-      alpha: { enabled: false, source: "none" },
+      alpha: { enabled: false },
     });
 
     const result = strategy.decide({
@@ -190,7 +190,7 @@ describe("FundingAwarePmmStrategy", () => {
 
 function config(): ConstructorParameters<typeof FundingAwarePmmStrategy>[1] {
   return {
-    alpha: { enabled: true, source: "allora" },
+    alpha: { enabled: true },
     targetInventory: {
       maxQty: 0.35,
       alphaQtyPerBps: 0.025,

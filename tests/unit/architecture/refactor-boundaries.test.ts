@@ -183,11 +183,6 @@ describe("refactor architecture boundaries", () => {
       join(root, "src/domain/strategies/FundingAwarePmmStrategy.ts"),
       "utf8",
     );
-    const alloraCache = readFileSync(
-      join(root, "src/infrastructure/allora/AlloraPredictionCache.ts"),
-      "utf8",
-    );
-
     for (const [file, source] of [
       ["FundingAwareQuoteModel.ts", fundingModel],
       ["FundingAwarePmmStrategy.ts", fundingStrategy],
@@ -202,7 +197,6 @@ describe("refactor architecture boundaries", () => {
     expect(fundingModel).toContain("BasisPoints.unsafe");
     expect(fundingModel).toContain("ModelQuote.create");
     expect(fundingStrategy).toContain("AlphaDriftProvider");
-    expect(alloraCache).toContain("@alloralabs/allora-sdk");
   });
 
   test("error classes are defined at their owning layer boundaries", () => {
