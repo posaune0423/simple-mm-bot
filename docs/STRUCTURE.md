@@ -51,6 +51,7 @@ simple-mm-bot/
 │   ├── utils/
 │   └── workers/
 │       ├── marketDataRecorder.ts
+│       ├── marketDataRecorderConfig.ts
 │       └── marketDataRecorderFactory.ts
 ├── scripts/
 │   ├── analyzeLeadLagCharts.ts
@@ -70,7 +71,16 @@ simple-mm-bot/
 │   ├── TECH.md
 │   ├── TEST.md
 │   ├── ARCHITECTURE.md
+│   ├── infra/
 │   └── venue/
+├── infra/
+│   └── hetzner/
+│       ├── compose.infra.yml
+│       ├── compose.workers.yml
+│       ├── compose.bots.yml
+│       ├── configs/
+│       ├── scripts/
+│       └── local/
 ├── config/
 │   └── bulk/
 ├── data/
@@ -120,7 +130,24 @@ External technical details.
 Standalone process entry points.
 
 - `marketDataRecorder.ts` reads env, validates PostgreSQL URL, wires recorder dependencies, and handles shutdown.
+- `marketDataRecorderConfig.ts` loads recorder YAML when `RECORDER_CONFIG_PATH` is set and preserves env fallback.
 - `marketDataRecorderFactory.ts` maps recorder venue to recorder client.
+
+### `infra/hetzner`
+
+Production VPS operations source of truth.
+
+- Compose files split infrastructure, always-on workers, and bot containers.
+- Runtime configs under `configs/` are mounted into GHCR image containers.
+- Operator scripts target individual services and must not use `docker compose down`.
+- `local/` contains read-only SSH tunnel helpers for Beekeeper, agents, and local backtests.
+- `/opt/mmbot` is the VPS runtime mirror; `.env`, `data/`, `backups/`, and `logs/` stay VPS-local.
+
+### Docker files
+
+- `Dockerfile` builds the single app image used by local Compose and GHCR production publishing.
+- Root `docker-compose.yml` is the local development wrapper. It keeps the same service names and mount paths as Hetzner production while avoiding production-only required secret interpolation.
+- Production scripts do not use root `docker-compose.yml`; they run the three `infra/hetzner/compose.*.yml` files from `/opt/mmbot`.
 
 ### `scripts`
 
@@ -148,6 +175,7 @@ Runtime database state belongs in TimescaleDB, not local database files.
 - `docs/TECH.md`: technical architecture and runtime policy.
 - `docs/ARCHITECTURE.md`: diagrams and high-level flow.
 - `docs/TEST.md`: test layout and commands.
+- `docs/infra/README.md`: concise Docker and Hetzner operations map.
 - `docs/venue/bulk/README.md`: Bulk-specific venue notes.
 
 ## DI Matrix

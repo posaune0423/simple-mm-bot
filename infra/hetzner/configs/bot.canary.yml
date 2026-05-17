@@ -1,0 +1,75 @@
+mode: live
+venue: bulk
+
+connections:
+  bulk:
+    wsUrl: wss://exchange-ws1.bulk.trade
+    httpUrl: https://exchange-api.bulk.trade/api/v1
+    market: BTC-USD
+    environment: beta
+    nlevels: 20
+    timeoutMs: 30000
+    maxLeverage: 50
+    marketWsReconnectAfterMs: 5000
+    fillPollIntervalMs: 2000
+
+quoteEngine:
+  markWeight: 0.25
+  bookPriceSource: micro
+  inventoryScale: 0.025
+  timeHorizonSec: 3
+  minSpreadBps: 2.0
+  slideMarginThreshold: 0.02
+  defaultTimeInForce: ALO
+  sizing:
+    positionSize: 0.005
+    budgetUsd: 250
+    bidDistanceMultiplier: 1.3
+    askDistanceMultiplier: 1.1
+    askSizeMultiplier: 0.5
+    reduceQuoteMinPositionQty: 0.002
+  levels:
+    - halfSpreadBps: 1.2
+      sizeUsd: 250
+  qualityGate:
+    enabled: true
+    minAverageMarkoutBps: 0
+    minSamples: 8
+    lookbackFills: 40
+    maxFillAgeMs: 600000
+    horizonsSec: [5, 30, 300]
+  strategy:
+    type: avellaneda-stoikov
+    params:
+      gamma: 0
+      kappa: 625
+      kInv: 2
+
+risk:
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxBookAgeMs: 2500
+  maxTickerAgeMs: 2500
+  maxPositionQty: 0.008
+  reduceTriggerQty: 0.004
+  reduceTargetQty: 0.001
+  maxUnrealizedLossUsd: 5
+  maxAdverseMoveBps: 25
+
+bot:
+  intervalMs: 250
+  maxRestingMs: 700
+  exchangeOpenOrderSyncIntervalMs: 1500
+  postCancelOpenOrderSyncMode: interval
+
+shutdown:
+  closePositionPolicy: always
+
+paper:
+  touchFillRatio: 1
+
+backtest:
+  market: BTC-USD
+  timeframe: 1m
+  from: 2026-05-12T10:13:41.000Z
+  to: 2026-05-12T12:38:01.000Z

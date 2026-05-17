@@ -132,6 +132,7 @@ bun run test:coverage
 
 ## Deployment
 
-- Docker base image is `oven/bun:latest`.
-- `docker-compose.yml` starts TimescaleDB and the Bulk recorder worker.
+- Docker base image is `oven/bun:1`.
+- Root `docker-compose.yml` is for local development and keeps the same service names as the Hetzner compose services.
+- Production Compose lives in `infra/hetzner/compose.*.yml` and is synced to `/opt/mmbot`.
 - Recorder container uses `platform: linux/amd64` because the current Bulk signing dependency does not ship a Linux arm64 binding.

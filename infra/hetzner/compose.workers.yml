@@ -1,0 +1,17 @@
+services:
+  market-data-recorder-bulk:
+    platform: linux/amd64
+    image: ${MMBOT_IMAGE:-ghcr.io/posaune0423/simple-mm-bot:main}
+    container_name: mmbot-market-data-recorder-bulk
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./logs:/app/logs
+    environment:
+      DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@timescaledb:5432/mm_bot
+      RECORDER_CONFIG_PATH: /app/configs/worker.bulk.btc.yml
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["bun", "run", "record:market-data"]
