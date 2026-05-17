@@ -34,6 +34,7 @@ const removedLegacyFiles = [
   "src/domain/orders/OrderTypes.ts",
   "src/domain/positions/Position.ts",
   "src/domain/legacy/LegacyQuote.ts",
+  "src/domain/types/LegacyQuote.ts",
   "src/application/services/QuoteRefreshService.ts",
   `src/application/services/${legacyOrderReconcilerName}.ts`,
   "src/utils/transientBulk.ts",
@@ -111,7 +112,7 @@ describe("refactor architecture boundaries", () => {
     expect(existsSync(join(root, "src/domain/types/Fill.ts"))).toBe(true);
     expect(existsSync(join(root, "src/domain/types/Order.ts"))).toBe(true);
     expect(existsSync(join(root, "src/domain/types/Position.ts"))).toBe(true);
-    expect(existsSync(join(root, "src/domain/types/LegacyQuote.ts"))).toBe(true);
+    expect(existsSync(join(root, "src/domain/types/QuoteMetrics.ts"))).toBe(true);
     expect(existsSync(join(root, "src/domain/types/PerformanceMetrics.ts"))).toBe(true);
   });
 
@@ -210,11 +211,8 @@ describe("refactor architecture boundaries", () => {
     expect(existsSync(join(root, "scripts/errors/ScriptError.ts"))).toBe(true);
 
     for (const file of [
-      "scripts/backtestPaperLoop.ts",
       "scripts/createDesignIssues.ts",
-      "scripts/evaluateLiveRun.ts",
       "scripts/generateMetricsReport.ts",
-      "scripts/generateReport.ts",
       "scripts/tuneBulkConfig.ts",
     ]) {
       const source = readFileSync(join(root, file), "utf8");
@@ -268,11 +266,37 @@ describe("refactor architecture boundaries", () => {
       "src/application/di.ts",
       "src/application/services/MetricsRecorder.ts",
       "src/adapters/bulk/BulkOrderGateway.ts",
-      "src/infrastructure/db/sqlite/repository/SqliteMetricsRepository.ts",
     ]) {
       const source = readFileSync(join(root, file), "utf8");
       expect(source, file).toContain("ts-pattern");
       expect(source, file).toContain("match(");
+    }
+  });
+
+  test("database runtime is TimescaleDB and Postgres only", () => {
+    expect(existsSync(join(root, "src/infrastructure/db/sqlite"))).toBe(false);
+    expect(existsSync(join(root, "src/lib/reporting/queries/MetricsFactQuery.ts"))).toBe(false);
+
+    const forbidden = [
+      "bun:sqlite",
+      "drizzle-orm/bun-sqlite",
+      "drizzle-orm/sqlite-core",
+      "SqliteMetricsRepository",
+      "SqliteOhlcvRepository",
+      "createSqliteClient",
+      "resolveSqliteDatabasePath",
+      "DuckDB",
+      "duckdb",
+    ];
+
+    for (const sourceRoot of sourceRoots) {
+      for (const file of tsFiles(join(root, sourceRoot))) {
+        const relative = file.replace(`${root}/`, "");
+        const source = readFileSync(file, "utf8");
+        for (const token of forbidden) {
+          expect(source, relative).not.toContain(token);
+        }
+      }
     }
   });
 

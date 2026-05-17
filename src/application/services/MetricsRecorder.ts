@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { match, P } from "ts-pattern";
 
 import type { Fill } from "../../domain/types/Fill.ts";
-import type { ExposureIntent, Quote } from "../../domain/types/LegacyQuote.ts";
+import type { QuoteMetricsIntent, QuoteMetricsRecord } from "../../domain/types/QuoteMetrics.ts";
 import type { OrderSide } from "../../domain/types/Order.ts";
 import type { MarketSnapshot } from "../../domain/ports/IMarketFeed.ts";
 import type {
@@ -42,7 +42,6 @@ type MetricsOperationType =
   | "order_lifecycle"
   | "orderbook_snapshot"
   | "quote_decision"
-  | "runtime_health"
   | "submitted_order"
   | "trade_fill"
   | "ohlcv";
@@ -380,7 +379,7 @@ class BufferedMetricsRecorder {
   async recordQuote(
     snapshot: MarketSnapshot,
     positionQty: number,
-    quote: Quote,
+    quote: QuoteMetricsRecord,
     quoteCycleId = `${snapshot.market}:${snapshot.timestamp}`,
   ): Promise<void> {
     const accountObservation = {
@@ -625,21 +624,15 @@ class BufferedMetricsRecorder {
     message: string,
     rawSummary?: unknown,
   ): Promise<void> {
-    const observedAt = Date.now();
-    const event = {
-      id: `${this.runId}:${code}:${observedAt}`,
-      runId: this.runId,
-      venue: this.options.venue,
-      market: this.options.market,
-      observedAt,
-      level,
-      code,
-      message,
-      rawJson: rawSummary,
-    };
-    this.enqueue("runtime_health", "normal", async () => {
-      await this.repository.recordRuntimeHealthEvent(event);
-    });
+    const payload = rawSummary === undefined ? "" : ` raw=${JSON.stringify(rawSummary)}`;
+    const line = `[application] MetricsRecorder | HEALTH | runId=${this.runId} venue=${this.options.venue} market=${this.options.market} code=${code} message=${message}${payload}`;
+    if (level === "error") {
+      logger.error(line);
+    } else if (level === "warn") {
+      logger.warn(line);
+    } else {
+      logger.info(line);
+    }
   }
 
   private computeTradePnl(fill: Fill): number {
@@ -682,33 +675,16 @@ class BufferedMetricsRecorder {
   }
 
   private async recordDropSummary(summary: MetricsDropSummary): Promise<void> {
-    const observedAt = Date.now();
     const droppedTotal = Object.values(summary.dropped).reduce((sum, count) => sum + count, 0);
     if (droppedTotal > 0) {
-      await this.repository.recordRuntimeHealthEvent({
-        id: `${this.runId}:metrics_buffer_dropped:${observedAt}`,
-        runId: this.runId,
-        venue: this.options.venue,
-        market: this.options.market,
-        observedAt,
-        level: "warn",
-        code: "metrics_buffer_dropped",
-        message: "Metrics buffer dropped low-priority facts",
-        rawJson: { dropped: summary.dropped },
-      });
+      logger.warn(
+        `[application] MetricsRecorder | BUFFER_DROPPED | runId=${this.runId} dropped=${JSON.stringify(summary.dropped)}`,
+      );
     }
     if (summary.criticalBacklogExceeded > 0) {
-      await this.repository.recordRuntimeHealthEvent({
-        id: `${this.runId}:metrics_critical_backlog_exceeded:${observedAt}`,
-        runId: this.runId,
-        venue: this.options.venue,
-        market: this.options.market,
-        observedAt,
-        level: "error",
-        code: "metrics_critical_backlog_exceeded",
-        message: "Critical metrics backlog exceeded configured capacity",
-        rawJson: { count: summary.criticalBacklogExceeded },
-      });
+      logger.error(
+        `[application] MetricsRecorder | CRITICAL_BACKLOG_EXCEEDED | runId=${this.runId} count=${summary.criticalBacklogExceeded}`,
+      );
     }
   }
 }
@@ -775,7 +751,7 @@ function quoteDecisionFacts(input: {
   venue: string;
   snapshot: MarketSnapshot;
   positionQty: number;
-  quote: Quote;
+  quote: QuoteMetricsRecord;
   quoteCycleId: string;
 }) {
   const levels = input.quote.levels ?? [
@@ -838,7 +814,7 @@ function quoteDecisionFacts(input: {
 }
 
 function quoteSignalDiagnostics(
-  quote: Quote,
+  quote: QuoteMetricsRecord,
   halfSpreadBps: number | undefined,
 ): Record<string, number | undefined> {
   return {
@@ -859,7 +835,9 @@ function halfSpreadBpsOrUndefined(level: unknown): number | undefined {
   return undefined;
 }
 
-function quoteDecisionIntent(intent: ExposureIntent | undefined): "quote" | "reduce" | "disabled" {
+function quoteDecisionIntent(
+  intent: QuoteMetricsIntent | undefined,
+): "quote" | "reduce" | "disabled" {
   return match(intent)
     .with("reduce_exposure", () => "reduce" as const)
     .with("disabled", () => "disabled" as const)

@@ -21,13 +21,13 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.test).toBe("bun run test:unit && bun run test:integration");
     expect(packageJson.scripts?.["test:unit"]).toBe("bun test tests/unit");
     expect(packageJson.scripts?.["test:integration"]).toBe("bun test tests/integration");
-    expect(packageJson.scripts?.["test:e2e:paper"]).toBe("bun test tests/e2e");
+    expect(packageJson.scripts?.["test:e2e:paper"]).toBeUndefined();
     expect(packageJson.scripts?.["test:coverage"]).toBe(
       "bun test --coverage tests/unit tests/integration && bun run scripts/generateCoverageSummary.ts",
     );
     expect(existsSync("tests/unit")).toBe(true);
     expect(existsSync("tests/integration")).toBe(true);
-    expect(existsSync("tests/e2e")).toBe(true);
+    expect(existsSync("tests/e2e")).toBe(false);
     expect(bunfig).toContain('coverageReporter = ["text", "lcov"]');
     expect(bunfig).toContain('coverageDir = "docs/coverage"');
   });
@@ -47,11 +47,20 @@ describe("package scripts", () => {
     expect(packageJson.scripts?.["dev:backtest"]).toBe(
       "CONFIG_PATH= CONFIG_VENUE=bulk CONFIG_PRESET=beta MODE=backtest bun run src/main.ts",
     );
-    expect(packageJson.scripts?.["metrics:evaluate"]).toBe("bun run scripts/evaluateLiveRun.ts");
+    expect(packageJson.scripts?.["metrics:evaluate"]).toBeUndefined();
+    expect(packageJson.scripts?.["metrics:funding"]).toBeUndefined();
+    expect(packageJson.scripts?.["loop:backtest-paper"]).toBeUndefined();
+    expect(packageJson.scripts?.["report:generate"]).toBeUndefined();
     expect(packageJson.scripts?.["metrics:tune"]).toBe("bun run scripts/tuneBulkConfig.ts");
     expect(packageJson.scripts?.["metrics:issues"]).toBe("bun run scripts/createDesignIssues.ts");
     expect(packageJson.scripts?.["metrics:report"]).toBe(
       "bun run scripts/generateMetricsReport.ts",
+    );
+    expect(packageJson.scripts?.["record:market-data"]).toBe(
+      "bun run src/workers/marketDataRecorder.ts",
+    );
+    expect(packageJson.scripts?.["record:bulk"]).toBe(
+      "RECORDER_VENUE=bulk bun run src/workers/marketDataRecorder.ts",
     );
     expect(packageJson.scripts?.["bulk:register-agent-wallet"]).toBe(
       "bun run scripts/registerBulkAgentWallet.ts",
@@ -101,6 +110,61 @@ describe("package scripts", () => {
     expect(existsSync("src/infrastructure/db/sqlite/repository/SqliteTelemetryRepository.ts")).toBe(
       false,
     );
+  });
+
+  test("keeps data directory free of legacy local runtime DB artifacts", async () => {
+    const disallowedDataPaths = [
+      "data/mm.db",
+      "data/market",
+      "data/runs",
+      "data/strategy-runs",
+      "data/metrics",
+      "data/live-logs",
+      "data/tmp",
+      "data/edge-discovery",
+    ];
+
+    for (const path of disallowedDataPaths) {
+      expect(existsSync(path), path).toBe(false);
+    }
+
+    const scannedFiles = listFiles(["data"], ["data/timescaledb"]);
+    const forbiddenTokens = [
+      "bun:sqlite",
+      "createSqliteClient",
+      "data/mm.db",
+      "file:data",
+      "trade_fills",
+      "orderbook_snapshots",
+      "runtime_health",
+    ];
+    const fileTexts = await Promise.all(
+      scannedFiles.map(async (file) => ({
+        file,
+        text: await Bun.file(file).text(),
+      })),
+    );
+    const offenders = fileTexts
+      .filter(({ text }) => forbiddenTokens.some((token) => text.includes(token)))
+      .map(({ file }) => file);
+
+    expect(offenders).toEqual([]);
+  });
+
+  test("documents TimescaleDB schema in the existing database guide format", async () => {
+    const databaseDoc = await Bun.file("docs/DATABASE.md").text();
+
+    expect(databaseDoc).toStartWith("# Database");
+    expect(databaseDoc).toContain("## Database 一覧");
+    expect(databaseDoc).toContain("## Folder Structure");
+    expect(databaseDoc).toContain("## Market Data Table Roles");
+    expect(databaseDoc).toContain("## Market Data ER 図");
+    expect(databaseDoc).toContain("## Bot Execution ER 図");
+    expect(databaseDoc).toContain("analytics_quote_markouts");
+    expect(databaseDoc).toContain("analytics_fill_markouts");
+    expect(databaseDoc).not.toContain(".sqlite");
+    expect(databaseDoc).not.toContain("data/mm.db");
+    expect(databaseDoc).not.toContain("DuckDB");
   });
 });
 
@@ -164,6 +228,23 @@ function listTypeScriptFiles(paths: string[]): string[] {
     }
     return readdirSync(path, { withFileTypes: true }).flatMap((entry) =>
       listTypeScriptFiles([`${path}/${entry.name}`]),
+    );
+  });
+}
+
+function listFiles(paths: string[], ignoredPrefixes: string[] = []): string[] {
+  return paths.flatMap((path) => {
+    if (!existsSync(path)) {
+      return [];
+    }
+    if (ignoredPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+      return [];
+    }
+    if (statSync(path).isFile()) {
+      return [path];
+    }
+    return readdirSync(path, { withFileTypes: true }).flatMap((entry) =>
+      listFiles([`${path}/${entry.name}`], ignoredPrefixes),
     );
   });
 }

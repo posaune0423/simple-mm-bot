@@ -1,112 +1,101 @@
 # Data Foundation
 
-低コストで market data を集め、backtest の信頼度を上げるための方針。
-DB schema は `docs/DATABASE.md` に置く。
+This project records market data into TimescaleDB/PostgreSQL only. The recorder is a separate process from the bot.
 
-## 結論
+## Goals
 
-- primary store は SQLite。
-- 運用は小さな VPS 1台 + local disk + `systemd` で始める。
-- Market DB と Run DB は分ける。
-- Market DB は venue ごと、月ごとに分ける。
-- Turso/libSQL は高頻度 ingestion には使わない。
-- OHLCV-only backtest は smoke test。採用判断には L2/trade/funding replay を使う。
+- Preserve venue market facts for replay and backtesting.
+- Keep public market facts separate from bot execution facts.
+- Batch inserts so the recorder can run continuously on a small host.
+- Keep the initial schema minimal and destructive while replay infrastructure is still being built.
 
-## What To Collect
+## Components
 
-| Data               |            Default | Keep | Why                                 |
-| ------------------ | -----------------: | ---: | ----------------------------------- |
-| L2 top-20 snapshot |                 1s |  30d | quote distance / spread / markout   |
-| Book metrics       |                 1s | 180d | mid / micro / spread / imbalance    |
-| Public trades      |        every trade |  90d | fill simulation / adverse selection |
-| Funding rate       |      60s + updates | 365d | funding signal and funding PnL      |
-| Mark/index/oracle  |             1s-60s | 365d | basis and inventory valuation       |
-| Candles            |                 1m | 365d | smoke test and regime context       |
-| Data gaps          |        every event | 365d | replay coverage checks              |
-| Raw payload        | errors/sample only |   7d | decoder audit                       |
+| Component            | Process                               | Writes                                                                                  |
+| -------------------- | ------------------------------------- | --------------------------------------------------------------------------------------- |
+| TimescaleDB          | Docker Compose service                | PostgreSQL storage with Timescale extension                                             |
+| Market data recorder | `bun run record:market-data`          | `market_data_order_book_snapshots`, `market_data_trades`, `market_data_tickers`         |
+| Bot runtime          | `bun run start` / `bun run dev:paper` | `bot_runs`, `bot_market_observations`, `bot_quote_decisions`, `bot_orders`, `bot_fills` |
+| Analytics views      | database                              | `analytics_quote_markouts`, `analytics_fill_markouts`                                   |
 
-`250ms` book capture は canary/debug window だけ。
+## Recorder Rules
 
-## Backtest Window
+- Recorder must fail fast unless `DATABASE_URL` is PostgreSQL.
+- Unsupported venues fail fast with a clear error.
+- Invalid books are discarded.
+- Inserts are batched by flush interval and max batch size.
+- Duplicate market data rows use conflict-do-nothing behavior.
+- Shutdown stops the feed, flushes buffers, and exits cleanly.
+- Insert failures are logged and do not immediately kill the process.
 
-| Window         | Purpose                                   |
-| -------------- | ----------------------------------------- |
-| last 24h       | latest condition check                    |
-| rolling 7d     | default comparison                        |
-| selected 2-24h | canary / high-vol / tight-spread replay   |
-| rolling 30d    | enough regimes before stronger conclusion |
+## Bulk Capture
 
-Bulk はまだ data が薄いので、最初は 7d で回し始める。採用判断は 14-30d 貯まってから。
+Bulk is the first implemented recorder venue.
 
-## Storage Target
+Current capture:
 
-1 market は CX23/CX33 相当の local SSD に収める。
+- L2 book snapshots
+- ticker facts
+- trades when the SDK stream provides them
 
-| Item                      |                Target |
-| ------------------------- | --------------------: |
-| hot market DB             |            under 25GB |
-| local backup working room |               10-20GB |
-| high-res 250ms data       | selected windows only |
-
-30d raw L2 + 90d trades + 180d metrics を超えて重くなったら、raw L2 を削って metrics/candles/funding だけ残す。
-
-## Writer Split
-
-| Component             | Writes                                                                    | Does not write                   |
-| --------------------- | ------------------------------------------------------------------------- | -------------------------------- |
-| market-data worker    | public book, trades, candles, funding, oracle/index, gaps                 | private account/order state      |
-| bot `MetricsRecorder` | runs, decisions, orders, fills, account, position, ledger, runtime events | continuous public market history |
-
-Worker は `MetricsRecorder` の置き換えではない。  
-Worker 導入後に `MetricsRecorder` から減らすのは、連続 market snapshot の重複保存だけ。
-
-## Backtest
+Book normalization:
 
 ```text
-manifest
-  -> Market DB reader
-  -> ReplayMarketFeed
-  -> Strategy / QuoteModel
-  -> ReplayOrderGateway
-  -> funding accrual
-  -> Run DB ledger
-  -> evaluation report
+mid_price = (best_bid_price + best_ask_price) / 2
+micro_price =
+  (best_ask_price * best_bid_size + best_bid_price * best_ask_size)
+  / (best_bid_size + best_ask_size)
+spread_bps =
+  (best_ask_price - best_bid_price) / mid_price * 10000
 ```
 
-| Level | Data                                    | Use                    |
-| ----- | --------------------------------------- | ---------------------- |
-| T0    | 1m candles                              | smoke only             |
-| T1    | 1s L2 + trades + funding + oracle/index | strategy comparison    |
-| T2    | 250ms L2 + trades + funding             | fill model sensitivity |
+Book rejection:
 
-Rules:
+- empty bid or ask side
+- crossed book
+- non-finite price or size
 
-- T0 で profitability や funding edge を判断しない。
-- replay clock より未来の market event は使わない。
-- missing funding / mark / trade は `0` ではなく `unavailable`。
-- fill model version、latency assumption、seed を run に保存する。
-- fills < 20、markout coverage < 80% なら tuning しない。
+## Running Locally
 
-## PnL
+```bash
+cp .env.example .env
+docker compose up -d timescaledb
+bun run db:migrate
+docker compose up -d --build market-data-recorder-bulk
+```
 
-Funding-aware を評価するなら PnL は ledger で見る。
+Useful checks:
+
+```bash
+docker compose ps
+docker compose logs -f market-data-recorder-bulk
+docker compose exec -T timescaledb psql -U mm -d mm_bot -c "SELECT count(*) FROM market_data_order_book_snapshots;"
+```
+
+## Backtest Direction
+
+The current PR builds the storage and recorder foundation only. Replay runner, fill simulator, and external fair price providers are future work.
+
+The intended future replay flow is:
 
 ```text
-net_pnl = trade_pnl
-        + inventory_pnl
-        + funding_pnl
-        + rebates
-        - fees
-        + adjustments
+market_data_* facts
+  -> replay market feed
+  -> strategy / quote model
+  -> replay order gateway
+  -> bot_* facts
+  -> analytics_* views
 ```
 
-`trade_pnl - fee` だけの summary では funding-aware の良し悪しを判断しない。
+Until replay exists, `analytics_quote_markouts` and `analytics_fill_markouts` provide the minimal markout surface for checking quote and fill quality.
 
-## Ops
+## Out Of Scope For Now
 
-- SQLite file ごとに writer は 1つ。
-- WAL、`synchronous=NORMAL`、batch insert を使う。
-- market DB は月次 rotate。
-- raw websocket payload は default では保存しない。
-- backup は `sqlite3 .backup` + `zstd` + `rsync`。
-- DuckDB を使う場合は runtime store ではなく read-only analysis から始める。
+- feed session tables
+- gap tables
+- raw file storage
+- replay runner
+- fill simulator
+- external fair price storage
+- materialized views
+- retention or compression policies

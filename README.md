@@ -1,183 +1,137 @@
 # simple-mm-bot
 
-> Bulk Trade-first market making bot built with Bun + TypeScript.
->
-> This repository runs the same quoting core in `live`, `paper`, and `backtest` modes, with Avellaneda-Stoikov pricing, SQLite/Postgres persistence, and venue logic isolated in adapters.
+Bulk Trade-first market making bot built with Bun + TypeScript.
+
+This repository runs the same quoting core in `live`, `paper`, and temporary `backtest` modes. Persistence is PostgreSQL/TimescaleDB only. Continuous venue market data is recorded by a separate worker and kept separate from bot-run facts.
 
 ## At a Glance
 
-| Area       | Current setup                                                          |
-| ---------- | ---------------------------------------------------------------------- |
-| Main venue | Bulk Trade                                                             |
-| SDK        | `bulk-ts-sdk`, a local API wrapper maintained by this repository owner |
-| Modes      | Bulk: `live`, `paper`, `backtest`                                      |
-| Strategy   | Avellaneda-Stoikov                                                     |
-| Runtime    | Bun + TypeScript                                                       |
-| Storage    | SQLite by default, PostgreSQL via `DATABASE_URL`                       |
+| Area       | Current setup                                   |
+| ---------- | ----------------------------------------------- |
+| Main venue | Bulk Trade                                      |
+| SDK        | `bulk-ts-sdk`                                   |
+| Modes      | Bulk: `live`, `paper`, `backtest`               |
+| Strategy   | Avellaneda-Stoikov / funding-aware PMM variants |
+| Runtime    | Bun + TypeScript                                |
+| Database   | TimescaleDB / PostgreSQL via `DATABASE_URL`     |
 
 ## What This Repo Does
 
 - Streams Bulk Trade market data and computes two-sided quotes.
 - Places live Bulk orders through `bulk-ts-sdk` when `BULK_PRIVATE_KEY` is set.
-- Runs the same bot flow in Bulk `paper` mode with simulated fills.
-- Runs Bulk historical backtests from `bulk-ts-sdk` klines with simulated fills.
-- Persists fills, reports, and Bulk live / paper OHLCV candles through repository ports.
+- Runs Bulk `paper` mode with simulated fills on the live feed.
+- Records venue market facts through a separate market-data recorder worker.
+- Stores bot run facts in `bot_*` tables and venue market facts in `market_data_*` tables.
 
 ## Current Scope
 
 Implemented now:
 
 - Bulk Trade `paper` and `live` adapter wiring
-- Bulk Trade historical `backtest` wiring
-- `bulk-ts-sdk` integration for Bulk HTTP/WS/order/account APIs
-- Reporting, SQLite/Postgres switching, and automated test coverage
+- Bulk Trade temporary historical `backtest` wiring
+- TimescaleDB schema, hypertables, and analytics markout views
+- Bulk market data recorder worker
+- PostgreSQL-only Drizzle schema and migrations
 
 Not current scope:
 
 - Bullet venue support
-- Multi-venue hedging or XEMM
+- alternative local database runtime support
+- Replay runner on the new market data schema
+- CEX recorder implementations beyond fail-fast stubs
 
 ## Quick Start
 
-### 1. Install
-
 ```bash
 bun install
-```
-
-### 2. Configure Environment
-
-```bash
 cp .env.example .env
 ```
 
-Bulk HTTP/WS URLs, market, and L2 depth live in committed YAML config. The only Bulk secret env var is:
-
-- `BULK_PRIVATE_KEY`: required only for live Bulk order placement
-
-### 3. Run
-
-Bulk live mode:
+Start TimescaleDB:
 
 ```bash
-bun run start
+docker compose up -d timescaledb
+bun run db:migrate
 ```
 
-`bun run start` explicitly sets `MODE=live`, `CONFIG_VENUE=bulk`, and `CONFIG_PRESET=beta`.
-This is the beta/mock-capital live preset. It sends Bulk Trade orders and fails fast unless `BULK_PRIVATE_KEY` is set.
-
-Bulk mainnet live mode uses the conservative real-capital preset:
+Run the Bulk market data recorder:
 
 ```bash
-CONFIG_VENUE=bulk CONFIG_PRESET=mainnet MODE=live bun run src/main.ts
+docker compose up -d --build market-data-recorder-bulk
 ```
 
-Bulk paper mode, using the same Bulk market feed with simulated execution:
+Run the bot:
 
 ```bash
 bun run dev:paper
+bun run start
 ```
 
-Bulk historical backtest mode:
-
-```bash
-bun run dev:backtest
-```
+`bun run start` explicitly sets `MODE=live`, `CONFIG_VENUE=bulk`, and `CONFIG_PRESET=beta`. Live order placement fails fast unless `BULK_PRIVATE_KEY` is set.
 
 ## Main Commands
 
 ```bash
-bun run lint
-bun run format:check
 bun run check
 bun run test
-bun run test:e2e:paper
-```
-
-Strategy validation loop:
-
-```bash
-bun run loop:backtest-paper --config config/bulk/beta.yml --from 2026-05-06 --to 2026-05-07
-```
-
-Database tooling:
-
-```bash
 bun run db:generate
 bun run db:migrate
+bun run record:market-data
+bun run record:bulk
 ```
 
 Bulk agent wallet registration:
 
 ```bash
-bun run bulk:register-agent-wallet
+BULK_MAIN_WALLET_PRIVATE_KEY=... BULK_AGENT_WALLET_PUBLIC_KEY=... bun run bulk:register-agent-wallet
 ```
 
-Before running, edit `scripts/registerBulkAgentWallet.ts` locally and paste the main wallet private key and agent wallet public key into the constants at the top of the file. The script intentionally does not read the main wallet key from `.env`, `Bun.env`, or YAML config. Restore the placeholders after execution and do not commit real keys.
+Use environment variables for wallet material. `BULK_REMOVE_AGENT_WALLET=true` switches the script to removal mode.
 
 ## Runtime Model
 
 The main runtime stays thin:
 
-1. Load typed config from YAML + env
-2. Build dependencies in `src/application/di.ts`
-3. Start the bot loop
-4. Produce a final report
+1. Load typed config from YAML + env.
+2. Build dependencies in `src/application/di.ts`.
+3. Start the bot loop.
+4. Persist bot facts through the PostgreSQL metrics repository.
 
 Repository split:
 
-- `src/domain`: pricing, analytics, value objects, plain contracts, ports, strategy
-- `src/application`: bot loop, use cases, dependency injection
-- `src/adapters/bulk`: Bulk Trade feed/order adapters using `bulk-ts-sdk`
-- `src/adapters/hyperliquid`: legacy compatibility
+- `src/domain`: pricing, value objects, pure services, strategy, and ports
+- `src/application`: bot loop, use cases, dependency injection, buffered services
+- `src/adapters/bulk`: Bulk Trade feed/order/recorder adapters using `bulk-ts-sdk`
 - `src/adapters/paper`: paper execution and historical feed helpers
-- `src/infrastructure`: metrics contracts plus SQLite/Postgres repositories
-- `scripts/lib`: external evaluation, Bulk YAML tuning, and issue planning helpers
-- `tests`: unit, integration, and e2e test suites; see `docs/TEST.md`
+- `src/infrastructure/db/postgres`: Drizzle schema, migration SQL, and repositories
+- `src/workers`: standalone worker entry points
+- `scripts/lib`: JSON-based evaluation, Bulk YAML tuning, and issue planning helpers
 
-Quoting flow:
+## Database Policy
 
-```text
-Bot tick
-  -> QuotingCycleService
-  -> Strategy
-  -> QuoteEngine
-  -> QuoteModel
-  -> Quote value object
-  -> OrderIntentBuilder
-  -> OrderReconciler
-  -> venue adapter
-```
+Only PostgreSQL/TimescaleDB is supported. `DATABASE_URL` must start with `postgres://` or `postgresql://`.
 
-`Strategy` owns bot behavior such as side enablement and markout-feedback gates. `QuoteModel` owns pricing math such as Avellaneda-Stoikov. `OrderIntent` is the venue-neutral submit intent; venue order state stays behind the order gateway and reconciler.
+Facts are separated by responsibility:
 
-## Configuration Notes
+- `market_data_*`: venue market facts observed from exchange feeds
+- `bot_*`: what the bot observed, decided, submitted, and filled
 
-- Default config selection: `CONFIG_VENUE=bulk`, `CONFIG_PRESET=beta`
-- Bulk beta preset: `config/bulk/beta.yml`
-- Bulk mainnet preset: `config/bulk/mainnet.yml`
-- Bulk template: `config/bulk/example.yml`
-- `CONFIG_PATH` can explicitly override the venue/preset resolver
-- `MODE` can override the config file mode at runtime, so paper/backtest use the same venue preset
-- `DATABASE_URL` controls storage. Use `file:data/mm.db` for local SQLite, or `postgres://` / `postgresql://` for PostgreSQL.
+The market-data recorder writes only `market_data_*` tables. Bot runtime writes only `bot_*` tables.
 
-Bulk backtest currently replays historical OHLCV from `klines` and uses the paper fill model. Bulk historical L2 is not exposed by the current SDK/API, so backtest fill quality is approximate.
-
-Script path defaults and generation destinations are centralized in `scripts/lib/paths.ts`.
+See [docs/DATABASE.md](./docs/DATABASE.md) for the schema and [docs/DATA_FOUNDATION.md](./docs/DATA_FOUNDATION.md) for recorder operations.
 
 ## Verification Status
 
 The repository currently has:
 
-- unit tests for strategy, analytics, quote engine behavior, application use cases, adapter mapping, reporting, scripts, config, and package contracts
-- integration tests for SQLite/Postgres persistence, report queries, Bulk DI resolution, and fixture-backed quote-cycle latency telemetry
-- e2e smoke tests for Bulk backtest and Bulk paper sessions
+- unit tests for domain, application, adapter mapping, recorder buffering, normalization, scripts, config, and package contracts
+- integration tests for PostgreSQL market data inserts, destructive migration SQL, and Bulk DI resolution
 - coverage output via `bun run test:coverage` under `docs/coverage/`
 
 ## Why This Layout
 
 - strategy logic should not know about exchange SDK details
 - Bulk-specific behavior stays in `src/adapters/bulk`
-- `bulk-ts-sdk` is used because Bulk Trade does not currently provide an official TypeScript SDK
-- storage should be swappable without rewriting domain logic
-- paper/backtest should reuse as much runtime flow as possible
+- market-data recording runs separately from the bot
+- venue market facts and bot execution facts are not mixed
+- storage is intentionally PostgreSQL/TimescaleDB-only to keep replay/backtest semantics consistent

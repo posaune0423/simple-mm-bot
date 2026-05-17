@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778025600000,
-      "tag": "0001_add_telemetry",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778112000000,
-      "tag": "0002_metrics_fact_tables",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1778457600000,
-      "tag": "0003_add_vamp_price_to_orderbook_snapshots",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1778544000000,
-      "tag": "0004_edge_discovery_fact_tables",
+      "when": 1778889600000,
+      "tag": "0000_timescale_market_data_foundation",
       "breakpoints": true
     }
   ]

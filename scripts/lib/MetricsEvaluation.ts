@@ -58,6 +58,32 @@ interface MetricsEvaluationInput {
   quoteFreshness?: Partial<QuoteCycleFreshnessMetrics> & { sampleCount: number };
 }
 
+export interface BucketEvidenceRow {
+  bucket: string;
+  fillCount: number;
+  notionalUsd: number;
+  netPnl: number;
+  pnlPerVolumeBps: number | null;
+  avg5sMarkoutBps: number | null;
+  avg30sMarkoutBps: number | null;
+  avg300sMarkoutBps: number | null;
+  vw5sMarkoutBps: number | null;
+  vw30sMarkoutBps: number | null;
+  vw300sMarkoutBps: number | null;
+  adverseSelectionRate5s: number | null;
+  adverseSelectionRate30s: number | null;
+  adverseSelectionRate300s: number | null;
+  p5Markout30sBps: number | null;
+  p1Markout30sBps: number | null;
+  avgOrderLiveMs: number | null;
+}
+
+export interface BucketEvidence {
+  sideIntent: BucketEvidenceRow[];
+  quoteLevel: BucketEvidenceRow[];
+  quoteAge: BucketEvidenceRow[];
+}
+
 interface MarkoutTailBps {
   p10: number;
   p5: number;

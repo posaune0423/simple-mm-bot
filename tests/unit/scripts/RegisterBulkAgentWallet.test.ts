@@ -8,16 +8,16 @@ import {
 } from "../../../scripts/registerBulkAgentWallet.ts";
 
 describe("registerBulkAgentWallet", () => {
-  test("rejects placeholder constants before any signed request can be sent", () => {
+  test("rejects missing wallet environment before any signed request can be sent", () => {
     expect(() =>
       validateRegistrationConstants({
         mainWalletPrivateKey: MAIN_WALLET_PRIVATE_KEY_PLACEHOLDER,
         agentWalletPublicKey: AGENT_WALLET_PUBLIC_KEY_PLACEHOLDER,
       }),
-    ).toThrow("Edit scripts/registerBulkAgentWallet.ts");
+    ).toThrow("Set BULK_MAIN_WALLET_PRIVATE_KEY and BULK_AGENT_WALLET_PUBLIC_KEY");
   });
 
-  test("builds an add-agent action from explicit script constants", () => {
+  test("builds an add-agent action from explicit wallet input", () => {
     const params = buildManageAgentWalletParams({
       agentWalletPublicKey: "AgentWallet111111111111111111111111111111111",
       remove: false,

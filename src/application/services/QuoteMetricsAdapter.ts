@@ -1,14 +1,14 @@
 import type {
-  ExposureIntent as LegacyExposureIntent,
-  Quote as LegacyQuote,
-  QuoteLevel as LegacyQuoteLevel,
-} from "../../domain/types/LegacyQuote.ts";
+  QuoteMetricsIntent,
+  QuoteMetricsLevel,
+  QuoteMetricsRecord,
+} from "../../domain/types/QuoteMetrics.ts";
 import type { OrderTimeInForce } from "../../domain/types/Order.ts";
 import type { Quote } from "../../domain/value-objects/Quote.ts";
 import type { QuoteLeg } from "../../domain/value-objects/QuoteLeg.ts";
 
-export function toLegacyQuoteForMetrics(quote: Quote, policy: OrderTimeInForce): LegacyQuote {
-  const levels = toLegacyLevels(quote);
+export function toQuoteMetricsRecord(quote: Quote, policy: OrderTimeInForce): QuoteMetricsRecord {
+  const levels = toMetricsLevels(quote);
   const top = levels[0];
   return {
     bid: top?.bid ?? quote.fairPrice,
@@ -32,7 +32,7 @@ export function toLegacyQuoteForMetrics(quote: Quote, policy: OrderTimeInForce):
   };
 }
 
-function toLegacyLevels(quote: Quote): LegacyQuoteLevel[] {
+function toMetricsLevels(quote: Quote): QuoteMetricsLevel[] {
   const levelIndexes = new Set<number>();
   for (const leg of [...quote.bids, ...quote.asks]) {
     levelIndexes.add(leg.level);
@@ -40,7 +40,7 @@ function toLegacyLevels(quote: Quote): LegacyQuoteLevel[] {
 
   return [...levelIndexes]
     .sort((a, b) => a - b)
-    .map((level): LegacyQuoteLevel => {
+    .map((level): QuoteMetricsLevel => {
       const bid = quote.bids.find((leg) => leg.level === level);
       const ask = quote.asks.find((leg) => leg.level === level);
       return {
@@ -50,15 +50,15 @@ function toLegacyLevels(quote: Quote): LegacyQuoteLevel[] {
         ask: ask?.price ?? quote.fairPrice,
         bidSize: bid?.size ?? 0,
         askSize: ask?.size ?? 0,
-        bidIntent: legacyIntent(bid),
-        askIntent: legacyIntent(ask),
+        bidIntent: metricsIntent(bid),
+        askIntent: metricsIntent(ask),
         bidControlReasons: bid === undefined ? undefined : [...bid.reasonTags],
         askControlReasons: ask === undefined ? undefined : [...ask.reasonTags],
       };
     });
 }
 
-function legacyIntent(leg: QuoteLeg | undefined): LegacyExposureIntent {
+function metricsIntent(leg: QuoteLeg | undefined): QuoteMetricsIntent {
   return leg?.exposureIntent ?? "disabled";
 }
 

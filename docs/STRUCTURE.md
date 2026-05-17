@@ -1,14 +1,14 @@
 # STRUCTURE
 
-この文書は `simple-mm-bot` の現在の構成と、各ディレクトリの責務を定義する。
+This document defines the current repository layout and ownership boundaries.
 
-現在の主対象 venue は Bulk Trade。Bullet は対応対象に含めない。
-Bulk Trade には公式 TypeScript SDK がないため、repo owner が API を wrap して実装した `bulk-ts-sdk` を adapter 層から利用する。
-
-## ディレクトリ構成
+## Tree
 
 ```text
 simple-mm-bot/
+├── docker-compose.yml
+├── Dockerfile
+├── drizzle.config.ts
 ├── src/
 │   ├── main.ts
 │   ├── env.ts
@@ -17,365 +17,168 @@ simple-mm-bot/
 │   │   ├── Bot.ts
 │   │   ├── di.ts
 │   │   ├── factories/
-│   │   │   ├── QuoteModelFactory.ts
-│   │   │   └── StrategyFactory.ts
 │   │   ├── services/
-│   │   │   ├── OrderReconciler.ts
+│   │   │   ├── MarketDataBufferedWriter.ts
 │   │   │   ├── MetricsRecorder.ts
 │   │   │   ├── OrderIntentBuilder.ts
+│   │   │   ├── OrderReconciler.ts
 │   │   │   └── QuotingCycleService.ts
 │   │   └── usecases/
-│   │       ├── ClosePositionUseCase.ts
-│   │       ├── GuardRiskUseCase.ts
-│   │       ├── RecordOhlcvUseCase.ts
-│   │       ├── ReduceInventoryUseCase.ts
-│   │       └── UpdatePositionOnFillUseCase.ts
 │   ├── domain/
+│   │   ├── market-data/
 │   │   ├── ports/
 │   │   ├── quote-models/
-│   │   │   ├── AvellanedaStoikovQuoteModel.ts
-│   │   │   └── QuoteModel.ts
 │   │   ├── services/
-│   │   │   ├── FairPriceCalculator.ts
-│   │   │   ├── MarketContextBuilder.ts
-│   │   │   ├── QuoteEngine.ts
-│   │   │   └── VolatilityEstimator.ts
 │   │   ├── strategies/
-│   │   │   ├── SimplePmmStrategy.ts
-│   │   │   └── Strategy.ts
 │   │   ├── types/
-│   │   │   ├── Fill.ts
-│   │   │   ├── LegacyQuote.ts
-│   │   │   ├── Order.ts
-│   │   │   ├── PerformanceMetrics.ts
-│   │   │   └── Position.ts
 │   │   └── value-objects/
-│   │       ├── BasisPoints.ts
-│   │       ├── OrderIntent.ts
-│   │       ├── PositionSnapshot.ts
-│   │       ├── Price.ts
-│   │       ├── Quantity.ts
-│   │       ├── Quote.ts
-│   │       └── QuoteLeg.ts
 │   ├── adapters/
 │   │   ├── bulk/
-│   │   │   ├── BulkMarketFeed.ts
-│   │   │   ├── BulkOhlcvFetcher.ts
-│   │   │   └── BulkOrderGateway.ts
 │   │   ├── hyperliquid/
-│   │   │   ├── HyperliquidMarketFeed.ts
-│   │   │   ├── HyperliquidOhlcvFetcher.ts
-│   │   │   └── HyperliquidOrderGateway.ts
 │   │   └── paper/
-│   │       ├── HistoricalMarketFeed.ts
-│   │       └── PaperOrderGateway.ts
 │   ├── infrastructure/
-│   │   ├── Metrics.ts
-│   │   ├── MetricsRepository.ts
-│   │   └── db/
-│   │       ├── postgres/
-│   │       └── sqlite/
-│   │           ├── bootstrap.ts
-│   │           ├── client.ts
-│   │           └── schema.ts
+│   │   ├── allora/
+│   │   ├── db/
+│   │   │   └── postgres/
+│   │   │       ├── client.ts
+│   │   │       ├── schema.ts
+│   │   │       ├── migrations/
+│   │   │       └── repository/
+│   │   └── GitMetadata.ts
+│   ├── lib/
+│   │   ├── hyperliquid/
+│   │   ├── reporting/
+│   │   └── slack/
 │   ├── utils/
+│   └── workers/
+│       ├── marketDataRecorder.ts
+│       └── marketDataRecorderFactory.ts
+├── scripts/
+│   ├── analyzeLeadLagCharts.ts
+│   ├── checkBulkPrivateApi.ts
+│   ├── createDesignIssues.ts
+│   ├── generateCoverageSummary.ts
+│   ├── generateMetricsReport.ts
+│   ├── registerBulkAgentWallet.ts
+│   ├── tuneBulkConfig.ts
 │   └── lib/
-│       ├── hyperliquid/
-│       └── reporting/
-│           ├── metrics/
-│           ├── queries/
-│           ├── report/
-│           └── svg/
-	├── config/
-	│   └── bulk/
-	│       ├── beta.yml
-	│       ├── tight-near-touch.yml
-	│       ├── tight-near-touch-micro.yml
-	│       ├── tight-near-touch-maker.yml
-	│       ├── tight-near-touch-inner-maker.yml
-	│       ├── mainnet.yml
-	│       └── example.yml
 ├── tests/
 │   ├── unit/
-│   │   ├── adapters/
-│   │   ├── application/
-│   │   ├── domain/
-│   │   ├── reporting/
-│   │   └── scripts/
-│   ├── integration/
-│   │   ├── application/
-│   │   ├── infrastructure/
-│   │   └── latency/
-│   └── e2e/
-├── scripts/
-│   ├── backtestPaperLoop.ts
-│   ├── registerBulkAgentWallet.ts
-│   ├── evaluateLiveRun.ts
-│   ├── tuneBulkConfig.ts
-│   ├── createDesignIssues.ts
-│   ├── generateMetricsReport.ts
-│   └── lib/
-│       ├── paths.ts
-│       ├── MetricsEvaluation.ts
-│       ├── BulkConfigTuning.ts
-│       └── DesignIssuePlanner.ts
+│   └── integration/
 ├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── EDGE_DISCOVERY_LOOP.md
-│   ├── PRD.md
-│   ├── STRATEGY.md
+│   ├── DATABASE.md
+│   ├── DATA_FOUNDATION.md
 │   ├── TECH.md
-│   ├── STRUCTURE.md
-│   ├── research/
-│   ├── venue/
-│   │   └── bulk/
-│   │       └── README.md
-│   └── specs/
+│   ├── TEST.md
+│   ├── ARCHITECTURE.md
+│   └── venue/
+├── config/
+│   └── bulk/
 ├── data/
-│   ├── mm.db
-│   ├── metrics/
-│   └── strategy-runs/
+│   └── timescaledb/
 └── package.json
 ```
 
-## レイヤー責務
+## Layer Responsibilities
 
-### `src/domain/`
+### `src/domain`
 
-純粋な market making logic を置く。
+Pure market making and recorder contracts.
 
-- venue SDK を import しない
-- DB 実装を import しない
-- env を直接読まない
-- adapter payload を domain type / value object に持ち込まない
+- No venue SDK imports.
+- No database imports.
+- No environment reads.
+- Ports live here because inner layers define interfaces.
 
-`QuoteEngine` は quote model、fair price、volatility、risk sizing、`minSpreadBps` の最小幅を組み合わせて quote を生成する。
-`MarketContextBuilder` は component freshness、外部価格差、LOB/risk context など venue 非依存の market context を構築する純粋 domain service。`MarketContext` 型は builder の出力型として同じ file に置き、`domain/market` のような曖昧な bucket は作らない。
-quote model は `src/domain/quote-models/*`、bot behavior strategy は `src/domain/strategies/*` に pure domain code として置く。`QuoteModelInput` / `ModelQuote` は quote model contract、`StrategyDecision` / `SideMarkoutFeedback` は strategy contract として colocate し、`value-objects/` には validation / 不変条件 / domain helper を持つ型だけを置く。
-`Fill` / `OrderSide` / `OrderTimeInForce` / legacy quote / current position のような identity や lifecycle を持たない plain contract は `src/domain/types/*` に置く。`value-objects/` は factory validation や domain helper を持つ型だけに限定する。現時点では DDD Entity として扱うべき domain object はないため、`src/domain/entities/` は作らない。
-Time in force は config の `quoteEngine.defaultTimeInForce` から渡され、Bulk Trade では当面 `GTC` を使う。
+### `src/application`
 
-metrics evaluation、Bulk config tuning、GitHub issue planning などの自己改善 loop は market making domain ではないため、`src/domain/` に置かない。
+Bot and worker orchestration.
 
-### `src/application/`
+- `Bot.ts` owns runtime loop lifecycle.
+- `di.ts` is the bot composition root.
+- `MarketDataBufferedWriter.ts` batches recorder writes.
+- Use cases coordinate domain ports and adapters.
 
-bot runtime と use case orchestration を置く。
+### `src/adapters`
 
-- tick loop を管理する
-- domain service を組み合わせる
-- market snapshot / order / fill / account risk を metrics fact として保存する
-- `di.ts` で mode / venue / repository を解決する
-- venue protocol や SQL を直接書かない
+External venue and mode adapters.
 
-`di.ts` が具体実装を知る唯一の application 境界。
-`QuotingCycleService` は Strategy、OrderIntentBuilder、OrderReconciler を組み合わせる orchestration service。旧 use case の責務はここへ分解済み。
-`OrderReconciler.ts` は quote order の application-level reconcile を担当し、通常 tick では価格/サイズ差分が閾値以上の order だけ cancel/replace する。startup/emergency/cleanup の blanket `cancelAll()` は `Bot` / gateway lifecycle 側に限定する。
+- `src/adapters/bulk` owns Bulk HTTP/WS/order/recorder normalization.
+- `src/adapters/paper` owns simulated execution and historical feed helpers.
+- `src/adapters/hyperliquid` is compatibility-only.
 
-process signal handling は `main.ts` の boundary に置き、signal では `AbortController` を abort するだけにする。`Bot.start({ signal })` が stop request として受け取り、position close などの取引処理は `Bot` cleanup から use case 経由で実行する。signal handling から venue protocol を直接触らない。
+### `src/infrastructure`
 
-### `src/adapters/`
+External technical details.
 
-外部 venue と domain ports の変換層。
+- PostgreSQL client and Drizzle schema.
+- TimescaleDB migration SQL.
+- PostgreSQL repositories implementing domain ports.
+- Git metadata and non-domain integrations.
 
-#### `src/adapters/bulk/`
+### `src/workers`
 
-Bulk Trade の primary adapter。
+Standalone process entry points.
 
-- `BulkMarketFeed.ts`
-  - `bulk-ts-sdk` で ticker / L2 を取得する
-  - HTTP snapshot を seed し、WS ticker / L2 snapshot で更新する
-  - WS candle から 1m OHLCV を取得する
-  - 購読直後の historical candle batch は最新分だけ処理し、quote tick loop とは同期させない
-  - Bulk timestamp は ns から ms に正規化する
-  - top book から mid / microprice を計算する
-  - account id が利用できる場合のみ margin ratio / position qty を取得し、polling で account / position freshness を維持する
-- `BulkOhlcvFetcher.ts`
-  - `bulk-ts-sdk` の `market.klines` から historical OHLCV を取得する
-  - Bulk `backtest` の replay feed 用に domain `OhlcvRecord` へ正規化する
-- `BulkOrderGateway.ts`
-  - domain order を `placeLimitOrder` / `placeMarketOrder` に変換する
-  - cancel / cancelAll を SDK に委譲する
-  - `response.data.statuses` から order id と reject reason を読む
-  - `account.fills(accountId)` を poll し、fills を domain `Fill` に正規化する
+- `marketDataRecorder.ts` reads env, validates PostgreSQL URL, wires recorder dependencies, and handles shutdown.
+- `marketDataRecorderFactory.ts` maps recorder venue to recorder client.
 
-#### `src/adapters/hyperliquid/`
+### `scripts`
 
-既存の Hyperliquid adapter。
-当面は historical backtest / legacy validation path として維持する。
-Bulk main 運用に必要な新規機能はここへ追加しない。
+Operator and development tools outside bot runtime.
 
-#### `src/adapters/paper/`
+- JSON-based metrics report formatting.
+- Bulk config tuning from an evaluation JSON.
+- design issue planning.
+- coverage summary generation.
 
-venue 非依存の paper execution。
-Bulk paper mode では `BulkMarketFeed` と `PaperOrderGateway` を組み合わせる。
-
-### `src/infrastructure/`
-
-DB など外部 storage の詳細を置く。
-
-- SQLite は local / lightweight operation 用
-- Postgres は production 用
-- repository は domain ports と metrics repository contract を実装し、schema 都合を上位層に漏らさない
-- `Metrics.ts` は core metrics fact contract を定義する
-- `MetricsRepository.ts` は metrics repository port を定義する
-- SQLite の runtime DDL と table / view name list は `src/infrastructure/db/sqlite/bootstrap.ts`
-- SQLite / Drizzle table mapping は `src/infrastructure/db/sqlite/schema.ts`
-- metrics は `trading_runs`, `orderbook_snapshots`, `submitted_orders`, `trade_fills`, `account_state_observations`, `runtime_health_events`, `quote_decisions`, `order_lifecycle_events` に保存する
-- `telemetry_events`, `markouts`, `runtime_incidents` は作らず、分析結果は view で計算する
-- `quote_decisions` と `runtime_health_events` は edge 探索に必要な raw fact として保存し、bucket別EVは view で再集計する
-
-### `src/application/services/MetricsRecorder.ts`
-
-Bot runtime から run metadata、orderbook snapshot、submitted order、trade fill、account state observation を保存する application service。
-Bulk beta live は runtime mode は `live` のまま、metrics 上の `capitalMode` を `beta_mock` として明示する。
-
-### `scripts/lib/`
-
-Bot の外側で agent や operator が使う評価・tuning・issue planning logic を置く。
-runtime source ではなく tool 用 script の実装詳細として扱う。
-
-- `MetricsEvaluation.ts`
-  - 保存済み metrics facts / views から data health、PnL、markout、order quality、runtime health を評価する
-- `BulkConfigTuning.ts`
-  - `config/bulk/beta.yml` への最小YAML tuningだけを扱うBulk固有tool logic
-- `DesignIssuePlanner.ts`
-  - SDK/API/code/design修正が必要な metrics signal をGitHub issue案へ変換する
-- `paths.ts`
-  - script / agent loop 用の default config、DB、metrics output、report output path を定義する
-
-`scripts/lib/` は bot runtime の意思決定に import しない。
-
-Runtime default は `src/env.ts`、Drizzle schema / migration path は `drizzle.config.ts`、script / report / agent loop の default path は `scripts/lib/paths.ts` に置く。
-`src` 直下に repo 運用用の path registry を作らない。
+Scripts must not be required by bot runtime.
 
 ## Data Layout
 
-生成データは原則 `data/` 配下へ置く。`src/`、`scripts/`、`docs/` の source file 生成とは分け、local runtime / agent loop が読む state として扱う。
+- `data/timescaledb/`: Docker Compose TimescaleDB volume.
+- `data/metrics/`: JSON and Markdown artifacts produced by scripts.
+- `docs/reports/`: generated report snapshots when intentionally committed.
 
-- `data/mm.db`
-  - default SQLite DB。`DATABASE_URL=file:data/mm.db` として live / paper / backtest / metrics scripts が読む。
-  - 通常の backtest、paper、live optimization はこの同一 DB を共有する。`trading_runs.id` と mode / venue / market / capitalMode で run を分離し、複数 run の比較や latest run 評価を DB 内で行う。
-  - run ごとに DB を分けるのは、破壊的検証、fixture 再現、または既存 DB を汚したくない isolated experiment のときだけ。使う場合は `DATABASE_URL=file:data/tmp/<label>.db`、`--db data/tmp/<label>.db`、または一時 path を明示する。
-- `data/market/<venue>/<yyyy-mm>.sqlite`
-  - 次世代の low-cost market-data store。常時 collector が L2 book、trades、candles、funding、oracle/index price を venue / month ごとに保存する。
-  - DB target design は `docs/DATABASE.md` を source of truth とする。現行 runtime はまだ `data/mm.db` を primary metrics DB として使う。
-- `data/runs/<venue>.sqlite`
-  - 次世代の run/accounting store。quote decision、order lifecycle、fills、funding accrual、ledger entries を venue ごとに保存する。
-  - funding-aware PnL は fill table ではなく ledger / funding accrual fact から集計する。
-- `data/metrics/`
-  - bot 性能評価結果の格納先。
-  - `bun run metrics:evaluate` は `evaluation.json` を `data/metrics/<run_id>/`、または明示した `--output-dir` に書く。
-  - agent が直近 run を続けて扱う場合は `--output-dir data/metrics/latest` を使い、`metrics:report` / `metrics:tune` / `metrics:issues` は `data/metrics/latest/evaluation.json` を読む。
-  - `metrics-report.md`、`metrics-report.json`、`issues.json`、tuning の dry-run JSON などもここへ置く。
-- `data/strategy-runs/`
-  - `bun run loop:backtest-paper` の run summary 置き場。
-  - `summary.json`、`report.json`、`run.md`、使用 config snapshot を `data/strategy-runs/<timestamp>-<label>/` に保存する。
-- `docs/reports/`
-  - 人間が review / commit する performance dashboard。`report:generate` の default 出力であり、runtime state ではなく git 管理可能な report snapshot として扱う。
-- `docs/research/`
-  - on-demand 調査結果の置き場。特定 run / incident / market regime の分析を、data source、run id、再現可能な SQL / command、解釈、次 action と一緒に Markdown で残す。
-  - 自動生成 dashboard ではなく、人間が読んで意思決定する調査ノートとして扱う。数値だけでなく、phase 定義、bucket、制約、未観測データも明記する。
-
-### `src/lib/reporting/`
-
-backtest / paper / live の分析出力を置く。
-
-- `metrics/` は drawdown、adverse rate、hourly bucket などの計算
-- `queries/` は report 用データ取得
-- `report/` は Markdown / KPI table / path 生成
-- `svg/` は chart rendering の primitive と chart 実装
-
-bot runtime の意思決定ロジックをここへ入れない。reporting は保存済みデータや report input から成果物を作る責務に限定する。
-
-### `src/utils/`
-
-logger、args、fs、Result helper、error helper などの横断的な小物を置く。
-production code の出力は `src/utils/logger.ts` を通す。
-
-### `src/lib/`
-
-外部 API wrapper を置く。現在は Hyperliquid public / exchange / subscription API wrapper と testnet detection を持つ。
-Bulk Trade の API wrapper は `bulk-ts-sdk` を利用し、この repo の `src/lib/` へ増やさない。
-
-## Config
-
-`config/` には commit 可能な設定だけを置く。
-
-- `config/bulk/beta.yml`
-  - Bulk beta config。日次 10,000 mock USD を使う前提の aggressive preset
-- `config/bulk/tight-near-touch.yml`
-  - Bulk beta tight-spread canary config。`beta.yml` を wide-spread profile として残し、`CONFIG_PATH` で明示した小さな live canary にだけ使う
-- `config/bulk/tight-near-touch-micro.yml`
-  - Bulk beta micro tight-spread canary config。`tight-near-touch.yml` より小さい size / position cap で maker-fill quality を確認する
-- `config/bulk/tight-near-touch-maker.yml`
-  - Bulk beta maker-quality tight-spread canary config。通常停止時の market close を避け、shutdown taker fill と maker quote fill を分離して評価する
-- `config/bulk/tight-near-touch-inner-maker.yml`
-  - Bulk beta inner-level maker tight-spread canary config。外側levelを外し、短い quote age と低churnを検証する
-- `config/bulk/mainnet.yml`
-  - Bulk mainnet config。real capital 用の conservative preset
-- `config/bulk/example.yml`
-  - safe template with `${BULK_PRIVATE_KEY}`
-
-デフォルトの config selection は `CONFIG_VENUE=bulk`、`CONFIG_PRESET=beta`。
-`CONFIG_PATH` を指定した場合は venue/preset resolver より優先して、その YAML を直接読む。
-Paper / backtest は専用 YAML ではなく、同じ venue preset に `MODE=paper` / `MODE=backtest` を重ねる。
-
-Bulk の HTTP URL、WS URL、market、environment、L2 depth は YAML に置く。
-secret env として追加するのは `BULK_PRIVATE_KEY` のみ。
+Runtime database state belongs in TimescaleDB, not local database files.
 
 ## Docs
 
-`docs/venue/` には venue 固有の exchange rule、fee、risk、execution semantics を置く。
-`docs/venue/bulk/README.md` は Bulk Trade の maker / taker fee、commission、HFMM、STP、margin、liquidation ルールの参照資料として使う。
-`docs/STRATEGY.md` は current strategy flow、quote formula、Bulk live parameters、inventory reduction policy の参照資料として使う。
-`docs/DATABASE.md` は DB file layout、table family、MetricsRecorder と worker の責務分担の source of truth として使う。
-`docs/DATA_FOUNDATION.md` は低コスト SQLite-first の運用、保存頻度、replay backtest、cost control の方針として使う。
-`docs/research/` は特定 run や market regime の ad hoc 調査結果を、再現可能な data source / SQL とともに保存する。
-runtime 実装や layer boundary の source of truth は引き続き `docs/TECH.md` とこの文書に置く。
+- `docs/DATABASE.md`: TimescaleDB schema source of truth.
+- `docs/DATA_FOUNDATION.md`: recorder and replay foundation policy.
+- `docs/TECH.md`: technical architecture and runtime policy.
+- `docs/ARCHITECTURE.md`: diagrams and high-level flow.
+- `docs/TEST.md`: test layout and commands.
+- `docs/venue/bulk/README.md`: Bulk-specific venue notes.
 
 ## DI Matrix
 
-| venue         | mode       | MarketFeed              | OrderGateway              | status               |
-| ------------- | ---------- | ----------------------- | ------------------------- | -------------------- |
-| `bulk`        | `paper`    | `BulkMarketFeed`        | `PaperOrderGateway`       | primary              |
-| `bulk`        | `live`     | `BulkMarketFeed`        | `BulkOrderGateway`        | primary              |
-| `bulk`        | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | primary              |
-| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | legacy compatibility |
-| `hyperliquid` | `paper`    | `HyperliquidMarketFeed` | `PaperOrderGateway`       | legacy compatibility |
-| `hyperliquid` | `live`     | `HyperliquidMarketFeed` | `HyperliquidOrderGateway` | legacy compatibility |
+| venue         | mode       | MarketFeed              | OrderGateway              | status        |
+| ------------- | ---------- | ----------------------- | ------------------------- | ------------- |
+| `bulk`        | `paper`    | `BulkMarketFeed`        | `PaperOrderGateway`       | primary       |
+| `bulk`        | `live`     | `BulkMarketFeed`        | `BulkOrderGateway`        | primary       |
+| `bulk`        | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | temporary     |
+| `hyperliquid` | `paper`    | `HyperliquidMarketFeed` | `PaperOrderGateway`       | compatibility |
+| `hyperliquid` | `live`     | `HyperliquidMarketFeed` | `HyperliquidOrderGateway` | compatibility |
+| `hyperliquid` | `backtest` | `HistoricalMarketFeed`  | `PaperOrderGateway`       | compatibility |
 
-## 依存ルール
+Recorder venues:
 
-- domain は application / adapters / infrastructure を import しない
-- application は domain、infrastructure contracts、DI 対象の具体実装だけを組み合わせる
-- Bulk SDK import は `src/adapters/bulk/` に閉じる
-- Hyperliquid SDK import は `src/lib/hyperliquid/` と `src/adapters/hyperliquid/` に閉じる
-- infrastructure は domain ports / metrics repository contract と storage library に依存する
-- scripts は domain types と infrastructure metrics contract を読めるが、bot runtime からは参照しない
-- secret env は `src/env.ts` と config expansion 以外で直接読まない
+| venue          | client                         | status      |
+| -------------- | ------------------------------ | ----------- |
+| `bulk`         | `BulkMarketDataRecorderClient` | implemented |
+| `binance_usdm` | none                           | fail fast   |
+| `okx_swap`     | none                           | fail fast   |
+| `bybit_linear` | none                           | fail fast   |
 
-## テスト構成
+## Tests
 
-- `tests/unit/domain/`
-  - strategy、quote engine、analytics の pure unit test
-- `tests/unit/scripts/`
-  - metrics evaluation、Bulk config tuning、design issue planning の unit test
-- `tests/unit/application/`
-  - bot loop、use case の orchestration test
-- `tests/unit/adapters/`
-  - Bulk adapter と venue payload normalization の unit test
-- `tests/unit/reporting/`
-  - metrics、Markdown report、SVG chart rendering の unit test
-- `tests/integration/application/`
-  - DI composition test
-- `tests/integration/infrastructure/`
-  - SQLite/Postgres repository integration test、report query test
-- `tests/integration/latency/`
-  - fixture-backed quote cycle latency test
-- `tests/e2e/`
-  - public feed を使う smoke test
+- `tests/unit`: domain, application, adapter, recorder, reporting, scripts, and package contract tests.
+- `tests/integration`: PostgreSQL repository, migration SQL, and DI integration tests.
 
-詳細は `docs/TEST.md` を参照する。coverage は `bun run test:coverage` で `docs/coverage/` に出力する。
+Run:
 
-Bulk main path を変更した場合は、少なくとも `bun run lint` と `bun run test` を実行する。
-public feed 依存の確認が必要な場合だけ `bun run test:e2e:paper` を追加する。
+```bash
+bun run check
+bun run test
+```
