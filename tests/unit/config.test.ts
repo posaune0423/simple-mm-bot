@@ -19,7 +19,6 @@ describe("ConfigLoader", () => {
     expect(envExample).toContain(
       "DATABASE_URL=postgresql://mm:replace-with-long-random-password@127.0.0.1:5432/mm_bot",
     );
-    expect(envExample).toContain("ALLORA_API_KEY=");
     expect(envExample).not.toContain("DB_PATH=");
   });
 
@@ -143,26 +142,14 @@ describe("ConfigLoader", () => {
     const fundingAware = await ConfigLoader.load({
       configPath: "config/bulk/beta-funding-aware.yml",
     });
-    const fundingAwareAllora = await ConfigLoader.load({
-      configPath: "config/bulk/beta-funding-aware-allora.yml",
-    });
 
     expect(baseline.quoteEngine.strategy.type).toBe("avellaneda-stoikov");
     expect(fundingAware.quoteEngine.strategy.type).toBe("funding-aware");
-    expect(fundingAwareAllora.quoteEngine.strategy.type).toBe("funding-aware");
     if (fundingAware.quoteEngine.strategy.type !== "funding-aware") {
       throw new Error("Expected funding-aware config");
     }
-    if (fundingAwareAllora.quoteEngine.strategy.type !== "funding-aware") {
-      throw new Error("Expected funding-aware Allora config");
-    }
     expect(fundingAware.quoteEngine.strategy.params.alpha).toMatchObject({
       enabled: false,
-      source: "none",
-    });
-    expect(fundingAwareAllora.quoteEngine.strategy.params.alpha).toMatchObject({
-      enabled: true,
-      source: "allora",
     });
     expect(fundingAware.quoteEngine.strategy.params.funding).toMatchObject({
       rateHorizonSec: 3600,

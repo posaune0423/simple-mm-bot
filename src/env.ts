@@ -16,7 +16,6 @@ export const env = createEnv({
     HL_SECRET_KEY: v.optional(v.pipe(v.string(), v.minLength(1))),
     HL_ACCOUNT_ADDRESS: v.optional(v.pipe(v.string(), v.minLength(1))),
     BULK_PRIVATE_KEY: v.optional(v.pipe(v.string(), v.minLength(1))),
-    ALLORA_API_KEY: v.optional(v.pipe(v.string(), v.minLength(1))),
     LOG_LEVEL: v.optional(v.picklist(["ERROR", "WARN", "LOG", "INFO", "DEBUG"]), "INFO"),
   },
   runtimeEnv: Bun.env,

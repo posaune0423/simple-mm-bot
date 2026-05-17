@@ -45,7 +45,7 @@ describe("buildStrategy", () => {
         horizonsSec: [5, 30, 300],
       },
       fundingAware: {
-        alpha: { enabled: false, source: "none" },
+        alpha: { enabled: false },
         targetInventory: {
           maxQty: 0.35,
           alphaQtyPerBps: 0.025,
