@@ -35,8 +35,11 @@ GitHub Actions rsync protects these paths even when `--delete` is used.
 - `VPS_HOST`
 - `VPS_USER`
 - `VPS_SSH_PRIVATE_KEY`
+- `VPS_SSH_KNOWN_HOSTS`
 
 Use a GitHub Actions deploy key. Do not use a personal 1Password SSH key.
+Store the pinned VPS `known_hosts` line in `VPS_SSH_KNOWN_HOSTS`; do not rely on
+runtime `ssh-keyscan` in Actions.
 
 ## VPS `.env`
 
@@ -166,6 +169,11 @@ SQL
 ```
 
 Verify through the SSH tunnel:
+
+Prerequisites: install PostgreSQL client tools locally.
+
+- Ubuntu/Debian: `apt-get install postgresql-client`
+- macOS: `brew install postgresql@16`
 
 ```bash
 pg_isready -h 127.0.0.1 -p 15432 -U mmbot_readonly -d mm_bot

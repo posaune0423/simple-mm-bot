@@ -58,6 +58,18 @@ describe("Hetzner compose files and scripts", () => {
     expect(source).not.toContain("timescaledb");
     expect(source).not.toContain("market-data-recorder-bulk");
   });
+
+  test("hardens database backups against loose permissions and partial files", () => {
+    const source = readFileSync("infra/hetzner/scripts/backup-db.sh", "utf8");
+
+    expect(source).toContain("umask 077");
+    expect(source).toContain("chmod 700");
+    expect(source).toContain("chmod 600");
+    expect(source).toContain("tmp_backup_path");
+    expect(source).toContain("trap 'rm -f \"$tmp_backup_path\"' EXIT");
+    expect(source).toContain('mv "$tmp_backup_path" "$backup_path"');
+    expect(source).toContain('[[ "$retention_days" =~ ^[0-9]+$ ]]');
+  });
 });
 
 function readCompose(path: string): {

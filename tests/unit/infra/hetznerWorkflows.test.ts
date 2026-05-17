@@ -34,6 +34,7 @@ describe("Hetzner GitHub Actions workflows", () => {
     expect(raw).toContain("${{ inputs.confirm }}");
     expect(raw).toContain("!= 'yes'");
     expect(raw).toContain("/opt/mmbot/scripts/dispatch-action.sh");
+    expect(raw).toContain("VPS_SSH_KNOWN_HOSTS");
   });
 
   test("publishes Docker images to GHCR with package write permission", () => {
@@ -59,6 +60,8 @@ describe("Hetzner GitHub Actions workflows", () => {
     expect(raw).toContain("chmod +x /opt/mmbot/scripts/*.sh");
     expect(raw).toContain("docker compose");
     expect(raw).toContain("config -q");
+    expect(raw).toContain("VPS_SSH_KNOWN_HOSTS");
+    expect(raw).not.toContain("ssh-keyscan");
   });
 
   test("keeps CI on Node 24, Bun, repo checks, tests, lint, and actionlint", () => {
@@ -72,6 +75,7 @@ describe("Hetzner GitHub Actions workflows", () => {
     expect(raw).toContain("bun run lint");
     expect(raw).toContain("bun run test");
     expect(raw).toContain("actionlint");
+    expect(raw).toContain("download-actionlint.bash) 1.7.12");
   });
 });
 
