@@ -7,7 +7,6 @@ export type ExternalFairPriceMode = "disabled" | "replace_local" | "blend_with_l
 export type ExternalFairPriceConfig = Readonly<{
   enabled: boolean;
   mode: ExternalFairPriceMode;
-  strict: boolean;
   localWeight?: number;
 }>;
 
@@ -16,7 +15,7 @@ export type FairPriceComputation =
       status: "ok";
       fairPrice: number;
       localFairPrice: number;
-      priceSource: "local" | "external" | "blended" | "local_fallback";
+      priceSource: "local" | "external" | "blended";
       externalFair?: FairValueSnapshot;
     }>
   | Readonly<{
@@ -34,7 +33,6 @@ export class FairPriceCalculator {
     private readonly externalFairConfig: ExternalFairPriceConfig = {
       enabled: false,
       mode: "disabled",
-      strict: false,
     },
   ) {}
 
@@ -59,19 +57,10 @@ export class FairPriceCalculator {
 
     const externalFair = this.fairValueProvider.getLatestFairValue(nowMs);
     if (externalFair.status === "unavailable" || externalFair.fairMid === undefined) {
-      if (this.externalFairConfig.strict) {
-        return {
-          status: "unavailable",
-          localFairPrice,
-          reason: "external_fair_unavailable",
-          externalFair,
-        };
-      }
       return {
-        status: "ok",
-        fairPrice: localFairPrice,
+        status: "unavailable",
         localFairPrice,
-        priceSource: "local_fallback",
+        reason: "external_fair_unavailable",
         externalFair,
       };
     }

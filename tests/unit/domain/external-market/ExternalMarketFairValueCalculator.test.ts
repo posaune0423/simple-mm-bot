@@ -120,6 +120,27 @@ describe("ExternalMarketFairValueCalculator", () => {
       { venue: "bybit_linear", symbol: "BTCUSDT", reason: "outlier" },
     ]);
   });
+
+  test("falls back to equal weights when configured weights cannot be normalized", () => {
+    const calculator = createCalculator({
+      sources: [
+        { venue: "binance_usdm", symbol: "BTCUSDT", weight: 0 },
+        { venue: "okx_swap", symbol: "BTC-USDT-SWAP", weight: 0 },
+      ],
+    });
+
+    const snapshot = calculator.compute(
+      [
+        top({ venue: "binance_usdm", symbol: "BTCUSDT", bidPrice: 99, askPrice: 101 }),
+        top({ venue: "okx_swap", symbol: "BTC-USDT-SWAP", bidPrice: 101, askPrice: 103 }),
+      ],
+      10_000,
+    );
+
+    expect(snapshot.status).toBe("ready");
+    expect(snapshot.used.map((source) => source.weight)).toEqual([0.5, 0.5]);
+    expect(snapshot.fairMid).toBe(101);
+  });
 });
 
 function createCalculator(

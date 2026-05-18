@@ -31,6 +31,11 @@ export class ExternalMarketTopOfBookStore
       return false;
     }
 
+    const current = this.slots[index];
+    if (current !== undefined && current.receivedAt >= update.receivedAt) {
+      return false;
+    }
+
     const midPrice = (update.bidPrice + update.askPrice) / 2;
     this.slots[index] = Object.freeze({
       ...update,

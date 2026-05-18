@@ -69,14 +69,13 @@ const externalFairSourceSchema = v.object({
   reconnectDelayMs: v.optional(positiveIntegerSchema, 1_000),
   apiKey: v.optional(v.string()),
 });
-const externalFairSchema = v.optional(
+const externalFairConfigSchema = v.pipe(
   v.object({
     enabled: v.optional(v.boolean(), false),
     mode: v.optional(
       v.picklist(["disabled", "replace_local", "blend_with_local"]),
       "replace_local",
     ),
-    strict: v.optional(v.boolean(), true),
     maxAgeMs: v.optional(positiveIntegerSchema, 500),
     minSourceCount: v.optional(positiveIntegerSchema, 2),
     maxSpreadBps: v.optional(positiveNumberSchema, 10),
@@ -84,17 +83,23 @@ const externalFairSchema = v.optional(
     localWeight: v.optional(zeroToOneNumberSchema),
     sources: v.optional(v.array(externalFairSourceSchema), []),
   }),
-  {
-    enabled: false,
-    mode: "replace_local" as const,
-    strict: true,
-    maxAgeMs: 500,
-    minSourceCount: 2,
-    maxSpreadBps: 10,
-    maxDeviationBps: 20,
-    sources: [],
-  },
+  v.check(
+    (config) =>
+      config.enabled !== true ||
+      config.mode === "disabled" ||
+      config.sources.length >= config.minSourceCount,
+    "externalFair requires at least minSourceCount sources when enabled",
+  ),
 );
+const externalFairSchema = v.optional(externalFairConfigSchema, {
+  enabled: false,
+  mode: "replace_local" as const,
+  maxAgeMs: 500,
+  minSourceCount: 2,
+  maxSpreadBps: 10,
+  maxDeviationBps: 20,
+  sources: [],
+});
 
 const avellanedaStoikovParamsSchema = v.object({
   gamma: v.pipe(v.number(), v.minValue(0), v.maxValue(0.5)),
@@ -364,10 +369,18 @@ function parseBooleanEnv(name: string): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return value === "1" || value.toLowerCase() === "true";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false") {
+    return false;
+  }
+  return undefined;
 }
 
 function normalizeConfig(config: AppConfig): LoadedAppConfig {
+  assertExternalFairSourceAvailability(config.quoteEngine.externalFair);
   return {
     ...config,
     market:
@@ -375,6 +388,20 @@ function normalizeConfig(config: AppConfig): LoadedAppConfig {
         ? config.connections.bulk.market
         : config.connections.hyperliquid.market,
   };
+}
+
+function assertExternalFairSourceAvailability(
+  externalFair: AppConfig["quoteEngine"]["externalFair"],
+): void {
+  if (
+    externalFair.enabled === true &&
+    externalFair.mode !== "disabled" &&
+    externalFair.sources.length < externalFair.minSourceCount
+  ) {
+    throw new Error(
+      `externalFair requires at least minSourceCount sources when enabled: minSourceCount=${externalFair.minSourceCount} sources=${externalFair.sources.length}`,
+    );
+  }
 }
 
 function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, ConfigError> {

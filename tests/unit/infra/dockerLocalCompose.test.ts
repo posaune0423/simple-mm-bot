@@ -23,12 +23,12 @@ describe("local Docker compose wrapper", () => {
       >;
     };
 
-    expect(Object.keys(compose.services)).toEqual([
-      "timescaledb",
-      "market-data-recorder-bulk",
+    expect(Object.keys(compose.services).sort()).toEqual([
       "external-market-recorder",
-      "mmbot-main",
+      "market-data-recorder-bulk",
       "mmbot-canary",
+      "mmbot-main",
+      "timescaledb",
     ]);
     const timescaledb = required(compose.services.timescaledb, "timescaledb service");
     const worker = required(

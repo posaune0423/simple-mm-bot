@@ -13,7 +13,6 @@ export type ExternalMarketSubscriptionSourceConfig = ExternalMarketSourceConfig 
   Readonly<{
     wsUrl: string;
     reconnectDelayMs: number;
-    channel: string;
   }>;
 
 export function buildExternalMarketSubscription(

@@ -121,6 +121,12 @@ describe("ExternalMarketRealtimeStats", () => {
     expect(row?.recentUpdatesPerSecond).toBe(3);
     expect(row?.recentPriceChangesPerSecond).toBe(1);
   });
+
+  test("rejects non-positive rolling windows", () => {
+    expect(() => new ExternalMarketRealtimeStats(sources, { windowMs: 0 })).toThrow(
+      "ExternalMarketRealtimeStats windowMs must be positive",
+    );
+  });
 });
 
 const sources: ExternalMarketSourceConfig[] = [

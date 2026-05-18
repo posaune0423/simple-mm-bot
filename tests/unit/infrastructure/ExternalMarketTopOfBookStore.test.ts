@@ -114,4 +114,38 @@ describe("ExternalMarketTopOfBookStore", () => {
       midPrice: 101,
     });
   });
+
+  test("rejects out-of-order updates for an existing source", () => {
+    const store = new ExternalMarketTopOfBookStore(sources);
+
+    expect(
+      store.update({
+        venue: "binance_usdm",
+        symbol: "BTCUSDT",
+        receivedAt: 11,
+        bidPrice: 100,
+        bidSize: 1,
+        askPrice: 102,
+        askSize: 1,
+      }),
+    ).toBe(true);
+    expect(
+      store.update({
+        venue: "binance_usdm",
+        symbol: "BTCUSDT",
+        receivedAt: 10,
+        bidPrice: 99,
+        bidSize: 1,
+        askPrice: 101,
+        askSize: 1,
+      }),
+    ).toBe(false);
+
+    expect(store.getVersion()).toBe(1);
+    expect(store.readLatest()[0]).toMatchObject({
+      receivedAt: 11,
+      bidPrice: 100,
+      askPrice: 102,
+    });
+  });
 });

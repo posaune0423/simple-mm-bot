@@ -199,7 +199,6 @@ describe("QuoteEngine", () => {
       new FairPriceCalculator(1, "micro", fairValueProvider(110), {
         enabled: true,
         mode: "replace_local",
-        strict: true,
       }),
       new VolatilityEstimator(),
       {
@@ -250,7 +249,6 @@ describe("QuoteEngine", () => {
       new FairPriceCalculator(1, "micro", provider, {
         enabled: true,
         mode: "replace_local",
-        strict: true,
       }),
       new VolatilityEstimator(),
       {
@@ -275,13 +273,12 @@ describe("QuoteEngine", () => {
     expect(receivedNowMs).toBe(1_700_000_000_750);
   });
 
-  test("returns a no-quote condition when strict external fair value is unavailable", () => {
+  test("returns a no-quote condition when external fair value is unavailable", () => {
     const engine = new QuoteEngine(
       fixedModel(),
       new FairPriceCalculator(1, "micro", unavailableFairValueProvider(), {
         enabled: true,
         mode: "replace_local",
-        strict: true,
       }),
       new VolatilityEstimator(),
       {

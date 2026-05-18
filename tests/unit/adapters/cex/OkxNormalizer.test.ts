@@ -4,7 +4,7 @@ import { normalizeOkxBbo } from "../../../../src/adapters/cex/okx/OkxNormalizer.
 
 describe("normalizeOkxBbo", () => {
   test("uses asks[0] and bids[0] from bbo-tbt payload", () => {
-    const update = normalizeOkxBbo({
+    const result = normalizeOkxBbo({
       arg: { instId: "BTC-USDT-SWAP" },
       data: [
         {
@@ -15,8 +15,11 @@ describe("normalizeOkxBbo", () => {
         },
       ],
     });
+    if (result.isErr()) {
+      throw result.error;
+    }
 
-    expect(update).toMatchObject({
+    expect(result.value).toMatchObject({
       venue: "okx_swap",
       symbol: "BTC-USDT-SWAP",
       bidPrice: 99999.1,
@@ -28,7 +31,10 @@ describe("normalizeOkxBbo", () => {
 
   test("rejects payloads without top bid or ask", () => {
     expect(
-      normalizeOkxBbo({ arg: { instId: "BTC-USDT-SWAP" }, data: [{ bids: [], asks: [] }] }),
-    ).toBeNull();
+      normalizeOkxBbo({
+        arg: { instId: "BTC-USDT-SWAP" },
+        data: [{ bids: [], asks: [] }],
+      }).isErr(),
+    ).toBe(true);
   });
 });

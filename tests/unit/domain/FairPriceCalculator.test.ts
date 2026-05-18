@@ -74,7 +74,6 @@ describe("FairPriceCalculator", () => {
     const fair = new FairPriceCalculator(0.25, "micro", provider(110), {
       enabled: true,
       mode: "replace_local",
-      strict: true,
     }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
 
     expect(fair).toMatchObject({
@@ -90,7 +89,6 @@ describe("FairPriceCalculator", () => {
     const fair = new FairPriceCalculator(0.25, "micro", provider(110), {
       enabled: true,
       mode: "blend_with_local",
-      strict: true,
       localWeight: 0.25,
     }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
 
@@ -102,26 +100,10 @@ describe("FairPriceCalculator", () => {
     expect(fair.priceSource).toBe("blended");
   });
 
-  test("falls back to local fair when external value is unavailable and strict is false", () => {
+  test("returns unavailable when external value is unavailable", () => {
     const fair = new FairPriceCalculator(0.25, "micro", unavailableProvider(), {
       enabled: true,
       mode: "replace_local",
-      strict: false,
-    }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
-
-    expect(fair).toMatchObject({
-      status: "ok",
-      fairPrice: 102,
-      priceSource: "local_fallback",
-    });
-    expect(fair.externalFair?.status).toBe("unavailable");
-  });
-
-  test("returns unavailable when external value is unavailable and strict is true", () => {
-    const fair = new FairPriceCalculator(0.25, "micro", unavailableProvider(), {
-      enabled: true,
-      mode: "replace_local",
-      strict: true,
     }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
 
     expect(fair).toMatchObject({

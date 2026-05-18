@@ -1,4 +1,4 @@
-import { count, desc, gte } from "drizzle-orm";
+import { count, desc, gte, max } from "drizzle-orm";
 
 import { buildExternalMarketRecorderSubscriptions } from "../src/workers/externalMarketRecorderFactory.ts";
 import { loadExternalMarketRecorderConfig } from "../src/workers/externalMarketRecorderConfig.ts";
@@ -30,90 +30,116 @@ const realtimeStats = new ExternalMarketRealtimeStats(config.sources, {
   windowMs: args.statsWindowMs,
 });
 const startedAt = Date.now();
+let timer: ReturnType<typeof setInterval> | undefined;
+let flush: Awaited<ReturnType<typeof writer.shutdown>> | undefined;
 
-writer.start();
-const timer = setInterval(() => {
-  const statsSnapshot = realtimeStats.snapshot(Date.now());
-  if (args.viewMode === "tui") {
-    process.stdout.write(renderExternalMarketRealtimeTui(statsSnapshot));
-    return;
+try {
+  writer.start();
+  timer = setInterval(() => {
+    const statsSnapshot = realtimeStats.snapshot(Date.now());
+    if (args.viewMode === "tui") {
+      process.stdout.write(renderExternalMarketRealtimeTui(statsSnapshot));
+      return;
+    }
+    console.log(renderExternalMarketRealtimeLog(statsSnapshot));
+  }, args.refreshMs);
+  for (const subscription of subscriptions) {
+    subscription.start({
+      onTopOfBook: () => {},
+      onRecord: (record) => {
+        realtimeStats.recordTopOfBook(record);
+        void writer.addTopOfBook(record);
+      },
+      onError: (error) => {
+        console.error(
+          JSON.stringify({
+            event: "subscription_error",
+            venue: subscription.venue,
+            symbol: subscription.symbol,
+            error: String(error),
+          }),
+        );
+      },
+    });
   }
-  console.log(renderExternalMarketRealtimeLog(statsSnapshot));
-}, args.refreshMs);
-for (const subscription of subscriptions) {
-  subscription.start({
-    onTopOfBook: () => {},
-    onRecord: (record) => {
-      realtimeStats.recordTopOfBook(record);
-      void writer.addTopOfBook(record);
-    },
-    onError: (error) => {
-      console.error(
-        JSON.stringify({
-          event: "subscription_error",
-          venue: subscription.venue,
-          symbol: subscription.symbol,
-          error: String(error),
-        }),
-      );
-    },
-  });
-}
 
-await waitForStop(args.durationMs);
-clearInterval(timer);
-for (const subscription of subscriptions) {
-  subscription.stop();
-}
-const flush = await writer.shutdown();
+  await waitForStop(args.durationMs);
+  clearInterval(timer);
+  timer = undefined;
+  for (const subscription of subscriptions) {
+    subscription.stop();
+  }
+  flush = await writer.shutdown();
 
-const rows = await postgresClient.db
-  .select({
-    venue: externalMarketTopOfBookTable.venue,
-    symbol: externalMarketTopOfBookTable.symbol,
-    rows: count(),
-  })
-  .from(externalMarketTopOfBookTable)
-  .where(gte(externalMarketTopOfBookTable.receivedAt, startedAt))
-  .groupBy(externalMarketTopOfBookTable.venue, externalMarketTopOfBookTable.symbol);
+  const rows = await postgresClient.db
+    .select({
+      venue: externalMarketTopOfBookTable.venue,
+      symbol: externalMarketTopOfBookTable.symbol,
+      rows: count(),
+    })
+    .from(externalMarketTopOfBookTable)
+    .where(gte(externalMarketTopOfBookTable.receivedAt, startedAt))
+    .groupBy(externalMarketTopOfBookTable.venue, externalMarketTopOfBookTable.symbol);
 
-const latest = await postgresClient.db
-  .select()
-  .from(externalMarketTopOfBookTable)
-  .where(gte(externalMarketTopOfBookTable.receivedAt, startedAt))
-  .orderBy(desc(externalMarketTopOfBookTable.receivedAt))
-  .limit(20);
+  const latestBySource = await postgresClient.db
+    .select({
+      venue: externalMarketTopOfBookTable.venue,
+      symbol: externalMarketTopOfBookTable.symbol,
+      latestReceivedAt: max(externalMarketTopOfBookTable.receivedAt),
+    })
+    .from(externalMarketTopOfBookTable)
+    .where(gte(externalMarketTopOfBookTable.receivedAt, startedAt))
+    .groupBy(externalMarketTopOfBookTable.venue, externalMarketTopOfBookTable.symbol);
 
-await postgresClient.client.end();
+  const recentSample = await postgresClient.db
+    .select()
+    .from(externalMarketTopOfBookTable)
+    .where(gte(externalMarketTopOfBookTable.receivedAt, startedAt))
+    .orderBy(desc(externalMarketTopOfBookTable.receivedAt))
+    .limit(20);
 
-const missing = config.sources.filter(
-  (source) =>
-    rows.find((row) => row.venue === source.venue && row.symbol === source.symbol) === undefined,
-);
-const invalid = latest.filter(
-  (row) =>
-    row.bidPrice >= row.askPrice ||
-    !Number.isFinite(row.midPrice) ||
-    !Number.isFinite(row.spreadBps) ||
-    row.spreadBps < 0,
-);
-
-console.log(JSON.stringify({ flush, rows, latest: latest.slice(0, 5) }, null, 2));
-
-if (missing.length > 0) {
-  throw new Error(`missing external market rows: ${JSON.stringify(missing)}`);
-}
-if (invalid.length > 0) {
-  throw new Error(`invalid external market rows: ${JSON.stringify(invalid)}`);
-}
-
-for (const source of config.sources) {
-  const latestForSource = latest.find(
-    (row) => row.venue === source.venue && row.symbol === source.symbol,
+  const missing = config.sources.filter(
+    (source) =>
+      rows.find((row) => row.venue === source.venue && row.symbol === source.symbol) === undefined,
   );
-  if (latestForSource === undefined || Date.now() - latestForSource.receivedAt > 5_000) {
-    throw new Error(`stale latest external row for ${source.venue}:${source.symbol}`);
+  const invalid = recentSample.filter(
+    (row) =>
+      row.bidPrice >= row.askPrice ||
+      !Number.isFinite(row.midPrice) ||
+      !Number.isFinite(row.spreadBps) ||
+      row.spreadBps < 0,
+  );
+
+  console.log(JSON.stringify({ flush, rows, latestBySource, recentSample }, null, 2));
+
+  if (missing.length > 0) {
+    throw new Error(`missing external market rows: ${JSON.stringify(missing)}`);
   }
+  if (invalid.length > 0) {
+    throw new Error(`invalid external market rows: ${JSON.stringify(invalid)}`);
+  }
+
+  for (const source of config.sources) {
+    const latestForSource = latestBySource.find(
+      (row) => row.venue === source.venue && row.symbol === source.symbol,
+    );
+    const latestReceivedAt =
+      latestForSource?.latestReceivedAt === null ? undefined : latestForSource?.latestReceivedAt;
+    if (latestReceivedAt === undefined || Date.now() - Number(latestReceivedAt) > 5_000) {
+      throw new Error(`stale latest external row for ${source.venue}:${source.symbol}`);
+    }
+  }
+} finally {
+  if (timer !== undefined) {
+    clearInterval(timer);
+  }
+  for (const subscription of subscriptions) {
+    subscription.stop();
+  }
+  if (flush === undefined) {
+    flush = await writer.shutdown();
+  }
+  await postgresClient.client.end();
 }
 
 function requireEnv(name: string): string {

@@ -5,6 +5,7 @@ import { BulkOrderGateway } from "../../../src/adapters/bulk/BulkOrderGateway.ts
 import { HistoricalMarketFeed } from "../../../src/adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../../../src/adapters/paper/PaperOrderGateway.ts";
 import { DIContainer, resolveCapitalMode } from "../../../src/application/di.ts";
+import { ExternalMarketSubscriptionService } from "../../../src/application/services/ExternalMarketSubscriptionService.ts";
 import type { LoadedAppConfig } from "../../../src/config.ts";
 
 const TEST_DATABASE_URL = "postgresql://mm:mm@127.0.0.1:5432/mm_bot";
@@ -50,7 +51,6 @@ function config(
       externalFair: {
         enabled: false,
         mode: "replace_local",
-        strict: true,
         maxAgeMs: 500,
         minSourceCount: 2,
         maxSpreadBps: 10,
@@ -182,7 +182,6 @@ describe("DIContainer Bulk venue", () => {
     appConfig.quoteEngine.externalFair = {
       enabled: true,
       mode: "replace_local",
-      strict: true,
       maxAgeMs: 500,
       minSourceCount: 2,
       maxSpreadBps: 10,
@@ -213,8 +212,8 @@ describe("DIContainer Bulk venue", () => {
     };
 
     expect(internals.options.runtimeDisposables).toHaveLength(1);
-    expect(internals.options.runtimeDisposables?.[0]?.constructor.name).toBe(
-      "ExternalMarketSubscriptionService",
+    expect(internals.options.runtimeDisposables?.[0]).toBeInstanceOf(
+      ExternalMarketSubscriptionService,
     );
   });
 
@@ -223,7 +222,6 @@ describe("DIContainer Bulk venue", () => {
     appConfig.quoteEngine.externalFair = {
       enabled: true,
       mode: "replace_local",
-      strict: true,
       maxAgeMs: 500,
       minSourceCount: 2,
       maxSpreadBps: 10,

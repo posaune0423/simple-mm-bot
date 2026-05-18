@@ -4,7 +4,7 @@ import { normalizeBybitOrderbook1 } from "../../../../src/adapters/cex/bybit/Byb
 
 describe("normalizeBybitOrderbook1", () => {
   test("uses data.b[0] and data.a[0] from orderbook.1 payload", () => {
-    const update = normalizeBybitOrderbook1({
+    const result = normalizeBybitOrderbook1({
       topic: "orderbook.1.BTCUSDT",
       ts: 1_700_000_000_000,
       data: {
@@ -15,8 +15,11 @@ describe("normalizeBybitOrderbook1", () => {
         seq: 42,
       },
     });
+    if (result.isErr()) {
+      throw result.error;
+    }
 
-    expect(update).toMatchObject({
+    expect(result.value).toMatchObject({
       venue: "bybit_linear",
       symbol: "BTCUSDT",
       bidPrice: 99999.1,
@@ -28,7 +31,7 @@ describe("normalizeBybitOrderbook1", () => {
 
   test("rejects empty bid or ask arrays", () => {
     expect(
-      normalizeBybitOrderbook1({ topic: "orderbook.1.BTCUSDT", data: { b: [], a: [] } }),
-    ).toBeNull();
+      normalizeBybitOrderbook1({ topic: "orderbook.1.BTCUSDT", data: { b: [], a: [] } }).isErr(),
+    ).toBe(true);
   });
 });

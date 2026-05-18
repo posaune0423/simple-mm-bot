@@ -28,6 +28,7 @@ interface MetricsRecorderOptions {
   gitSha?: string;
   gitDirty: boolean;
   horizonsSec?: ReadonlyArray<5 | 30 | 60 | 300>;
+  close?: () => Promise<void>;
 }
 
 interface PnlPosition {
@@ -335,6 +336,10 @@ class BufferedMetricsRecorder {
     }
     await this.flushLoop.drainAndStop(timeoutMs);
     this.drained = true;
+  }
+
+  async close(): Promise<void> {
+    await this.options.close?.();
   }
 
   async recordMarketSnapshot(snapshot: MarketSnapshot): Promise<void> {

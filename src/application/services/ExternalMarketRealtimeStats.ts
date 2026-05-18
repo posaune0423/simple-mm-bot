@@ -56,7 +56,7 @@ export class ExternalMarketRealtimeStats {
     options: ExternalMarketRealtimeStatsOptions = {},
   ) {
     this.startedAt = options.startedAt ?? Date.now();
-    this.windowMs = options.windowMs ?? 5_000;
+    this.windowMs = normalizeWindowMs(options.windowMs);
     for (const source of sources) {
       this.sourceStats.set(externalMarketSourceKey(source), {
         source,
@@ -178,4 +178,14 @@ export class ExternalMarketRealtimeStats {
       sourceStats.recentPriceChangedAt.shift();
     }
   }
+}
+
+function normalizeWindowMs(windowMs: number | undefined): number {
+  if (windowMs === undefined) {
+    return 5_000;
+  }
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    throw new Error(`ExternalMarketRealtimeStats windowMs must be positive: ${windowMs}`);
+  }
+  return windowMs;
 }

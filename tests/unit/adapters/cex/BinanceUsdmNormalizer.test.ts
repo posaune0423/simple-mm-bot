@@ -4,7 +4,7 @@ import { normalizeBinanceUsdmBookTicker } from "../../../../src/adapters/cex/bin
 
 describe("normalizeBinanceUsdmBookTicker", () => {
   test("normalizes bookTicker payload into external top-of-book update", () => {
-    const update = normalizeBinanceUsdmBookTicker({
+    const result = normalizeBinanceUsdmBookTicker({
       s: "BTCUSDT",
       b: "99999.1",
       B: "2.5",
@@ -13,8 +13,11 @@ describe("normalizeBinanceUsdmBookTicker", () => {
       T: 1_700_000_000_001,
       u: 42,
     });
+    if (result.isErr()) {
+      throw result.error;
+    }
 
-    expect(update).toMatchObject({
+    expect(result.value).toMatchObject({
       venue: "binance_usdm",
       symbol: "BTCUSDT",
       bidPrice: 99999.1,
@@ -28,8 +31,8 @@ describe("normalizeBinanceUsdmBookTicker", () => {
 
   test("rejects malformed or crossed payloads", () => {
     expect(
-      normalizeBinanceUsdmBookTicker({ s: "BTCUSDT", b: "2", B: "1", a: "1", A: "1" }),
-    ).toBeNull();
-    expect(normalizeBinanceUsdmBookTicker({ b: "1", B: "1", a: "2", A: "1" })).toBeNull();
+      normalizeBinanceUsdmBookTicker({ s: "BTCUSDT", b: "2", B: "1", a: "1", A: "1" }).isErr(),
+    ).toBe(true);
+    expect(normalizeBinanceUsdmBookTicker({ b: "1", B: "1", a: "2", A: "1" }).isErr()).toBe(true);
   });
 });

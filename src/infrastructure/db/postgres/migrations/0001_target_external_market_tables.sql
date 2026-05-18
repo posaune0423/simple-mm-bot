@@ -115,10 +115,10 @@ BEGIN
       asks_json,
       sequence,
       raw_json
-    FROM market_data_order_book_snapshots
+    FROM public.market_data_order_book_snapshots
     ON CONFLICT DO NOTHING;
 
-    DROP TABLE market_data_order_book_snapshots CASCADE;
+    DROP TABLE public.market_data_order_book_snapshots CASCADE;
   END IF;
 END $$;
 
@@ -150,10 +150,10 @@ BEGIN
       side,
       aggressor_side,
       raw_json
-    FROM market_data_trades
+    FROM public.market_data_trades
     ON CONFLICT DO NOTHING;
 
-    DROP TABLE market_data_trades CASCADE;
+    DROP TABLE public.market_data_trades CASCADE;
   END IF;
 END $$;
 
@@ -185,10 +185,10 @@ BEGIN
       funding_rate,
       open_interest,
       raw_json
-    FROM market_data_tickers
+    FROM public.market_data_tickers
     ON CONFLICT DO NOTHING;
 
-    DROP TABLE market_data_tickers CASCADE;
+    DROP TABLE public.market_data_tickers CASCADE;
   END IF;
 END $$;
 

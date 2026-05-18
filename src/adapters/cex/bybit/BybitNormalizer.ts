@@ -1,5 +1,10 @@
-import type { ExternalTopOfBookUpdate } from "../../../domain/external-market/ExternalMarketTypes.ts";
-import { createTopOfBookUpdate } from "../normalization.ts";
+import { err } from "neverthrow";
+
+import {
+  createTopOfBookUpdate,
+  ExternalNormalizationError,
+  type ExternalNormalizationResult,
+} from "../normalization.ts";
 
 type BybitOrderbookPayload = {
   topic?: unknown;
@@ -16,13 +21,16 @@ type BybitOrderbookPayload = {
 
 export function normalizeBybitOrderbook1(
   payload: BybitOrderbookPayload,
-): ExternalTopOfBookUpdate | null {
+): ExternalNormalizationResult {
   const symbol =
     typeof payload.data?.s === "string" ? payload.data.s : symbolFromTopic(payload.topic);
   const bid = payload.data?.b?.[0];
   const ask = payload.data?.a?.[0];
-  if (symbol === undefined || bid === undefined || ask === undefined) {
-    return null;
+  if (symbol === undefined) {
+    return err(new ExternalNormalizationError("missing_symbol", { venue: "bybit_linear" }));
+  }
+  if (bid === undefined || ask === undefined) {
+    return err(new ExternalNormalizationError("missing_book", { venue: "bybit_linear", symbol }));
   }
   return createTopOfBookUpdate({
     venue: "bybit_linear",

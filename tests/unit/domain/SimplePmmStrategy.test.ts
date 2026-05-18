@@ -124,13 +124,12 @@ describe("SimplePmmStrategy", () => {
     ).toBe(true);
   });
 
-  test("treats strict external fair gaps as no-quote instead of strategy failure", () => {
+  test("treats external fair gaps as no-quote instead of strategy failure", () => {
     const engine = new QuoteEngine(
       unusedQuoteModel(),
       new FairPriceCalculator(1, "micro", unavailableFairValueProvider(), {
         enabled: true,
         mode: "replace_local",
-        strict: true,
       }),
       new VolatilityEstimator(),
       {

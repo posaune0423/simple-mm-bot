@@ -1,5 +1,10 @@
-import type { ExternalTopOfBookUpdate } from "../../../domain/external-market/ExternalMarketTypes.ts";
-import { createTopOfBookUpdate } from "../normalization.ts";
+import { err } from "neverthrow";
+
+import {
+  createTopOfBookUpdate,
+  ExternalNormalizationError,
+  type ExternalNormalizationResult,
+} from "../normalization.ts";
 
 type BinanceBookTickerPayload = {
   s?: unknown;
@@ -14,10 +19,10 @@ type BinanceBookTickerPayload = {
 
 export function normalizeBinanceUsdmBookTicker(
   payload: BinanceBookTickerPayload,
-): ExternalTopOfBookUpdate | null {
+): ExternalNormalizationResult {
   const symbol = typeof payload.s === "string" ? payload.s : undefined;
   if (symbol === undefined) {
-    return null;
+    return err(new ExternalNormalizationError("missing_symbol", { venue: "binance_usdm" }));
   }
   return createTopOfBookUpdate({
     venue: "binance_usdm",

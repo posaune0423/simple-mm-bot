@@ -15,11 +15,11 @@ if (!runtime) {
   throw new Error("External market runtime was not built");
 }
 
-for (const disposable of runtime.disposables) {
-  disposable.start?.();
-}
-
 try {
+  for (const disposable of runtime.disposables) {
+    await disposable.start?.();
+  }
+
   let latestSnapshot: ReturnType<typeof runtime.provider.getLatestFairValue> | undefined;
   for (let tick = 1; tick <= maxTicks; tick += 1) {
     await Bun.sleep(1000);
@@ -58,7 +58,7 @@ try {
   }
 } finally {
   for (const disposable of runtime.disposables) {
-    disposable.stop();
+    await disposable.stop();
   }
 }
 

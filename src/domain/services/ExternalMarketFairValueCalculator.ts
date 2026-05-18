@@ -91,9 +91,10 @@ export class ExternalMarketFairValueCalculator {
     }
 
     const totalWeight = filtered.reduce((sum, candidate) => sum + candidate.configuredWeight, 0);
+    const useEqualWeights = !Number.isFinite(totalWeight) || totalWeight <= 0;
     const used = filtered.map(({ configuredWeight, ...candidate }) => ({
       ...candidate,
-      weight: configuredWeight / totalWeight,
+      weight: useEqualWeights ? 1 / filtered.length : configuredWeight / totalWeight,
     }));
 
     return {

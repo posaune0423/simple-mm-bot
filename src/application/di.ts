@@ -53,6 +53,7 @@ interface Repositories {
   ohlcvRepository: IOhlcvRepository;
   metricsRepository: IMetricsRepository;
   markoutFeedbackRepository?: IMarkoutFeedbackRepository;
+  close: () => Promise<void>;
 }
 
 interface ResolvedAdapters {
@@ -60,7 +61,10 @@ interface ResolvedAdapters {
   gateway: IOrderGateway;
 }
 
-type RuntimeDisposable = { start?: () => void; stop: () => void };
+type RuntimeDisposable = {
+  start?: () => void | Promise<void>;
+  stop: () => void | Promise<void>;
+};
 
 type ExternalMarketRuntime = Readonly<{
   provider: IFairValueProvider;
@@ -78,7 +82,11 @@ export class DIContainer {
     const quoteEngine = this.buildQuoteEngine(externalMarketRuntime?.provider);
     const strategy = this.buildStrategy(quoteEngine);
     const metricsBuffer = this.buildMetricsBuffer();
-    const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
+    const metrics = this.buildMetricsRecorder(
+      repositories.metricsRepository,
+      metricsBuffer,
+      repositories.close,
+    );
     const orderReconciler = new OrderReconciler(gateway, this.orderReconcilerOptions());
 
     return new Bot(
@@ -152,7 +160,6 @@ export class DIContainer {
         {
           enabled: this.config.quoteEngine.externalFair.enabled,
           mode: this.config.quoteEngine.externalFair.mode,
-          strict: this.config.quoteEngine.externalFair.strict,
           localWeight: this.config.quoteEngine.externalFair.localWeight,
         },
       ),
@@ -196,7 +203,9 @@ export class DIContainer {
     });
     const provider = new InMemoryFairValueProvider(store, calculator);
     const subscriptions = config.sources.map(buildExternalMarketSubscription);
-    const subscriptionService = new ExternalMarketSubscriptionService(subscriptions, store);
+    const subscriptionService = new ExternalMarketSubscriptionService(subscriptions, store, {
+      provider,
+    });
     return {
       provider,
       disposables: [subscriptionService],
@@ -236,12 +245,16 @@ export class DIContainer {
     return {
       ohlcvRepository: new PostgresOhlcvRepository(),
       metricsRepository: new PostgresMetricsRepository(client.db),
+      close: async () => {
+        await client.client.end();
+      },
     };
   }
 
   private buildMetricsRecorder(
     repository: IMetricsRepository,
     buffer: MetricsBuffer,
+    close: () => Promise<void>,
   ): MetricsRecorder {
     return new MetricsRecorder(
       repository,
@@ -253,6 +266,7 @@ export class DIContainer {
         strategyName: buildQuoteModel(this.config.quoteEngine.strategy).name,
         configJson: redactConfig(this.config),
         ...getGitMetadata(),
+        close,
       },
       buffer,
     );

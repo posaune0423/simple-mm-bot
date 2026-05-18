@@ -13,7 +13,7 @@ type QuoteDiagnostics = Readonly<{
   basisBps?: number;
   targetInventoryQty?: number;
   inventoryErrorQty?: number;
-  fairPriceSource?: "local" | "external" | "blended" | "local_fallback";
+  fairPriceSource?: "local" | "external" | "blended";
   localFairPrice?: number;
   externalFair?: FairValueSnapshot;
 }>;

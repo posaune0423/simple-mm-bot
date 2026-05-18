@@ -70,11 +70,13 @@ async function main(): Promise<void> {
       const migrationSql = readFileSync(filePath, "utf8");
       const hash = hashesByCreatedAt.get(entry.when) ?? sha256(migrationSql);
 
-      await sql.unsafe(migrationSql, [], { prepare: false });
-      await sql`
-        INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
-        VALUES (${hash}, ${entry.when})
-      `;
+      await sql.begin(async (transaction) => {
+        await transaction.unsafe(migrationSql, [], { prepare: false });
+        await transaction`
+          INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+          VALUES (${hash}, ${entry.when})
+        `;
+      });
       console.info(`applied ${entry.tag}`);
     }
   } finally {

@@ -27,7 +27,10 @@ interface UseCases {
 type TickResult = "continue" | "stop";
 type RiskTickAction = "quote" | "pause_quoting" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
-type RuntimeDisposable = { start?: () => void; stop: () => void };
+type RuntimeDisposable = {
+  start?: () => void | Promise<void>;
+  stop: () => void | Promise<void>;
+};
 
 interface BotStartOptions {
   maxTicks?: number;
@@ -77,7 +80,7 @@ export class Bot {
       if (!this.wasStopRequested()) {
         await this.connectAndSubscribe();
         shouldCleanup = true;
-        this.startRuntimeDisposables();
+        await this.startRuntimeDisposables();
         await this.runLoop(startOptions.maxTicks, startOptions.signal);
       }
     } catch (err) {
@@ -94,7 +97,7 @@ export class Bot {
       if (shouldCleanup || this.marketFeedConnected) {
         closePositionError = await this.cleanup();
       } else {
-        closePositionError = this.stopRuntimeDisposables();
+        closePositionError = await this.stopRuntimeDisposables();
         this.running = false;
       }
       const metricsWithDrain = this.metrics as
@@ -107,6 +110,10 @@ export class Bot {
         Date.now(),
         runError === undefined && closePositionError === undefined ? "completed" : "failed",
       );
+      const closeMetrics = (this.metrics as { close?: unknown } | undefined)?.close;
+      if (typeof closeMetrics === "function") {
+        await closeMetrics.call(this.metrics);
+      }
     }
 
     if (runError !== undefined) {
@@ -420,7 +427,7 @@ export class Bot {
       await this.marketFeed.disconnect();
     });
     this.marketFeedConnected = false;
-    closePositionError ??= this.stopRuntimeDisposables();
+    closePositionError ??= await this.stopRuntimeDisposables();
     for (const unsubscribe of this.unsubscribers.splice(0)) {
       try {
         unsubscribe();
@@ -450,17 +457,17 @@ export class Bot {
     return this.options.closePositionPolicy === "always" || this.emergencyStopRequested;
   }
 
-  private startRuntimeDisposables(): void {
+  private async startRuntimeDisposables(): Promise<void> {
     for (const disposable of this.options.runtimeDisposables ?? []) {
-      disposable.start?.();
+      await disposable.start?.();
     }
   }
 
-  private stopRuntimeDisposables(): unknown {
+  private async stopRuntimeDisposables(): Promise<unknown> {
     let firstError: unknown;
     for (const disposable of this.options.runtimeDisposables ?? []) {
       try {
-        disposable.stop();
+        await disposable.stop();
       } catch (error) {
         firstError ??= error;
         logger.error(

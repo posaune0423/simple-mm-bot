@@ -3,6 +3,22 @@ import type {
   ExternalTopOfBookUpdate,
   ExternalVenueId,
 } from "../../domain/external-market/ExternalMarketTypes.ts";
+import { err, ok, type Result } from "neverthrow";
+
+export class ExternalNormalizationError extends Error {
+  constructor(
+    readonly reason: "missing_symbol" | "missing_book" | "invalid_bbo",
+    readonly context: Readonly<Record<string, unknown>>,
+  ) {
+    super(`External market payload normalization failed: ${reason}`);
+    this.name = "ExternalNormalizationError";
+  }
+}
+
+export type ExternalNormalizationResult = Result<
+  ExternalTopOfBookUpdate,
+  ExternalNormalizationError
+>;
 
 export function topOfBookRecordFromUpdate(
   update: ExternalTopOfBookUpdate,
@@ -31,23 +47,36 @@ export function createTopOfBookUpdate(params: {
   exchangeTime?: unknown;
   sequence?: unknown;
   raw?: unknown;
-}): ExternalTopOfBookUpdate | null {
+}): ExternalNormalizationResult {
   const bidPrice = parseFinitePositiveNumber(params.bidPrice);
   const bidSize = parseFinitePositiveNumber(params.bidSize);
   const askPrice = parseFinitePositiveNumber(params.askPrice);
   const askSize = parseFinitePositiveNumber(params.askSize);
-  if (
-    bidPrice === null ||
-    bidSize === null ||
-    askPrice === null ||
-    askSize === null ||
-    bidPrice >= askPrice
-  ) {
-    return null;
+  if (bidPrice === null || bidSize === null || askPrice === null || askSize === null) {
+    return err(
+      new ExternalNormalizationError("invalid_bbo", {
+        venue: params.venue,
+        symbol: params.symbol,
+        bidPrice: params.bidPrice,
+        bidSize: params.bidSize,
+        askPrice: params.askPrice,
+        askSize: params.askSize,
+      }),
+    );
+  }
+  if (bidPrice >= askPrice) {
+    return err(
+      new ExternalNormalizationError("invalid_bbo", {
+        venue: params.venue,
+        symbol: params.symbol,
+        bidPrice,
+        askPrice,
+      }),
+    );
   }
 
   const exchangeTime = parseOptionalInteger(params.exchangeTime);
-  return {
+  return ok({
     venue: params.venue,
     symbol: params.symbol,
     exchangeTime,
@@ -58,7 +87,7 @@ export function createTopOfBookUpdate(params: {
     askSize,
     sequence: stringifySequence(params.sequence),
     raw: params.raw,
-  };
+  });
 }
 
 function externalTopOfBookId(update: ExternalTopOfBookUpdate): string {

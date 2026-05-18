@@ -47,7 +47,7 @@ const service = new ExternalMarketSubscriptionService(
   } satisfies IExternalMarketTopOfBookWriter,
 );
 
-service.start();
+await service.start();
 const startedAt = Date.now();
 const timer = setInterval(() => {
   const nowMs = Date.now();

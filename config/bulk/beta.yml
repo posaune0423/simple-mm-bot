@@ -65,7 +65,6 @@ quoteEngine:
   externalFair:
     enabled: false
     mode: replace_local
-    strict: true
     maxAgeMs: 500
     minSourceCount: 2
     maxSpreadBps: 10

@@ -211,9 +211,11 @@ Recorder venues:
 | venue          | client                         | status      |
 | -------------- | ------------------------------ | ----------- |
 | `bulk`         | `BulkMarketDataRecorderClient` | implemented |
-| `binance_usdm` | none                           | fail fast   |
-| `okx_swap`     | none                           | fail fast   |
-| `bybit_linear` | none                           | fail fast   |
+| `binance_usdm` | `externalMarketRecorder`       | implemented |
+| `okx_swap`     | `externalMarketRecorder`       | implemented |
+| `bybit_linear` | `externalMarketRecorder`       | implemented |
+
+External recorder venues subscribe to CEX BBO feeds and write `external_market_*` rows.
 
 ## Tests
 

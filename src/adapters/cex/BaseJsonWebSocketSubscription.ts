@@ -4,11 +4,8 @@ import type {
   ExternalTopOfBookRecordHandler,
   IExternalMarketSubscription,
 } from "../../domain/ports/IExternalMarketSubscription.ts";
-import { topOfBookRecordFromUpdate } from "./normalization.ts";
-import type {
-  ExternalTopOfBookUpdate,
-  ExternalVenueId,
-} from "../../domain/external-market/ExternalMarketTypes.ts";
+import { type ExternalNormalizationResult, topOfBookRecordFromUpdate } from "./normalization.ts";
+import type { ExternalVenueId } from "../../domain/external-market/ExternalMarketTypes.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
@@ -48,7 +45,7 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
   }
 
   protected abstract subscriptionPayload(): string | undefined;
-  protected abstract normalizeMessage(payload: unknown): ExternalTopOfBookUpdate | null;
+  protected abstract normalizeMessage(payload: unknown): ExternalNormalizationResult;
 
   private connect(): void {
     if (this.stopped) {
@@ -78,10 +75,14 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
   private handleMessage(data: unknown): void {
     try {
       const payload = parseJsonPayload(data);
-      const update = this.normalizeMessage(payload);
-      if (update === null) {
+      const normalized = this.normalizeMessage(payload);
+      if (normalized.isErr()) {
+        logger.debug(
+          `[adapter] ExternalMarketSubscription | NORMALIZATION_SKIPPED | venue=${this.venue} symbol=${this.symbol} reason=${normalized.error.reason}`,
+        );
         return;
       }
+      const update = normalized.value;
       this.handlers?.onTopOfBook(update);
       this.handlers?.onRecord?.(topOfBookRecordFromUpdate(update));
     } catch (error) {

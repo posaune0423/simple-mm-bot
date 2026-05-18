@@ -2,16 +2,18 @@ import { describe, expect, test } from "bun:test";
 
 import { ExternalMarketSubscriptionService } from "../../../src/application/services/ExternalMarketSubscriptionService.ts";
 import type { ExternalTopOfBookUpdate } from "../../../src/domain/external-market/ExternalMarketTypes.ts";
+import type { FairValueSnapshot } from "../../../src/domain/external-market/FairValueTypes.ts";
+import type { IFairValueProvider } from "../../../src/domain/ports/IFairValueProvider.ts";
 import type { IExternalMarketSubscription } from "../../../src/domain/ports/IExternalMarketSubscription.ts";
 import type { IExternalMarketTopOfBookWriter } from "../../../src/domain/ports/IExternalMarketTopOfBookStore.ts";
 
 describe("ExternalMarketSubscriptionService", () => {
-  test("starts subscriptions and forwards top-of-book updates to writer", () => {
+  test("starts subscriptions and forwards top-of-book updates to writer", async () => {
     const subscription = new FakeSubscription("binance_usdm", "BTCUSDT");
     const writer = new FakeTopOfBookWriter();
     const service = new ExternalMarketSubscriptionService([subscription], writer);
 
-    service.start();
+    await service.start();
     subscription.emit(topOfBook({ bidPrice: 99, askPrice: 101 }));
 
     expect(subscription.startCount).toBe(1);
@@ -19,7 +21,7 @@ describe("ExternalMarketSubscriptionService", () => {
     expect(writer.updates[0]).toMatchObject({ venue: "binance_usdm", symbol: "BTCUSDT" });
   });
 
-  test("keeps starting other subscriptions when one subscription throws", () => {
+  test("keeps starting other subscriptions when one subscription throws", async () => {
     const failing = new FakeSubscription("binance_usdm", "BTCUSDT", { failStart: true });
     const healthy = new FakeSubscription("okx_swap", "BTC-USDT-SWAP");
     const service = new ExternalMarketSubscriptionService(
@@ -27,13 +29,13 @@ describe("ExternalMarketSubscriptionService", () => {
       new FakeTopOfBookWriter(),
     );
 
-    service.start();
+    await service.start();
 
     expect(failing.startCount).toBe(1);
     expect(healthy.startCount).toBe(1);
   });
 
-  test("stop calls every subscription once and is idempotent", () => {
+  test("stop calls every subscription once and is idempotent", async () => {
     const first = new FakeSubscription("binance_usdm", "BTCUSDT");
     const second = new FakeSubscription("okx_swap", "BTC-USDT-SWAP");
     const service = new ExternalMarketSubscriptionService(
@@ -41,12 +43,34 @@ describe("ExternalMarketSubscriptionService", () => {
       new FakeTopOfBookWriter(),
     );
 
-    service.start();
+    await service.start();
     service.stop();
     service.stop();
 
     expect(first.stopCount).toBe(1);
     expect(second.stopCount).toBe(1);
+  });
+
+  test("waits for a usable fair value snapshot during warmup", async () => {
+    const subscription = new FakeSubscription("binance_usdm", "BTCUSDT");
+    const writer = new FakeTopOfBookWriter();
+    const provider = new FakeFairValueProvider();
+    const service = new ExternalMarketSubscriptionService([subscription], writer, {
+      provider,
+      timeoutMs: 100,
+      pollIntervalMs: 1,
+    });
+
+    const started = service.start();
+    await Bun.sleep(1);
+    expect(provider.callCount).toBeGreaterThan(0);
+    expect(writer.updates).toHaveLength(0);
+
+    subscription.emit(topOfBook({ bidPrice: 99, askPrice: 101 }));
+    provider.markReady();
+    await started;
+
+    expect(subscription.startCount).toBe(1);
   });
 });
 
@@ -84,6 +108,49 @@ class FakeSubscription implements IExternalMarketSubscription {
 
   emit(update: ExternalTopOfBookUpdate): void {
     this.handlers?.onTopOfBook(update);
+  }
+}
+
+class FakeFairValueProvider implements IFairValueProvider {
+  callCount = 0;
+  private ready = false;
+
+  markReady(): void {
+    this.ready = true;
+  }
+
+  getLatestFairValue(nowMs: number): FairValueSnapshot {
+    this.callCount += 1;
+    if (!this.ready) {
+      return {
+        status: "unavailable",
+        computedAt: nowMs,
+        used: [],
+        excluded: [],
+      };
+    }
+    return {
+      status: "degraded",
+      computedAt: nowMs,
+      fairBid: 99,
+      fairAsk: 101,
+      fairMid: 100,
+      minAgeMs: 1,
+      maxAgeMs: 1,
+      used: [
+        {
+          venue: "binance_usdm",
+          symbol: "BTCUSDT",
+          bidPrice: 99,
+          askPrice: 101,
+          midPrice: 100,
+          ageMs: 1,
+          spreadBps: 200,
+          weight: 1,
+        },
+      ],
+      excluded: [],
+    };
   }
 }
 

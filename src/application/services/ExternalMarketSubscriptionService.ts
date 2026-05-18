@@ -1,7 +1,17 @@
 import type { IExternalMarketSubscription } from "../../domain/ports/IExternalMarketSubscription.ts";
 import type { IExternalMarketTopOfBookWriter } from "../../domain/ports/IExternalMarketTopOfBookStore.ts";
+import type { IFairValueProvider } from "../../domain/ports/IFairValueProvider.ts";
 import { stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
+
+type ExternalMarketWarmup = Readonly<{
+  provider: IFairValueProvider;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}>;
+
+const DEFAULT_WARMUP_TIMEOUT_MS = 10_000;
+const DEFAULT_WARMUP_POLL_INTERVAL_MS = 25;
 
 export class ExternalMarketSubscriptionService {
   private started = false;
@@ -9,9 +19,10 @@ export class ExternalMarketSubscriptionService {
   constructor(
     private readonly subscriptions: readonly IExternalMarketSubscription[],
     private readonly writer: IExternalMarketTopOfBookWriter,
+    private readonly warmup?: ExternalMarketWarmup,
   ) {}
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.started) {
       return;
     }
@@ -34,6 +45,7 @@ export class ExternalMarketSubscriptionService {
         );
       }
     }
+    await this.waitForWarmupIfConfigured();
   }
 
   stop(): void {
@@ -51,4 +63,34 @@ export class ExternalMarketSubscriptionService {
       }
     }
   }
+
+  private async waitForWarmupIfConfigured(): Promise<void> {
+    if (this.warmup === undefined) {
+      return;
+    }
+
+    const timeoutMs = this.warmup.timeoutMs ?? DEFAULT_WARMUP_TIMEOUT_MS;
+    const pollIntervalMs = this.warmup.pollIntervalMs ?? DEFAULT_WARMUP_POLL_INTERVAL_MS;
+    const startedAt = Date.now();
+    logger.info(
+      `[application] ExternalMarketSubscriptionService | WARMUP_STARTED | timeoutMs=${timeoutMs}`,
+    );
+
+    while (this.started && Date.now() - startedAt <= timeoutMs) {
+      const snapshot = this.warmup.provider.getLatestFairValue(Date.now());
+      if (snapshot.status !== "unavailable" && Number.isFinite(snapshot.fairMid)) {
+        logger.info(
+          `[application] ExternalMarketSubscriptionService | WARMUP_READY | status=${snapshot.status} used=${snapshot.used.length} maxAgeMs=${snapshot.maxAgeMs}`,
+        );
+        return;
+      }
+      await sleep(pollIntervalMs);
+    }
+
+    throw new Error(`External fair value warmup timed out after ${timeoutMs}ms`);
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
