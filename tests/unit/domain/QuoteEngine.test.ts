@@ -5,6 +5,8 @@ import { ModelQuote } from "../../../src/domain/quote-models/QuoteModel.ts";
 import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalculator.ts";
 import { QuoteEngine } from "../../../src/domain/services/QuoteEngine.ts";
 import { VolatilityEstimator } from "../../../src/domain/services/VolatilityEstimator.ts";
+import type { IFairValueProvider } from "../../../src/domain/ports/IFairValueProvider.ts";
+import type { MarketSnapshot } from "../../../src/domain/ports/IMarketFeed.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 
@@ -190,6 +192,121 @@ describe("QuoteEngine", () => {
     expect(result.isOk()).toBe(true);
     expect(receivedAlpha).toBe(1.5);
   });
+
+  test("uses external fair value diagnostics from FairPriceCalculator", () => {
+    const engine = new QuoteEngine(
+      fixedModel(),
+      new FairPriceCalculator(1, "micro", fairValueProvider(110), {
+        enabled: true,
+        mode: "replace_local",
+        strict: true,
+      }),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 1,
+        timeHorizonSec: 1,
+        minSpreadBps: 2,
+        positionSize: 1,
+      },
+    );
+
+    const result = engine.compute({
+      snapshot: snapshot(),
+      position: position(0),
+      sideSpecs: {
+        bid: sideSpec(),
+        ask: sideSpec(),
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    const quote = result._unsafeUnwrap();
+    expect(Number(quote.fairPrice)).toBe(110);
+    expect(quote.diagnostics.fairPriceSource).toBe("external");
+    expect(quote.diagnostics.localFairPrice).toBe(100);
+    expect(quote.diagnostics.externalFair?.fairMid).toBe(110);
+  });
+
+  test("passes the decision wall-clock time to the external fair provider", () => {
+    let receivedNowMs: number | undefined;
+    const provider: IFairValueProvider = {
+      getLatestFairValue(nowMs) {
+        receivedNowMs = nowMs;
+        return {
+          status: "ready",
+          computedAt: nowMs,
+          fairBid: 109,
+          fairAsk: 111,
+          fairMid: 110,
+          minAgeMs: 10,
+          maxAgeMs: 10,
+          used: [],
+          excluded: [],
+        };
+      },
+    };
+    const engine = new QuoteEngine(
+      fixedModel(),
+      new FairPriceCalculator(1, "micro", provider, {
+        enabled: true,
+        mode: "replace_local",
+        strict: true,
+      }),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 1,
+        timeHorizonSec: 1,
+        minSpreadBps: 2,
+        positionSize: 1,
+      },
+    );
+
+    const result = engine.compute({
+      snapshot: snapshot({ timestamp: 1_700_000_000_000 }),
+      position: position(0),
+      sideSpecs: {
+        bid: sideSpec(),
+        ask: sideSpec(),
+      },
+      nowMs: 1_700_000_000_750,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(receivedNowMs).toBe(1_700_000_000_750);
+  });
+
+  test("returns a no-quote condition when strict external fair value is unavailable", () => {
+    const engine = new QuoteEngine(
+      fixedModel(),
+      new FairPriceCalculator(1, "micro", unavailableFairValueProvider(), {
+        enabled: true,
+        mode: "replace_local",
+        strict: true,
+      }),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 1,
+        timeHorizonSec: 1,
+        minSpreadBps: 2,
+        positionSize: 1,
+      },
+    );
+
+    const result = engine.compute({
+      snapshot: snapshot(),
+      position: position(0),
+      sideSpecs: {
+        bid: sideSpec(),
+        ask: sideSpec(),
+      },
+    });
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      code: "quote_engine.quote_unavailable",
+      message: "external fair value unavailable",
+    });
+  });
 });
 
 function createEngine(): QuoteEngine {
@@ -243,7 +360,7 @@ function position(signedQuantity: number) {
   });
 }
 
-function snapshot() {
+function snapshot(overrides: Partial<MarketSnapshot> = {}): MarketSnapshot {
   return {
     market: "BTC-USD",
     bestBid: 99,
@@ -253,5 +370,37 @@ function snapshot() {
     timestamp: 1,
     marginRatio: 1,
     availableMarginUsd: 100_000,
+    ...overrides,
+  };
+}
+
+function fairValueProvider(fairMid: number): IFairValueProvider {
+  return {
+    getLatestFairValue(nowMs) {
+      return {
+        status: "ready",
+        computedAt: nowMs,
+        fairBid: fairMid - 1,
+        fairAsk: fairMid + 1,
+        fairMid,
+        minAgeMs: 0,
+        maxAgeMs: 0,
+        used: [],
+        excluded: [],
+      };
+    },
+  };
+}
+
+function unavailableFairValueProvider(): IFairValueProvider {
+  return {
+    getLatestFairValue(nowMs) {
+      return {
+        status: "unavailable",
+        computedAt: nowMs,
+        used: [],
+        excluded: [],
+      };
+    },
   };
 }

@@ -9,8 +9,8 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-export const marketDataOrderBookSnapshotsTable = pgTable(
-  "market_data_order_book_snapshots",
+export const targetMarketOrderBooksTable = pgTable(
+  "target_market_order_books",
   {
     id: text("id").notNull(),
     venue: text("venue").notNull(),
@@ -38,8 +38,8 @@ export const marketDataOrderBookSnapshotsTable = pgTable(
   ],
 );
 
-export const marketDataTradesTable = pgTable(
-  "market_data_trades",
+export const targetMarketTradesTable = pgTable(
+  "target_market_trades",
   {
     id: text("id").notNull(),
     venue: text("venue").notNull(),
@@ -65,8 +65,8 @@ export const marketDataTradesTable = pgTable(
   ],
 );
 
-export const marketDataTickersTable = pgTable(
-  "market_data_tickers",
+export const targetMarketTickersTable = pgTable(
+  "target_market_tickers",
   {
     id: text("id").notNull(),
     venue: text("venue").notNull(),
@@ -90,6 +90,96 @@ export const marketDataTickersTable = pgTable(
     index("md_tickers_symbol_received_at_idx").on(table.symbol, table.receivedAt),
   ],
 );
+
+export const externalMarketTopOfBookTable = pgTable(
+  "external_market_top_of_book",
+  {
+    id: text("id").notNull(),
+    venue: text("venue").notNull(),
+    symbol: text("symbol").notNull(),
+    exchangeTime: bigint("exchange_time", { mode: "number" }),
+    receivedAt: bigint("received_at", { mode: "number" }).notNull(),
+    bidPrice: doublePrecision("bid_price").notNull(),
+    bidSize: doublePrecision("bid_size").notNull(),
+    askPrice: doublePrecision("ask_price").notNull(),
+    askSize: doublePrecision("ask_size").notNull(),
+    midPrice: doublePrecision("mid_price").notNull(),
+    microPrice: doublePrecision("micro_price"),
+    spreadBps: doublePrecision("spread_bps").notNull(),
+    sequence: text("sequence"),
+    rawJson: text("raw_json"),
+  },
+  (table) => [
+    uniqueIndex("external_tob_id_received_at_idx").on(table.id, table.receivedAt),
+    index("external_tob_venue_symbol_received_at_idx").on(
+      table.venue,
+      table.symbol,
+      table.receivedAt,
+    ),
+    index("external_tob_symbol_received_at_idx").on(table.symbol, table.receivedAt),
+  ],
+);
+
+export const externalMarketTickersTable = pgTable(
+  "external_market_tickers",
+  {
+    id: text("id").notNull(),
+    venue: text("venue").notNull(),
+    symbol: text("symbol").notNull(),
+    exchangeTime: bigint("exchange_time", { mode: "number" }),
+    receivedAt: bigint("received_at", { mode: "number" }).notNull(),
+    markPrice: doublePrecision("mark_price"),
+    indexPrice: doublePrecision("index_price"),
+    lastPrice: doublePrecision("last_price"),
+    fundingRate: doublePrecision("funding_rate"),
+    openInterest: doublePrecision("open_interest"),
+    rawJson: text("raw_json"),
+  },
+  (table) => [
+    uniqueIndex("external_tickers_id_received_at_idx").on(table.id, table.receivedAt),
+    index("external_tickers_venue_symbol_received_at_idx").on(
+      table.venue,
+      table.symbol,
+      table.receivedAt,
+    ),
+    index("external_tickers_symbol_received_at_idx").on(table.symbol, table.receivedAt),
+  ],
+);
+
+export const externalMarketTradesTable = pgTable(
+  "external_market_trades",
+  {
+    id: text("id").notNull(),
+    venue: text("venue").notNull(),
+    symbol: text("symbol").notNull(),
+    tradeId: text("trade_id"),
+    exchangeTime: bigint("exchange_time", { mode: "number" }),
+    receivedAt: bigint("received_at", { mode: "number" }).notNull(),
+    price: doublePrecision("price").notNull(),
+    quantity: doublePrecision("quantity").notNull(),
+    side: text("side"),
+    aggressorSide: text("aggressor_side"),
+    rawJson: text("raw_json"),
+  },
+  (table) => [
+    uniqueIndex("external_trades_id_received_at_idx").on(table.id, table.receivedAt),
+    index("external_trades_venue_symbol_received_at_idx").on(
+      table.venue,
+      table.symbol,
+      table.receivedAt,
+    ),
+    index("external_trades_symbol_received_at_idx").on(table.symbol, table.receivedAt),
+    uniqueIndex("external_trades_venue_trade_id_received_at_idx").on(
+      table.venue,
+      table.tradeId,
+      table.receivedAt,
+    ),
+  ],
+);
+
+export const marketDataOrderBookSnapshotsTable = targetMarketOrderBooksTable;
+export const marketDataTradesTable = targetMarketTradesTable;
+export const marketDataTickersTable = targetMarketTickersTable;
 
 export const botRunsTable = pgTable("bot_runs", {
   id: text("id").primaryKey(),

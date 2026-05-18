@@ -52,7 +52,7 @@ One bot tick:
 
 ## Market Data Recorder
 
-The market-data recorder is a separate worker:
+The target market recorder is a separate worker:
 
 ```bash
 bun run record:market-data
@@ -65,7 +65,35 @@ It builds:
 - `MarketDataBufferedWriter`
 - a venue-specific `IMarketDataRecorderClient`
 
-The recorder writes only `market_data_*` tables. It does not write bot run facts.
+It writes only `target_market_*` tables. It does not write bot run facts.
+
+The external market recorder is a separate worker:
+
+```bash
+bun run record:external-market
+```
+
+It builds external CEX subscriptions, `ExternalMarketBufferedWriter`, and
+`PostgresExternalMarketRepository`. It writes raw `external_market_*` facts for
+replay and diagnostics.
+
+External feed inspection scripts expose the same subscription path in realtime:
+
+```bash
+bun run probe:external-fair --view tui --refreshMs 1000 --statsWindowMs 5000
+DATABASE_URL=postgresql://... bun run verify:external-recorder --view log --durationMs 30000
+```
+
+The TUI/log rows show the latest BBO, age, spread, rolling receive Hz, rolling
+price-change Hz, average Hz, last price-change age, and `received/price-change`
+counts for each configured external source. TUI mode runs until Ctrl-C when
+`--durationMs` is omitted.
+
+When `quoteEngine.externalFair.enabled=true`, the bot runtime also starts
+external CEX subscriptions and updates `ExternalMarketTopOfBookStore`. The
+quote hot path reads that store synchronously through `IFairValueProvider`; it
+does not perform DB reads, REST calls, WebSocket receives, or JSON parsing while
+computing quotes.
 
 ## Persistence
 
@@ -79,9 +107,12 @@ Schema source of truth:
 
 Table families:
 
-- `market_data_order_book_snapshots`
-- `market_data_trades`
-- `market_data_tickers`
+- `target_market_order_books`
+- `target_market_trades`
+- `target_market_tickers`
+- `external_market_top_of_book`
+- `external_market_tickers`
+- `external_market_trades`
 - `bot_runs`
 - `bot_market_observations`
 - `bot_quote_decisions`
@@ -103,11 +134,31 @@ All time columns are epoch milliseconds in `BIGINT`.
 - `MODE` can override the config file mode.
 - `DATABASE_URL` defaults to local TimescaleDB: `postgresql://mm:mm@127.0.0.1:5432/mm_bot`.
 - `BULK_PRIVATE_KEY` is required only for live Bulk order placement.
+- External public BBO feeds use `quoteEngine.externalFair.sources`.
+- `EXTERNAL_FAIR_ENABLED=true` can enable the configured external fair runtime.
 
 Recorder env:
 
 - `RECORDER_VENUE`
 - `RECORDER_SYMBOL`
+
+External recorder env:
+
+- `EXTERNAL_MARKET_RECORDER_CONFIG_PATH`
+- `EXTERNAL_MARKET_FLUSH_INTERVAL_MS`
+- `EXTERNAL_MARKET_MAX_BATCH_SIZE`
+- `EXTERNAL_MARKET_TOP_OF_BOOK_MODE` (`sampled_latest` by default)
+- `EXTERNAL_MARKET_TOP_OF_BOOK_SAMPLE_INTERVAL_MS` (`250` by default)
+- `EXTERNAL_MARKET_TOP_OF_BOOK_STORE_RAW_JSON` (`false` by default)
+- `BINANCE_USDM_SYMBOL`
+- `OKX_SWAP_SYMBOL`
+- `BYBIT_LINEAR_SYMBOL`
+- `BINANCE_USDM_WS_URL`
+- `OKX_WS_URL`
+- `BYBIT_LINEAR_WS_URL`
+- `BINANCE_USDM_API_KEY` / `BINANCE_API_KEY`
+- `OKX_API_KEY`
+- `BYBIT_API_KEY`
 - `RECORDER_DEPTH`
 - `RECORDER_FLUSH_INTERVAL_MS`
 - `RECORDER_MAX_BATCH_SIZE`

@@ -11,7 +11,9 @@ import { HyperliquidOrderGateway } from "../adapters/hyperliquid/HyperliquidOrde
 import { HistoricalMarketFeed } from "../adapters/paper/HistoricalMarketFeed.ts";
 import { PaperOrderGateway } from "../adapters/paper/PaperOrderGateway.ts";
 import { FairPriceCalculator } from "../domain/services/FairPriceCalculator.ts";
+import { ExternalMarketFairValueCalculator } from "../domain/services/ExternalMarketFairValueCalculator.ts";
 import { QuoteEngine } from "../domain/services/QuoteEngine.ts";
+import type { IFairValueProvider } from "../domain/ports/IFairValueProvider.ts";
 import type { IMarketFeed } from "../domain/ports/IMarketFeed.ts";
 import type { IOhlcvRepository } from "../domain/ports/IOhlcvRepository.ts";
 import type { IOrderGateway } from "../domain/ports/IOrderGateway.ts";
@@ -42,6 +44,10 @@ import { SyncPositionUseCase } from "./usecases/SyncPositionUseCase.ts";
 import { RecordOhlcvUseCase } from "./usecases/RecordOhlcvUseCase.ts";
 import { ReduceInventoryUseCase } from "./usecases/ReduceInventoryUseCase.ts";
 import { UpdatePositionOnFillUseCase } from "./usecases/UpdatePositionOnFillUseCase.ts";
+import { ExternalMarketTopOfBookStore } from "../infrastructure/memory/ExternalMarketTopOfBookStore.ts";
+import { InMemoryFairValueProvider } from "../infrastructure/memory/InMemoryFairValueProvider.ts";
+import { ExternalMarketSubscriptionService } from "./services/ExternalMarketSubscriptionService.ts";
+import { buildExternalMarketSubscription } from "../adapters/cex/ExternalMarketSubscriptionFactory.ts";
 
 interface Repositories {
   ohlcvRepository: IOhlcvRepository;
@@ -54,6 +60,13 @@ interface ResolvedAdapters {
   gateway: IOrderGateway;
 }
 
+type RuntimeDisposable = { start?: () => void; stop: () => void };
+
+type ExternalMarketRuntime = Readonly<{
+  provider: IFairValueProvider;
+  disposables: readonly RuntimeDisposable[];
+}>;
+
 export class DIContainer {
   constructor(private readonly config: LoadedAppConfig) {}
 
@@ -61,7 +74,8 @@ export class DIContainer {
     const repositories = this.createRepositories();
     const positionRepository = new InMemoryPositionRepository();
     const { feed, gateway } = this.resolveAdapters(repositories.ohlcvRepository);
-    const quoteEngine = this.buildQuoteEngine();
+    const externalMarketRuntime = this.buildExternalMarketRuntime();
+    const quoteEngine = this.buildQuoteEngine(externalMarketRuntime?.provider);
     const strategy = this.buildStrategy(quoteEngine);
     const metricsBuffer = this.buildMetricsBuffer();
     const metrics = this.buildMetricsRecorder(repositories.metricsRepository, metricsBuffer);
@@ -122,17 +136,25 @@ export class DIContainer {
       metrics,
       {
         closePositionPolicy: this.config.shutdown.closePositionPolicy,
+        runtimeDisposables: externalMarketRuntime?.disposables,
       },
     );
   }
 
-  private buildQuoteEngine(): QuoteEngine {
+  private buildQuoteEngine(fairValueProvider?: IFairValueProvider): QuoteEngine {
     const quoteModel = buildQuoteModel(this.config.quoteEngine.strategy);
     return new QuoteEngine(
       quoteModel,
       new FairPriceCalculator(
         this.config.quoteEngine.markWeight,
         this.config.quoteEngine.bookPriceSource,
+        fairValueProvider,
+        {
+          enabled: this.config.quoteEngine.externalFair.enabled,
+          mode: this.config.quoteEngine.externalFair.mode,
+          strict: this.config.quoteEngine.externalFair.strict,
+          localWeight: this.config.quoteEngine.externalFair.localWeight,
+        },
       ),
       new VolatilityEstimator(),
       {
@@ -152,6 +174,33 @@ export class DIContainer {
         levels: this.config.quoteEngine.levels,
       },
     );
+  }
+
+  buildExternalMarketRuntime(): ExternalMarketRuntime | undefined {
+    const config = this.config.quoteEngine.externalFair;
+    if (!config.enabled || config.mode === "disabled") {
+      return undefined;
+    }
+    if (config.sources.length < config.minSourceCount) {
+      throw new Error(
+        `externalFair requires at least minSourceCount sources: minSourceCount=${config.minSourceCount} sources=${config.sources.length}`,
+      );
+    }
+    const store = new ExternalMarketTopOfBookStore(config.sources);
+    const calculator = new ExternalMarketFairValueCalculator({
+      sources: config.sources,
+      maxAgeMs: config.maxAgeMs,
+      minSourceCount: config.minSourceCount,
+      maxSpreadBps: config.maxSpreadBps,
+      maxDeviationBps: config.maxDeviationBps,
+    });
+    const provider = new InMemoryFairValueProvider(store, calculator);
+    const subscriptions = config.sources.map(buildExternalMarketSubscription);
+    const subscriptionService = new ExternalMarketSubscriptionService(subscriptions, store);
+    return {
+      provider,
+      disposables: [subscriptionService],
+    };
   }
 
   private buildStrategy(quoteEngine: Pick<QuoteEngine, "compute">) {

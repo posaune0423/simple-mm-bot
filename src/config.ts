@@ -59,6 +59,42 @@ const markoutFeedbackGateSchema = v.optional(
     horizonsSec: [5, 30, 300],
   },
 );
+const externalVenueSchema = v.picklist(["binance_usdm", "okx_swap", "bybit_linear"]);
+const externalFairSourceSchema = v.object({
+  venue: externalVenueSchema,
+  symbol: nonEmptyStringSchema,
+  weight: positiveNumberSchema,
+  wsUrl: urlStringSchema,
+  channel: nonEmptyStringSchema,
+  reconnectDelayMs: v.optional(positiveIntegerSchema, 1_000),
+  apiKey: v.optional(v.string()),
+});
+const externalFairSchema = v.optional(
+  v.object({
+    enabled: v.optional(v.boolean(), false),
+    mode: v.optional(
+      v.picklist(["disabled", "replace_local", "blend_with_local"]),
+      "replace_local",
+    ),
+    strict: v.optional(v.boolean(), true),
+    maxAgeMs: v.optional(positiveIntegerSchema, 500),
+    minSourceCount: v.optional(positiveIntegerSchema, 2),
+    maxSpreadBps: v.optional(positiveNumberSchema, 10),
+    maxDeviationBps: v.optional(positiveNumberSchema, 20),
+    localWeight: v.optional(zeroToOneNumberSchema),
+    sources: v.optional(v.array(externalFairSourceSchema), []),
+  }),
+  {
+    enabled: false,
+    mode: "replace_local" as const,
+    strict: true,
+    maxAgeMs: 500,
+    minSourceCount: 2,
+    maxSpreadBps: 10,
+    maxDeviationBps: 20,
+    sources: [],
+  },
+);
 
 const avellanedaStoikovParamsSchema = v.object({
   gamma: v.pipe(v.number(), v.minValue(0), v.maxValue(0.5)),
@@ -143,6 +179,7 @@ const commonConfigEntries = {
     sizing: quoteSizingSchema,
     levels: v.optional(v.pipe(v.array(quoteLevelSchema), v.minLength(1))),
     qualityGate: markoutFeedbackGateSchema,
+    externalFair: externalFairSchema,
     strategy: strategySchema,
   }),
   risk: v.object({
@@ -279,6 +316,14 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
     .with({ venue: "bulk" }, (bulkConfig) => ({
       ...bulkConfig,
       mode: (envValue("MODE") as AppMode | undefined) ?? bulkConfig.mode,
+      quoteEngine: {
+        ...bulkConfig.quoteEngine,
+        externalFair: {
+          ...bulkConfig.quoteEngine.externalFair,
+          enabled:
+            parseBooleanEnv("EXTERNAL_FAIR_ENABLED") ?? bulkConfig.quoteEngine.externalFair.enabled,
+        },
+      },
       connections: {
         bulk: {
           ...bulkConfig.connections.bulk,
@@ -289,6 +334,15 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
     .with({ venue: "hyperliquid" }, (hyperliquidConfig) => ({
       ...hyperliquidConfig,
       mode: (envValue("MODE") as AppMode | undefined) ?? hyperliquidConfig.mode,
+      quoteEngine: {
+        ...hyperliquidConfig.quoteEngine,
+        externalFair: {
+          ...hyperliquidConfig.quoteEngine.externalFair,
+          enabled:
+            parseBooleanEnv("EXTERNAL_FAIR_ENABLED") ??
+            hyperliquidConfig.quoteEngine.externalFair.enabled,
+        },
+      },
       connections: {
         hyperliquid: {
           ...hyperliquidConfig.connections.hyperliquid,
@@ -303,6 +357,14 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
       },
     }))
     .exhaustive();
+}
+
+function parseBooleanEnv(name: string): boolean | undefined {
+  const value = envValue(name);
+  if (value === undefined) {
+    return undefined;
+  }
+  return value === "1" || value.toLowerCase() === "true";
 }
 
 function normalizeConfig(config: AppConfig): LoadedAppConfig {

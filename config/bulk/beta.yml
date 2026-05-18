@@ -62,6 +62,33 @@ quoteEngine:
     lookbackFills: 40
     maxFillAgeMs: 600000
     horizonsSec: [5, 30, 300]
+  externalFair:
+    enabled: false
+    mode: replace_local
+    strict: true
+    maxAgeMs: 500
+    minSourceCount: 2
+    maxSpreadBps: 10
+    maxDeviationBps: 20
+    sources:
+      - venue: binance_usdm
+        symbol: BTCUSDT
+        weight: 0.5
+        wsUrl: wss://fstream.binance.com
+        channel: bookTicker
+        reconnectDelayMs: 1000
+      - venue: okx_swap
+        symbol: BTC-USDT-SWAP
+        weight: 0.3
+        wsUrl: wss://ws.okx.com:8443/ws/v5/public
+        channel: bbo-tbt
+        reconnectDelayMs: 1000
+      - venue: bybit_linear
+        symbol: BTCUSDT
+        weight: 0.2
+        wsUrl: wss://stream.bybit.com/v5/public/linear
+        channel: orderbook.1
+        reconnectDelayMs: 1000
   strategy:
     type: avellaneda-stoikov
     params:

@@ -28,7 +28,7 @@ describePostgres("PostgresMarketDataRepository", () => {
   });
 
   beforeEach(async () => {
-    await client.client`TRUNCATE market_data_order_book_snapshots, market_data_trades, market_data_tickers`;
+    await client.client`TRUNCATE target_market_order_books, target_market_trades, target_market_tickers`;
   });
 
   afterAll(async () => {

@@ -47,6 +47,16 @@ function config(
         lookbackFills: 100,
         horizonsSec: [5, 30, 300],
       },
+      externalFair: {
+        enabled: false,
+        mode: "replace_local",
+        strict: true,
+        maxAgeMs: 500,
+        minSourceCount: 2,
+        maxSpreadBps: 10,
+        maxDeviationBps: 20,
+        sources: [],
+      },
       strategy,
     },
     risk: { imrBuffer: 0.15, mmrBuffer: 0.08, maxPositionQty: 0.05 },
@@ -156,5 +166,90 @@ describe("DIContainer Bulk venue", () => {
     };
 
     expect(internals.metrics.options.strategyName).toBe("avellaneda-stoikov");
+  });
+
+  test("does not attach external market runtime when externalFair is disabled", async () => {
+    const bot = await new DIContainer(config("paper")).buildBot();
+    const internals = bot as unknown as {
+      options: { runtimeDisposables?: readonly unknown[] };
+    };
+
+    expect(internals.options.runtimeDisposables).toBeUndefined();
+  });
+
+  test("attaches external market runtime when externalFair is enabled", async () => {
+    const appConfig = config("paper");
+    appConfig.quoteEngine.externalFair = {
+      enabled: true,
+      mode: "replace_local",
+      strict: true,
+      maxAgeMs: 500,
+      minSourceCount: 2,
+      maxSpreadBps: 10,
+      maxDeviationBps: 20,
+      sources: [
+        {
+          venue: "binance_usdm",
+          symbol: "BTCUSDT",
+          weight: 0.6,
+          wsUrl: "wss://fstream.binance.com",
+          channel: "bookTicker",
+          reconnectDelayMs: 1_000,
+        },
+        {
+          venue: "okx_swap",
+          symbol: "BTC-USDT-SWAP",
+          weight: 0.4,
+          wsUrl: "wss://ws.okx.com:8443/ws/v5/public",
+          channel: "bbo-tbt",
+          reconnectDelayMs: 1_000,
+        },
+      ],
+    };
+
+    const bot = await new DIContainer(appConfig).buildBot();
+    const internals = bot as unknown as {
+      options: { runtimeDisposables?: readonly unknown[] };
+    };
+
+    expect(internals.options.runtimeDisposables).toHaveLength(1);
+    expect(internals.options.runtimeDisposables?.[0]?.constructor.name).toBe(
+      "ExternalMarketSubscriptionService",
+    );
+  });
+
+  test("rejects externalFair config with fewer sources than minSourceCount", async () => {
+    const appConfig = config("paper");
+    appConfig.quoteEngine.externalFair = {
+      enabled: true,
+      mode: "replace_local",
+      strict: true,
+      maxAgeMs: 500,
+      minSourceCount: 2,
+      maxSpreadBps: 10,
+      maxDeviationBps: 20,
+      sources: [
+        {
+          venue: "binance_usdm",
+          symbol: "BTCUSDT",
+          weight: 1,
+          wsUrl: "wss://fstream.binance.com",
+          channel: "bookTicker",
+          reconnectDelayMs: 1_000,
+        },
+      ],
+    };
+
+    await new DIContainer(appConfig).buildBot().then(
+      () => {
+        throw new Error("Expected externalFair source validation to reject");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain(
+          "externalFair requires at least minSourceCount sources",
+        );
+      },
+    );
   });
 });

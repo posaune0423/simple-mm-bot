@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "neverthrow";
 import { EmptyQuoteError, InvalidQuoteError, type DomainError } from "../errors/DomainError";
+import type { FairValueSnapshot } from "../external-market/FairValueTypes";
 import type { Price } from "./Price";
 import type { QuoteLeg } from "./QuoteLeg";
 
@@ -12,6 +13,9 @@ type QuoteDiagnostics = Readonly<{
   basisBps?: number;
   targetInventoryQty?: number;
   inventoryErrorQty?: number;
+  fairPriceSource?: "local" | "external" | "blended" | "local_fallback";
+  localFairPrice?: number;
+  externalFair?: FairValueSnapshot;
 }>;
 
 export type Quote = Readonly<{

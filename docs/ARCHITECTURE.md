@@ -11,38 +11,52 @@ flowchart TD
     Bot --> Feed["IMarketFeed"]
     Bot --> Gateway["IOrderGateway"]
     Bot --> Metrics["MetricsRecorder"]
+    Bot --> ExternalStore["ExternalMarketTopOfBookStore"]
+    ExternalStore --> FairValue["IFairValueProvider"]
+    FairValue --> Bot
     Metrics --> BotRepo["PostgresMetricsRepository"]
     BotRepo --> BotTables[("bot_* tables")]
 
     Feed --> BulkAPI["Bulk API / WS"]
     Gateway --> BulkAPI
+    ExternalCEX["Binance / OKX / Bybit public WS"] --> ExternalStore
 ```
 
-## Market Data Recorder
+## Market Data Recorders
 
 ```mermaid
 flowchart LR
     BulkWS["Bulk public WS/HTTP"] --> Client["BulkMarketDataRecorderClient"]
     Client --> Writer["MarketDataBufferedWriter"]
     Writer --> Repo["PostgresMarketDataRepository"]
-    Repo --> MarketTables[("market_data_* tables")]
+    Repo --> TargetMarketTables[("target_market_* tables")]
+
+    CEXWS["Binance / OKX / Bybit public WS"] --> ExternalSubs["External CEX subscriptions"]
+    ExternalSubs --> ExternalWriter["ExternalMarketBufferedWriter"]
+    ExternalWriter --> ExternalRepo["PostgresExternalMarketRepository"]
+    ExternalRepo --> ExternalMarketTables[("external_market_* tables")]
 ```
 
-The recorder is a separate process from the bot. It writes only venue market facts.
+Recorders are separate processes from the bot. They write only public market
+facts.
 
 ## Database Separation
 
 ```mermaid
 flowchart TD
-    VenueFeed["Venue public feed"] --> MarketData["market_data_*"]
+    TargetFeed["Target venue public feed"] --> TargetMarket["target_market_*"]
+    ExternalFeed["External CEX public feed"] --> ExternalMarket["external_market_*"]
     BotRuntime["Bot runtime"] --> BotFacts["bot_*"]
-    MarketData --> QuoteView["analytics_quote_markouts"]
-    MarketData --> FillView["analytics_fill_markouts"]
+    TargetMarket --> QuoteView["analytics_quote_markouts"]
+    TargetMarket --> FillView["analytics_fill_markouts"]
+    ExternalMarket --> FairReplay["fair-value replay / diagnostics"]
     BotFacts --> QuoteView
     BotFacts --> FillView
 ```
 
-`market_data_*` answers what the venue showed. `bot_*` answers what the bot observed, decided, submitted, and filled.
+`target_market_*` answers what the MM target venue showed.
+`external_market_*` answers what external CEX venues showed for fair-value
+context. `bot_*` answers what the bot observed, decided, submitted, and filled.
 
 ## Venue And Mode Matrix
 

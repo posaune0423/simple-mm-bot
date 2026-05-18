@@ -2,8 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import { EmptyQuoteError, InvalidQuoteError } from "../../../src/domain/errors/DomainError.ts";
+import type { QuoteModel } from "../../../src/domain/quote-models/QuoteModel.ts";
+import type { IFairValueProvider } from "../../../src/domain/ports/IFairValueProvider.ts";
+import { FairPriceCalculator } from "../../../src/domain/services/FairPriceCalculator.ts";
+import { QuoteEngine } from "../../../src/domain/services/QuoteEngine.ts";
 import { SimplePmmStrategy } from "../../../src/domain/strategies/SimplePmmStrategy.ts";
 import { StrategyDecision } from "../../../src/domain/strategies/Strategy.ts";
+import { VolatilityEstimator } from "../../../src/domain/services/VolatilityEstimator.ts";
 import { PositionSnapshot } from "../../../src/domain/value-objects/PositionSnapshot.ts";
 import { Price } from "../../../src/domain/value-objects/Price.ts";
 import { Quantity } from "../../../src/domain/value-objects/Quantity.ts";
@@ -115,6 +120,41 @@ describe("SimplePmmStrategy", () => {
         quote: () => false,
         noQuote: ({ cancelExisting, reasonTags }) =>
           cancelExisting && reasonTags.includes("empty_quote"),
+      }),
+    ).toBe(true);
+  });
+
+  test("treats strict external fair gaps as no-quote instead of strategy failure", () => {
+    const engine = new QuoteEngine(
+      unusedQuoteModel(),
+      new FairPriceCalculator(1, "micro", unavailableFairValueProvider(), {
+        enabled: true,
+        mode: "replace_local",
+        strict: true,
+      }),
+      new VolatilityEstimator(),
+      {
+        inventoryScale: 1,
+        timeHorizonSec: 1,
+        minSpreadBps: 2,
+        positionSize: 1,
+      },
+    );
+    const strategy = new SimplePmmStrategy(engine);
+
+    const result = strategy.decide({
+      snapshot: snapshot(),
+      position: position(0),
+      markoutFeedback: [],
+      nowMs: 1_700_000_000_750,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(
+      StrategyDecision.match(result._unsafeUnwrap(), {
+        quote: () => false,
+        noQuote: ({ cancelExisting, reasonTags }) =>
+          cancelExisting && reasonTags.includes("external_fair_unavailable"),
       }),
     ).toBe(true);
   });
@@ -521,6 +561,28 @@ function position(signedQuantity: number) {
     averageEntryPrice: null,
     unrealizedPnl: null,
   });
+}
+
+function unusedQuoteModel(): QuoteModel {
+  return {
+    name: "unused_test_model",
+    compute() {
+      throw new Error("external fair unavailability should stop before quote model computation");
+    },
+  };
+}
+
+function unavailableFairValueProvider(): IFairValueProvider {
+  return {
+    getLatestFairValue(nowMs) {
+      return {
+        status: "unavailable",
+        computedAt: nowMs,
+        used: [],
+        excluded: [],
+      };
+    },
+  };
 }
 
 function snapshot() {

@@ -8,6 +8,13 @@
       "when": 1778889600000,
       "tag": "0000_timescale_market_data_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779085200000,
+      "tag": "0001_target_external_market_tables",
+      "breakpoints": true
     }
   ]
 }

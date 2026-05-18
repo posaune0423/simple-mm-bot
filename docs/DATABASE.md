@@ -6,11 +6,11 @@ Venue market facts and bot execution facts are stored separately.
 
 ## Database 一覧
 
-| DB            | Path / URL                | Owner                           | 内容                                                               |
-| ------------- | ------------------------- | ------------------------------- | ------------------------------------------------------------------ |
-| Primary DB    | `postgresql://.../mm_bot` | bot runtime, recorder, backtest | TimescaleDB/PostgreSQL primary store for market data and bot facts |
-| Docker volume | `data/timescaledb/`       | `docker compose` `timescaledb`  | Local PGDATA for the development TimescaleDB container             |
-| Analytics     | `analytics_*` SQL views   | PostgreSQL view definitions     | Markout views derived from `market_data_*` and `bot_*` fact tables |
+| DB            | Path / URL                | Owner                           | 内容                                                                                   |
+| ------------- | ------------------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
+| Primary DB    | `postgresql://.../mm_bot` | bot runtime, recorder, backtest | TimescaleDB/PostgreSQL primary store for market data and bot facts                     |
+| Docker volume | `data/timescaledb/`       | `docker compose` `timescaledb`  | Local PGDATA for the development TimescaleDB container                                 |
+| Analytics     | `analytics_*` SQL views   | PostgreSQL view definitions     | Markout views derived from `target_market_*/external_market_*` and `bot_*` fact tables |
 
 `DATABASE_URL` must start with `postgres://` or `postgresql://`.
 All time columns are epoch milliseconds stored as `BIGINT`.
@@ -30,18 +30,22 @@ layout.
 
 ## Market Data Table Roles
 
-| Table                              | Writer                      | Time column   | Role                                                         |
-| ---------------------------------- | --------------------------- | ------------- | ------------------------------------------------------------ |
-| `market_data_order_book_snapshots` | market-data recorder worker | `received_at` | Venue L2 order book snapshots normalized for replay/markouts |
-| `market_data_trades`               | market-data recorder worker | `received_at` | Venue public trade prints                                    |
-| `market_data_tickers`              | market-data recorder worker | `received_at` | Mark/index/last/funding/open-interest facts when available   |
+| Table                         | Writer                          | Time column   | Role                                                               |
+| ----------------------------- | ------------------------------- | ------------- | ------------------------------------------------------------------ |
+| `target_market_order_books`   | target market recorder worker   | `received_at` | MM target venue L2 order book snapshots for replay/markouts        |
+| `target_market_trades`        | target market recorder worker   | `received_at` | MM target venue public trade prints                                |
+| `target_market_tickers`       | target market recorder worker   | `received_at` | MM target venue mark/index/last/funding/open-interest facts        |
+| `external_market_top_of_book` | external market recorder worker | `received_at` | External CEX BBO facts for fair-value reconstruction and diagnosis |
+| `external_market_tickers`     | external market recorder worker | `received_at` | External CEX mark/index/funding/open-interest facts                |
+| `external_market_trades`      | external market recorder worker | `received_at` | Optional external CEX trade prints                                 |
 
-The market-data recorder writes only `market_data_*` rows. It must not write
-`bot_*` execution rows.
+Target and external market recorders write only market fact rows. They must
+not write `bot_*` execution rows. Fair value itself is not persisted here; it
+is derived from raw external market facts plus strategy config.
 
 ## Table Details
 
-### `market_data_order_book_snapshots`
+### `target_market_order_books`
 
 Venue L2 book snapshots observed by the recorder.
 
@@ -72,7 +76,7 @@ Venue L2 book snapshots observed by the recorder.
 | `md_book_venue_symbol_received_at_idx` | No     | `venue`, `symbol`, `received_at` | Main replay and markout lookup path by venue, symbol, and time.                           |
 | `md_book_symbol_received_at_idx`       | No     | `symbol`, `received_at`          | Symbol-level time scans across venues.                                                    |
 
-### `market_data_trades`
+### `target_market_trades`
 
 Venue public trade prints observed by the recorder.
 
@@ -97,7 +101,7 @@ Venue public trade prints observed by the recorder.
 | `md_trades_symbol_received_at_idx`         | No     | `symbol`, `received_at`            | Symbol-level time scans across venues.                                                     |
 | `md_trades_venue_trade_id_received_at_idx` | Yes    | `venue`, `trade_id`, `received_at` | Avoid duplicate venue trade ids at the same observed time.                                 |
 
-### `market_data_tickers`
+### `target_market_tickers`
 
 Ticker, mark, index, funding, and open-interest facts observed by the recorder.
 
@@ -120,6 +124,36 @@ Ticker, mark, index, funding, and open-interest facts observed by the recorder.
 | `md_tickers_id_received_at_idx`           | Yes    | `id`, `received_at`              | Deduplicate ticker rows while satisfying TimescaleDB unique-index time-column requirements. |
 | `md_tickers_venue_symbol_received_at_idx` | No     | `venue`, `symbol`, `received_at` | Query tickers by venue, symbol, and time.                                                   |
 | `md_tickers_symbol_received_at_idx`       | No     | `symbol`, `received_at`          | Symbol-level time scans across venues.                                                      |
+
+### `external_market_top_of_book`
+
+External CEX BBO facts observed by the external market recorder.
+
+| Column          | Type               | Null | Default | Description                                                                |
+| --------------- | ------------------ | ---- | ------- | -------------------------------------------------------------------------- |
+| `id`            | `TEXT`             | No   | -       | Recorder-generated BBO row id. Unique with `received_at` for TimescaleDB.  |
+| `venue`         | `TEXT`             | No   | -       | External venue, for example `binance_usdm`, `okx_swap`, or `bybit_linear`. |
+| `symbol`        | `TEXT`             | No   | -       | External venue symbol.                                                     |
+| `exchange_time` | `BIGINT`           | Yes  | -       | Venue-provided event time in epoch milliseconds when available.            |
+| `received_at`   | `BIGINT`           | No   | -       | Local recorder receive time in epoch milliseconds. Hypertable time column. |
+| `bid_price`     | `DOUBLE PRECISION` | No   | -       | Best bid price.                                                            |
+| `bid_size`      | `DOUBLE PRECISION` | No   | -       | Best bid quantity.                                                         |
+| `ask_price`     | `DOUBLE PRECISION` | No   | -       | Best ask price.                                                            |
+| `ask_size`      | `DOUBLE PRECISION` | No   | -       | Best ask quantity.                                                         |
+| `mid_price`     | `DOUBLE PRECISION` | No   | -       | `(bid_price + ask_price) / 2`.                                             |
+| `micro_price`   | `DOUBLE PRECISION` | Yes  | -       | BBO size-weighted microprice when computable.                              |
+| `spread_bps`    | `DOUBLE PRECISION` | No   | -       | BBO spread in basis points.                                                |
+| `sequence`      | `TEXT`             | Yes  | -       | Venue sequence or update id when available.                                |
+| `raw_json`      | `TEXT`             | Yes  | -       | Raw venue payload serialized as JSON when retained.                        |
+
+### `external_market_tickers`
+
+External CEX ticker facts used for future basis or funding-aware logic. The
+columns match `target_market_tickers`.
+
+### `external_market_trades`
+
+Optional external CEX trade prints. The columns match `target_market_trades`.
 
 ### `bot_runs`
 
@@ -289,7 +323,7 @@ Venue fills observed by the bot or fills simulated by future replay/backtest pat
 
 ```mermaid
 erDiagram
-  market_data_order_book_snapshots {
+  target_market_order_books {
     text id
     text venue
     text symbol
@@ -310,7 +344,7 @@ erDiagram
     text raw_json
   }
 
-  market_data_trades {
+  target_market_trades {
     text id
     text venue
     text symbol
@@ -324,7 +358,52 @@ erDiagram
     text raw_json
   }
 
-  market_data_tickers {
+  target_market_tickers {
+    text id
+    text venue
+    text symbol
+    bigint exchange_time
+    bigint received_at
+    double mark_price
+    double index_price
+    double last_price
+    double funding_rate
+    double open_interest
+    text raw_json
+  }
+
+  external_market_top_of_book {
+    text id
+    text venue
+    text symbol
+    bigint exchange_time
+    bigint received_at
+    double bid_price
+    double bid_size
+    double ask_price
+    double ask_size
+    double mid_price
+    double micro_price
+    double spread_bps
+    text sequence
+    text raw_json
+  }
+
+  external_market_trades {
+    text id
+    text venue
+    text symbol
+    text trade_id
+    bigint exchange_time
+    bigint received_at
+    double price
+    double quantity
+    text side
+    text aggressor_side
+    text raw_json
+  }
+
+  external_market_tickers {
     text id
     text venue
     text symbol
@@ -341,19 +420,39 @@ erDiagram
 
 Index summary:
 
-| Table                              | Indexes                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `market_data_order_book_snapshots` | `md_book_id_received_at_idx`, `md_book_venue_symbol_received_at_idx`, `md_book_symbol_received_at_idx`                                                   |
-| `market_data_trades`               | `md_trades_id_received_at_idx`, `md_trades_venue_symbol_received_at_idx`, `md_trades_symbol_received_at_idx`, `md_trades_venue_trade_id_received_at_idx` |
-| `market_data_tickers`              | `md_tickers_id_received_at_idx`, `md_tickers_venue_symbol_received_at_idx`, `md_tickers_symbol_received_at_idx`                                          |
+| Table                         | Indexes                                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `target_market_order_books`   | `md_book_id_received_at_idx`, `md_book_venue_symbol_received_at_idx`, `md_book_symbol_received_at_idx`                                                       |
+| `target_market_trades`        | `md_trades_id_received_at_idx`, `md_trades_venue_symbol_received_at_idx`, `md_trades_symbol_received_at_idx`, `md_trades_venue_trade_id_received_at_idx`     |
+| `target_market_tickers`       | `md_tickers_id_received_at_idx`, `md_tickers_venue_symbol_received_at_idx`, `md_tickers_symbol_received_at_idx`                                              |
+| `external_market_top_of_book` | `external_tob_id_received_at_idx`, `external_tob_venue_symbol_received_at_idx`, `external_tob_symbol_received_at_idx`                                        |
+| `external_market_trades`      | `ext_trades_id_received_at_idx`, `ext_trades_venue_symbol_received_at_idx`, `ext_trades_symbol_received_at_idx`, `ext_trades_venue_trade_id_received_at_idx` |
+| `external_market_tickers`     | `ext_tickers_id_received_at_idx`, `ext_tickers_venue_symbol_received_at_idx`, `ext_tickers_symbol_received_at_idx`                                           |
 
 Hypertables:
 
-| Table                              | Time column   | Chunk interval |
-| ---------------------------------- | ------------- | -------------- |
-| `market_data_order_book_snapshots` | `received_at` | `21600000` ms  |
-| `market_data_trades`               | `received_at` | `86400000` ms  |
-| `market_data_tickers`              | `received_at` | `86400000` ms  |
+| Table                         | Time column   | Chunk interval |
+| ----------------------------- | ------------- | -------------- |
+| `target_market_order_books`   | `received_at` | `21600000` ms  |
+| `target_market_trades`        | `received_at` | `86400000` ms  |
+| `target_market_tickers`       | `received_at` | `86400000` ms  |
+| `external_market_top_of_book` | `received_at` | `21600000` ms  |
+| `external_market_trades`      | `received_at` | `86400000` ms  |
+| `external_market_tickers`     | `received_at` | `86400000` ms  |
+
+Low-cost default retention:
+
+| Table family                                                                | Drop after |
+| --------------------------------------------------------------------------- | ---------- |
+| `external_market_top_of_book`                                               | `7d`       |
+| `target_market_order_books`                                                 | `14d`      |
+| `target_market_trades`, `target_market_tickers`                             | `30d`      |
+| `external_market_trades`, `external_market_tickers`                         | `30d`      |
+| `bot_market_observations`, `bot_quote_decisions`, `bot_orders`, `bot_fills` | `90d`      |
+
+External top-of-book recorder defaults to `sampled_latest` with
+`sampleIntervalMs=250` and `storeRawJson=false`; raw high-frequency external BBO
+capture should be used only for short validation windows.
 
 ## Bot Execution ER 図
 
@@ -516,8 +615,8 @@ derived markout rows.
 
 The migration is intentionally destructive while this backtest foundation is
 being reset. It drops legacy runtime tables, enables TimescaleDB, creates the
-minimal `market_data_*` and `bot_*` fact tables, creates hypertables, and then
-creates the analytics views.
+minimal `target_market_*`, `external_market_*`, and `bot_*` fact tables,
+creates hypertables, and then creates the analytics views.
 
 Required extension:
 
@@ -525,13 +624,16 @@ Required extension:
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 ```
 
-Retention and compression policies are not configured yet.
+Retention policies are configured for the hypertables above. Compression and
+continuous aggregates are intentionally deferred until measured storage pressure
+requires them.
 
 ## Rules
 
-- `market_data_*` stores venue facts actually observed from public feeds.
+- `target_market_*` stores public market data for the venue the bot is making.
+- `external_market_*` stores external CEX facts used for fair-value context.
 - `bot_*` stores what the bot observed, decided, ordered, and filled.
-- The recorder process writes only market data.
+- Recorder processes write only market data.
 - Bot run logging and replay/backtest logging write only bot execution facts.
 - All timestamps are `BIGINT` epoch milliseconds.
 - Unsupported recorder venues fail fast.

@@ -26,6 +26,7 @@ describe("local Docker compose wrapper", () => {
     expect(Object.keys(compose.services)).toEqual([
       "timescaledb",
       "market-data-recorder-bulk",
+      "external-market-recorder",
       "mmbot-main",
       "mmbot-canary",
     ]);
@@ -34,10 +35,14 @@ describe("local Docker compose wrapper", () => {
       compose.services["market-data-recorder-bulk"],
       "market-data-recorder-bulk service",
     );
+    const externalWorker = required(
+      compose.services["external-market-recorder"],
+      "external-market-recorder service",
+    );
     const main = required(compose.services["mmbot-main"], "mmbot-main service");
     const canary = required(compose.services["mmbot-canary"], "mmbot-canary service");
 
-    for (const service of [timescaledb, worker, main, canary]) {
+    for (const service of [timescaledb, worker, externalWorker, main, canary]) {
       expect(service.extends).toBeUndefined();
     }
 
@@ -45,7 +50,7 @@ describe("local Docker compose wrapper", () => {
     expect(timescaledb.restart).toBe("unless-stopped");
     expect(timescaledb.ports).toContain("127.0.0.1:5432:5432");
 
-    for (const service of [worker, main, canary]) {
+    for (const service of [worker, externalWorker, main, canary]) {
       expect(service.build).toEqual({
         context: ".",
         dockerfile: "Dockerfile",
@@ -54,6 +59,9 @@ describe("local Docker compose wrapper", () => {
     }
 
     expect(worker.environment?.RECORDER_CONFIG_PATH).toBe("/app/configs/worker.bulk.btc.yml");
+    expect(externalWorker.environment?.EXTERNAL_MARKET_RECORDER_CONFIG_PATH).toBe(
+      "/app/configs/worker.external.btc.yml",
+    );
     expect(main.profiles).toContain("bot");
     expect(canary.profiles).toContain("canary");
   });

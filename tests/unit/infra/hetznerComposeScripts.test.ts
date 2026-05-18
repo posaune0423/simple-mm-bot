@@ -22,11 +22,21 @@ describe("Hetzner compose files and scripts", () => {
       compose.services["market-data-recorder-bulk"],
       "market-data-recorder-bulk service",
     );
+    const externalWorker = required(
+      compose.services["external-market-recorder"],
+      "external-market-recorder service",
+    );
 
     expect(worker.platform).toBe("linux/amd64");
     expect(worker.restart).toBe("unless-stopped");
     expect(worker.environment.RECORDER_CONFIG_PATH).toBe("/app/configs/worker.bulk.btc.yml");
     expect(worker.command).toEqual(["bun", "run", "record:market-data"]);
+    expect(externalWorker.platform).toBe("linux/amd64");
+    expect(externalWorker.restart).toBe("unless-stopped");
+    expect(externalWorker.environment.EXTERNAL_MARKET_RECORDER_CONFIG_PATH).toBe(
+      "/app/configs/worker.external.btc.yml",
+    );
+    expect(externalWorker.command).toEqual(["bun", "run", "record:external-market"]);
   });
 
   test("runs main and canary as separate containers with separate configs", () => {

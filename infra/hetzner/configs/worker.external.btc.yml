@@ -1,0 +1,25 @@
+flushIntervalMs: 250
+maxBatchSize: 1000
+topOfBook:
+  mode: sampled_latest
+  sampleIntervalMs: 250
+  storeRawJson: false
+sources:
+  - venue: binance_usdm
+    symbol: BTCUSDT
+    weight: 0.5
+    wsUrl: wss://fstream.binance.com
+    channel: bookTicker
+    reconnectDelayMs: 1000
+  - venue: okx_swap
+    symbol: BTC-USDT-SWAP
+    weight: 0.3
+    wsUrl: wss://ws.okx.com:8443/ws/v5/public
+    channel: bbo-tbt
+    reconnectDelayMs: 1000
+  - venue: bybit_linear
+    symbol: BTCUSDT
+    weight: 0.2
+    wsUrl: wss://stream.bybit.com/v5/public/linear
+    channel: orderbook.1
+    reconnectDelayMs: 1000
