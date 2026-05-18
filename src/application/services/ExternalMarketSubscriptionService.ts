@@ -27,35 +27,40 @@ export class ExternalMarketSubscriptionService {
       return;
     }
     this.started = true;
-    for (const subscription of this.subscriptions) {
-      try {
-        subscription.start({
-          onTopOfBook: (update) => {
-            this.writer.update(update);
-          },
-          onError: (error) => {
-            logger.warn(
-              `[application] ExternalMarketSubscriptionService | SUBSCRIPTION_ERROR | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
-            );
-          },
-        });
-      } catch (error) {
-        logger.warn(
-          `[application] ExternalMarketSubscriptionService | START_FAILED | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
-        );
+    try {
+      for (const subscription of this.subscriptions) {
+        try {
+          subscription.start({
+            onTopOfBook: (update) => {
+              this.writer.update(update);
+            },
+            onError: (error) => {
+              logger.warn(
+                `[application] ExternalMarketSubscriptionService | SUBSCRIPTION_ERROR | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
+              );
+            },
+          });
+        } catch (error) {
+          logger.warn(
+            `[application] ExternalMarketSubscriptionService | START_FAILED | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
+          );
+        }
       }
+      await this.waitForWarmupIfConfigured();
+    } catch (error) {
+      await this.stop();
+      throw error;
     }
-    await this.waitForWarmupIfConfigured();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (!this.started) {
       return;
     }
     this.started = false;
     for (const subscription of this.subscriptions) {
       try {
-        subscription.stop();
+        await subscription.stop();
       } catch (error) {
         logger.warn(
           `[application] ExternalMarketSubscriptionService | STOP_FAILED | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
@@ -87,6 +92,9 @@ export class ExternalMarketSubscriptionService {
       await sleep(pollIntervalMs);
     }
 
+    if (!this.started) {
+      return;
+    }
     throw new Error(`External fair value warmup timed out after ${timeoutMs}ms`);
   }
 }

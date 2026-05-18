@@ -44,8 +44,8 @@ describe("ExternalMarketSubscriptionService", () => {
     );
 
     await service.start();
-    service.stop();
-    service.stop();
+    await service.stop();
+    await service.stop();
 
     expect(first.stopCount).toBe(1);
     expect(second.stopCount).toBe(1);
@@ -62,7 +62,7 @@ describe("ExternalMarketSubscriptionService", () => {
     });
 
     const started = service.start();
-    await Bun.sleep(1);
+    await waitUntil(() => provider.callCount > 0, "fair value provider poll");
     expect(provider.callCount).toBeGreaterThan(0);
     expect(writer.updates).toHaveLength(0);
 
@@ -72,7 +72,70 @@ describe("ExternalMarketSubscriptionService", () => {
 
     expect(subscription.startCount).toBe(1);
   });
+
+  test("cleans up subscriptions when warmup times out", async () => {
+    const subscription = new FakeSubscription("binance_usdm", "BTCUSDT");
+    const provider = new FakeFairValueProvider();
+    const service = new ExternalMarketSubscriptionService(
+      [subscription],
+      new FakeTopOfBookWriter(),
+      {
+        provider,
+        timeoutMs: 1,
+        pollIntervalMs: 1,
+      },
+    );
+
+    const failure = await service.start().then(
+      () => {
+        throw new Error("Expected warmup timeout");
+      },
+      (error) => error,
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("External fair value warmup timed out after 1ms");
+    expect(subscription.startCount).toBe(1);
+    expect(subscription.stopCount).toBe(1);
+
+    provider.markReady();
+    await service.start();
+
+    expect(subscription.startCount).toBe(2);
+    expect(subscription.stopCount).toBe(1);
+  });
+
+  test("returns cleanly when stopped during warmup", async () => {
+    const subscription = new FakeSubscription("binance_usdm", "BTCUSDT");
+    const provider = new FakeFairValueProvider();
+    const service = new ExternalMarketSubscriptionService(
+      [subscription],
+      new FakeTopOfBookWriter(),
+      {
+        provider,
+        timeoutMs: 100,
+        pollIntervalMs: 1,
+      },
+    );
+
+    const started = service.start();
+    await waitUntil(() => provider.callCount > 0, "fair value provider poll");
+    await service.stop();
+
+    await started;
+    expect(subscription.stopCount).toBe(1);
+  });
 });
+
+async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await Bun.sleep(1);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
 
 class FakeTopOfBookWriter implements IExternalMarketTopOfBookWriter {
   readonly updates: ExternalTopOfBookUpdate[] = [];

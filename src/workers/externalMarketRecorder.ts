@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     logger.info("[worker] external-market-recorder | SHUTDOWN_STARTED");
     for (const subscription of subscriptions) {
       try {
-        subscription.stop();
+        await subscription.stop();
       } catch (error) {
         logger.error(
           `[worker] external-market-recorder | SUBSCRIPTION_STOP_FAILED | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,

@@ -15,6 +15,8 @@ type SubscriptionHandlers = {
   onError?: ExternalSubscriptionErrorHandler;
 };
 
+const SOCKET_STOP_TIMEOUT_MS = 250;
+
 export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSubscription {
   private socket: WebSocket | undefined;
   private handlers: SubscriptionHandlers | undefined;
@@ -34,14 +36,18 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
     this.connect();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stopped = true;
+    this.handlers = undefined;
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
-    this.socket?.close();
+    const socket = this.socket;
     this.socket = undefined;
+    if (socket !== undefined) {
+      await closeSocket(socket);
+    }
   }
 
   protected abstract subscriptionPayload(): string | undefined;
@@ -55,6 +61,9 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
       const socket = new WebSocket(this.wsUrl);
       this.socket = socket;
       socket.addEventListener("open", () => {
+        if (this.stopped || socket !== this.socket) {
+          return;
+        }
         const payload = this.subscriptionPayload();
         if (payload !== undefined) {
           socket.send(payload);
@@ -63,9 +72,19 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
           `[adapter] ExternalMarketSubscription | CONNECTED | venue=${this.venue} symbol=${this.symbol}`,
         );
       });
-      socket.addEventListener("message", (event) => this.handleMessage(event.data));
-      socket.addEventListener("error", (event) => this.handleError(event));
-      socket.addEventListener("close", () => this.scheduleReconnect());
+      socket.addEventListener("message", (event) => {
+        if (this.stopped || socket !== this.socket) {
+          return;
+        }
+        this.handleMessage(event.data);
+      });
+      socket.addEventListener("error", (event) => {
+        if (socket !== this.socket) {
+          return;
+        }
+        this.handleError(event);
+      });
+      socket.addEventListener("close", () => this.scheduleReconnect(socket));
     } catch (error) {
       this.handleError(error);
       this.scheduleReconnect();
@@ -97,7 +116,10 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
     this.handlers?.onError?.(error);
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(closedSocket?: WebSocket): void {
+    if (closedSocket !== undefined && closedSocket !== this.socket) {
+      return;
+    }
     this.socket = undefined;
     if (this.stopped || this.reconnectTimer !== undefined) {
       return;
@@ -106,6 +128,50 @@ export abstract class BaseJsonWebSocketSubscription implements IExternalMarketSu
       this.reconnectTimer = undefined;
       this.connect();
     }, this.reconnectDelayMs);
+  }
+}
+
+async function closeSocket(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      forceTerminate(socket);
+      finish();
+    }, SOCKET_STOP_TIMEOUT_MS);
+
+    const finish = (): void => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      clearTimeout(timeout);
+      socket.removeEventListener("close", finish);
+      socket.removeEventListener("error", finish);
+      resolve();
+    };
+
+    socket.addEventListener("close", finish, { once: true });
+    socket.addEventListener("error", finish, { once: true });
+
+    try {
+      if (socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
+      }
+    } catch {
+      forceTerminate(socket);
+      finish();
+    }
+  });
+}
+
+function forceTerminate(socket: WebSocket): void {
+  const terminate = (socket as { terminate?: unknown }).terminate;
+  if (typeof terminate === "function") {
+    terminate.call(socket);
   }
 }
 

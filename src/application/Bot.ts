@@ -28,7 +28,7 @@ type TickResult = "continue" | "stop";
 type RiskTickAction = "quote" | "pause_quoting" | "stop";
 type ShutdownClosePositionPolicy = "always" | "emergency_only";
 type RuntimeDisposable = {
-  start?: () => void | Promise<void>;
+  start?: (signal?: AbortSignal) => void | Promise<void>;
   stop: () => void | Promise<void>;
 };
 
@@ -54,6 +54,7 @@ export class Bot {
   private lastPositionSyncAtMs = 0;
   private marketFeedConnected = false;
   private readonly unsubscribers: Array<() => void> = [];
+  private runtimeDisposableStartController: AbortController | undefined;
 
   constructor(
     private readonly useCases: UseCases,
@@ -132,6 +133,7 @@ export class Bot {
     this.pauseQuoteCancelCompleted = false;
     this.lastPositionSyncAtMs = 0;
     this.marketFeedConnected = false;
+    this.runtimeDisposableStartController = new AbortController();
     this.eventTasks = Promise.resolve();
     this.unsubscribers.splice(0);
   }
@@ -146,6 +148,7 @@ export class Bot {
     }
     this.stopRequested = true;
     this.running = false;
+    this.runtimeDisposableStartController?.abort(reason);
     logger.info(`[application] Bot | STOP_REQUESTED | reason=${reason}`);
     return true;
   }
@@ -458,8 +461,18 @@ export class Bot {
   }
 
   private async startRuntimeDisposables(): Promise<void> {
+    const signal = this.runtimeDisposableStartController?.signal;
     for (const disposable of this.options.runtimeDisposables ?? []) {
-      await disposable.start?.();
+      if (signal?.aborted === true || this.wasStopRequested()) {
+        return;
+      }
+      if (disposable.start === undefined) {
+        continue;
+      }
+      const started = await waitForRuntimeDisposableStart(disposable.start(signal), signal);
+      if (!started) {
+        return;
+      }
     }
   }
 
@@ -610,6 +623,48 @@ export class Bot {
       signal.addEventListener("abort", finish, { once: true });
     });
   }
+}
+
+async function waitForRuntimeDisposableStart(
+  startResult: void | Promise<void>,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const startPromise = Promise.resolve(startResult);
+  if (signal === undefined) {
+    await startPromise;
+    return true;
+  }
+  if (signal.aborted) {
+    startPromise.catch((error) => {
+      logger.warn(
+        `[application] Bot | RUNTIME_DISPOSABLE_START_IGNORED_AFTER_STOP | error=${stringifyError(error)}`,
+      );
+    });
+    return false;
+  }
+
+  let abortHandler: (() => void) | undefined;
+  const abortPromise = new Promise<"aborted">((resolve) => {
+    abortHandler = () => resolve("aborted");
+    signal.addEventListener("abort", abortHandler, { once: true });
+  });
+  const result = await Promise.race([
+    startPromise.then(() => "started" as const),
+    abortPromise,
+  ]).finally(() => {
+    if (abortHandler !== undefined) {
+      signal.removeEventListener("abort", abortHandler);
+    }
+  });
+  if (result === "aborted") {
+    startPromise.catch((error) => {
+      logger.warn(
+        `[application] Bot | RUNTIME_DISPOSABLE_START_IGNORED_AFTER_STOP | error=${stringifyError(error)}`,
+      );
+    });
+    return false;
+  }
+  return true;
 }
 
 function normalizeStartOptions(maxTicksOrOptions?: number | BotStartOptions): BotStartOptions {

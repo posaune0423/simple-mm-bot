@@ -121,11 +121,12 @@ describe("ExternalMarketFairValueCalculator", () => {
     ]);
   });
 
-  test("falls back to equal weights when configured weights cannot be normalized", () => {
+  test("excludes sources with invalid configured weights", () => {
     const calculator = createCalculator({
       sources: [
         { venue: "binance_usdm", symbol: "BTCUSDT", weight: 0 },
-        { venue: "okx_swap", symbol: "BTC-USDT-SWAP", weight: 0 },
+        { venue: "okx_swap", symbol: "BTC-USDT-SWAP", weight: 0.5 },
+        { venue: "bybit_linear", symbol: "BTCUSDT", weight: Number.NaN },
       ],
     });
 
@@ -133,13 +134,18 @@ describe("ExternalMarketFairValueCalculator", () => {
       [
         top({ venue: "binance_usdm", symbol: "BTCUSDT", bidPrice: 99, askPrice: 101 }),
         top({ venue: "okx_swap", symbol: "BTC-USDT-SWAP", bidPrice: 101, askPrice: 103 }),
+        top({ venue: "bybit_linear", symbol: "BTCUSDT", bidPrice: 103, askPrice: 105 }),
       ],
       10_000,
     );
 
-    expect(snapshot.status).toBe("ready");
-    expect(snapshot.used.map((source) => source.weight)).toEqual([0.5, 0.5]);
-    expect(snapshot.fairMid).toBe(101);
+    expect(snapshot.status).toBe("degraded");
+    expect(snapshot.used.map((source) => [source.venue, source.weight])).toEqual([["okx_swap", 1]]);
+    expect(snapshot.excluded).toEqual([
+      { venue: "binance_usdm", symbol: "BTCUSDT", reason: "invalid_weight" },
+      { venue: "bybit_linear", symbol: "BTCUSDT", reason: "invalid_weight" },
+    ]);
+    expect(snapshot.fairMid).toBe(102);
   });
 });
 

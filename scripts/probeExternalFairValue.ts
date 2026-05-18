@@ -71,7 +71,7 @@ const timer = setInterval(() => {
 
 await waitForStop(args.durationMs);
 clearInterval(timer);
-service.stop();
+await service.stop();
 
 const finalSnapshot = calculator.compute(store.readLatest(), Date.now());
 if (!args.watch) {

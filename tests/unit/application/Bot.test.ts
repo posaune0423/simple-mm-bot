@@ -1124,6 +1124,94 @@ describe("Bot", () => {
     expect(calls.indexOf("runtimeReady")).toBeLessThan(calls.indexOf("quoteCycle"));
   });
 
+  test("cancels runtime disposable startup when stop is requested", async () => {
+    const calls: string[] = [];
+    let startupSignal: AbortSignal | undefined;
+    const bot = new Bot(
+      {
+        guardRisk: { execute: async () => "OK" as const },
+        quotingCycle: {
+          execute: async () => {
+            calls.push("quoteCycle");
+          },
+        },
+        updatePositionOnFill: { execute: async () => {} },
+        recordOhlcv: { execute: async () => {} },
+        reduceInventory: { executeIfNeeded: async () => false },
+        closePosition: { execute: async () => {} },
+      },
+      {
+        async connect() {
+          calls.push("connect");
+        },
+        async disconnect() {
+          calls.push("disconnect");
+        },
+        async getSnapshot() {
+          return {
+            market: "BTC-USD",
+            bestBid: 99,
+            bestAsk: 101,
+            microPrice: 100,
+            markPrice: 100,
+            timestamp: 1,
+            marginRatio: null,
+          };
+        },
+        subscribe() {
+          calls.push("subscribe");
+          return () => {
+            calls.push("unsubscribe");
+          };
+        },
+      },
+      {
+        async place() {
+          throw new Error("unused");
+        },
+        async cancel() {},
+        async cancelAll() {
+          calls.push("cancelAll");
+        },
+        subscribeFills() {
+          return () => {};
+        },
+      },
+      1,
+      undefined,
+      {
+        closePositionPolicy: "emergency_only",
+        runtimeDisposables: [
+          {
+            async start(signal) {
+              calls.push("runtimeStart");
+              startupSignal = signal;
+              await new Promise<void>(() => {});
+            },
+            stop() {
+              calls.push("runtimeStop");
+            },
+          },
+        ],
+      },
+    );
+
+    const startPromise = bot.start(1);
+    await waitUntil(() => calls.includes("runtimeStart"), "runtime disposable start");
+
+    bot.stop("startup_cancel");
+
+    expect(
+      await Promise.race([
+        startPromise.then(() => "completed" as const),
+        Bun.sleep(500).then(() => "timeout" as const),
+      ]),
+    ).toBe("completed");
+    expect(startupSignal?.aborted).toBe(true);
+    expect(calls).toContain("runtimeStop");
+    expect(calls).not.toContain("quoteCycle");
+  });
+
   test("continues cleanup when teardown hooks fail", async () => {
     const logs = captureLogs();
     const calls: string[] = [];

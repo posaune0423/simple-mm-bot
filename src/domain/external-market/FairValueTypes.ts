@@ -5,6 +5,7 @@ export type FairValueExclusionReason =
   | "missing"
   | "stale"
   | "invalid_bbo"
+  | "invalid_weight"
   | "wide_spread"
   | "outlier";
 

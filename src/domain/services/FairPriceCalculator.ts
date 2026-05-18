@@ -56,7 +56,12 @@ export class FairPriceCalculator {
     }
 
     const externalFair = this.fairValueProvider.getLatestFairValue(nowMs);
-    if (externalFair.status === "unavailable" || externalFair.fairMid === undefined) {
+    const externalFairMid = externalFair.fairMid;
+    if (
+      externalFair.status === "unavailable" ||
+      typeof externalFairMid !== "number" ||
+      !Number.isFinite(externalFairMid)
+    ) {
       return {
         status: "unavailable",
         localFairPrice,
@@ -68,7 +73,7 @@ export class FairPriceCalculator {
     if (this.externalFairConfig.mode === "replace_local") {
       return {
         status: "ok",
-        fairPrice: externalFair.fairMid,
+        fairPrice: externalFairMid,
         localFairPrice,
         priceSource: "external",
         externalFair,
@@ -78,7 +83,7 @@ export class FairPriceCalculator {
     const localWeight = this.externalFairConfig.localWeight ?? 0.5;
     return {
       status: "ok",
-      fairPrice: localWeight * localFairPrice + (1 - localWeight) * externalFair.fairMid,
+      fairPrice: localWeight * localFairPrice + (1 - localWeight) * externalFairMid,
       localFairPrice,
       priceSource: "blended",
       externalFair,

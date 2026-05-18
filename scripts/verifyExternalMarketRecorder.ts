@@ -67,7 +67,7 @@ try {
   clearInterval(timer);
   timer = undefined;
   for (const subscription of subscriptions) {
-    subscription.stop();
+    await subscription.stop();
   }
   flush = await writer.shutdown();
 
@@ -134,7 +134,7 @@ try {
     clearInterval(timer);
   }
   for (const subscription of subscriptions) {
-    subscription.stop();
+    await subscription.stop();
   }
   if (flush === undefined) {
     flush = await writer.shutdown();

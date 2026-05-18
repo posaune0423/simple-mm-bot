@@ -16,5 +16,5 @@ export interface IExternalMarketSubscription {
     onRecord?: ExternalTopOfBookRecordHandler;
     onError?: ExternalSubscriptionErrorHandler;
   }): void;
-  stop(): void;
+  stop(): void | Promise<void>;
 }

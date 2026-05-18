@@ -81,7 +81,15 @@ export class ExternalMarketFairValueCalculator {
       return false;
     });
 
-    if (filtered.length < this.config.minSourceCount) {
+    const weightedCandidates = filtered.filter((candidate) => {
+      if (Number.isFinite(candidate.configuredWeight) && candidate.configuredWeight > 0) {
+        return true;
+      }
+      excluded.push(exclusion(candidate, "invalid_weight"));
+      return false;
+    });
+
+    if (weightedCandidates.length < this.config.minSourceCount) {
       return {
         status: "unavailable",
         computedAt: nowMs,
@@ -90,11 +98,14 @@ export class ExternalMarketFairValueCalculator {
       };
     }
 
-    const totalWeight = filtered.reduce((sum, candidate) => sum + candidate.configuredWeight, 0);
+    const totalWeight = weightedCandidates.reduce(
+      (sum, candidate) => sum + candidate.configuredWeight,
+      0,
+    );
     const useEqualWeights = !Number.isFinite(totalWeight) || totalWeight <= 0;
-    const used = filtered.map(({ configuredWeight, ...candidate }) => ({
+    const used = weightedCandidates.map(({ configuredWeight, ...candidate }) => ({
       ...candidate,
-      weight: useEqualWeights ? 1 / filtered.length : configuredWeight / totalWeight,
+      weight: useEqualWeights ? 1 / weightedCandidates.length : configuredWeight / totalWeight,
     }));
 
     return {

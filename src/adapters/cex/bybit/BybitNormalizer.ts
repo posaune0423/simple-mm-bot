@@ -22,8 +22,9 @@ type BybitOrderbookPayload = {
 export function normalizeBybitOrderbook1(
   payload: BybitOrderbookPayload,
 ): ExternalNormalizationResult {
-  const symbol =
+  const symbolCandidate =
     typeof payload.data?.s === "string" ? payload.data.s : symbolFromTopic(payload.topic);
+  const symbol = normalizeSymbol(symbolCandidate);
   const bid = payload.data?.b?.[0];
   const ask = payload.data?.a?.[0];
   if (symbol === undefined) {
@@ -50,4 +51,9 @@ function symbolFromTopic(topic: unknown): string | undefined {
     return undefined;
   }
   return topic.split(".").at(-1);
+}
+
+function normalizeSymbol(symbol: string | undefined): string | undefined {
+  const normalized = symbol?.trim();
+  return normalized === undefined || normalized.length === 0 ? undefined : normalized;
 }

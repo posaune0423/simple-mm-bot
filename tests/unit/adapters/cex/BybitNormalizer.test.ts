@@ -34,4 +34,18 @@ describe("normalizeBybitOrderbook1", () => {
       normalizeBybitOrderbook1({ topic: "orderbook.1.BTCUSDT", data: { b: [], a: [] } }).isErr(),
     ).toBe(true);
   });
+
+  test("rejects blank symbols", () => {
+    expect(
+      normalizeBybitOrderbook1({
+        data: { s: " ", b: [["99999.1", "2.5"]], a: [["100000.2", "3.5"]] },
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      normalizeBybitOrderbook1({
+        topic: "orderbook.1. ",
+        data: { b: [["99999.1", "2.5"]], a: [["100000.2", "3.5"]] },
+      }).isErr(),
+    ).toBe(true);
+  });
 });

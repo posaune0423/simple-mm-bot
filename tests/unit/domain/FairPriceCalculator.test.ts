@@ -112,6 +112,19 @@ describe("FairPriceCalculator", () => {
       localFairPrice: 102,
     });
   });
+
+  test("returns unavailable when external value is non-finite", () => {
+    const fair = new FairPriceCalculator(0.25, "micro", provider(Number.NaN), {
+      enabled: true,
+      mode: "blend_with_local",
+    }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
+
+    expect(fair).toMatchObject({
+      status: "unavailable",
+      reason: "external_fair_unavailable",
+      localFairPrice: 102,
+    });
+  });
 });
 
 function provider(fairMid: number): IFairValueProvider {
