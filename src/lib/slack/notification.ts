@@ -3,10 +3,16 @@ import { postSlackWebhook, type SlackWebhookMessage } from "./SlackWebhook.ts";
 import { describeError, type ErrorDescription, stringifyError } from "../../utils/errors.ts";
 import { logger } from "../../utils/logger.ts";
 
-interface FatalErrorSlackContext {
+export interface FatalErrorSlackContext {
+  component?: string;
+  worker?: string;
+  event?: string;
   mode?: string;
   venue?: string;
   market?: string;
+  symbol?: string;
+  kind?: string;
+  source?: string;
   configPath?: string;
 }
 
@@ -28,6 +34,33 @@ function formatBotStateValues(context: FatalErrorSlackContext): string[] {
     .map((value) => `\`${escapeSlackText(truncateText(value, MAX_FIELD))}\``);
 }
 
+function formatRuntimeStateValues(context: FatalErrorSlackContext): string[] {
+  return [
+    context.component,
+    context.worker,
+    context.event,
+    context.venue,
+    context.symbol,
+    context.kind,
+    context.market,
+    context.source,
+    context.configPath,
+  ]
+    .filter((value): value is string => value !== undefined)
+    .map((value) => `\`${escapeSlackText(truncateText(value, MAX_FIELD))}\``);
+}
+
+function shouldUseRuntimeStateLabel(context: FatalErrorSlackContext): boolean {
+  return (
+    context.component !== undefined ||
+    context.worker !== undefined ||
+    context.event !== undefined ||
+    context.symbol !== undefined ||
+    context.kind !== undefined ||
+    context.source !== undefined
+  );
+}
+
 function fallbackAttachmentText(reason: ErrorDescription): string {
   return truncateText(`${reason.title}: ${reason.reason}`, MAX_TEXT);
 }
@@ -38,7 +71,10 @@ function buildAttachmentText(input: {
   reason: ErrorDescription;
   context: FatalErrorSlackContext;
 }): string {
-  const botStateValues = formatBotStateValues(input.context);
+  const useRuntimeState = shouldUseRuntimeStateLabel(input.context);
+  const stateValues = useRuntimeState
+    ? formatRuntimeStateValues(input.context)
+    : formatBotStateValues(input.context);
   const errorTitle =
     input.reason.code === undefined
       ? `${escapeSlackText(input.reason.title)}: ${escapeSlackText(
@@ -52,8 +88,8 @@ function buildAttachmentText(input: {
     `*Error Title:* ${errorTitle}`,
   ];
 
-  if (botStateValues.length > 0) {
-    lines.push(`*Bot State:* ${botStateValues.join(" ")}`);
+  if (stateValues.length > 0) {
+    lines.push(`*${useRuntimeState ? "Runtime" : "Bot"} State:* ${stateValues.join(" ")}`);
   }
 
   if (input.reason.cause !== undefined) {
@@ -98,8 +134,8 @@ export async function notifyFatalErrorToSlack(
   error: unknown,
   context: FatalErrorSlackContext = {},
 ): Promise<void> {
-  const webhookUrl = Bun.env.SLACK_WEBHOOK_URL;
-  if (webhookUrl === undefined) return;
+  const webhookUrl = Bun.env.SLACK_WEBHOOK_URL?.trim();
+  if (webhookUrl === undefined || webhookUrl === "") return;
 
   try {
     await postSlackWebhook(webhookUrl, buildFatalErrorSlackMessage(error, context));

@@ -116,6 +116,27 @@ function fill(input: {
 }
 
 describe("MetricsRecorder", () => {
+  test("close calls the configured close hook", async () => {
+    let closeCount = 0;
+    const recorder = new MetricsRecorder(new MemoryMetricsRepository(), {
+      runId: "run-close-hook",
+      mode: "paper",
+      venue: "hyperliquid",
+      capitalMode: "paper",
+      market: "BTC",
+      strategyName: "avellaneda-stoikov",
+      configJson: { venue: "hyperliquid" },
+      gitDirty: false,
+      close: async () => {
+        closeCount += 1;
+      },
+    });
+
+    await recorder.close();
+
+    expect(closeCount).toBe(1);
+  });
+
   test("recordQuote returns without waiting for repository writes", async () => {
     const repository = new BlockingMetricsRepository();
     const recorder = new MetricsRecorder(repository, {

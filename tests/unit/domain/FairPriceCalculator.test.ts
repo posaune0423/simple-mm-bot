@@ -4,6 +4,7 @@ import {
   FairPriceCalculator,
   calculateDepthVampPrice,
 } from "../../../src/domain/services/FairPriceCalculator.ts";
+import type { IFairValueProvider } from "../../../src/domain/ports/IFairValueProvider.ts";
 import type { MarketSnapshot } from "../../../src/domain/ports/IMarketFeed.ts";
 
 const snapshot = (overrides: Partial<MarketSnapshot> = {}): MarketSnapshot => ({
@@ -68,4 +69,91 @@ describe("FairPriceCalculator", () => {
 
     expect(fair).toBe(102);
   });
+
+  test("replaces local fair price with external fair value when configured", () => {
+    const fair = new FairPriceCalculator(0.25, "micro", provider(110), {
+      enabled: true,
+      mode: "replace_local",
+    }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
+
+    expect(fair).toMatchObject({
+      status: "ok",
+      fairPrice: 110,
+      localFairPrice: 102,
+      priceSource: "external",
+    });
+    expect(fair.externalFair?.fairMid).toBe(110);
+  });
+
+  test("blends local and external fair value with normalized local weight", () => {
+    const fair = new FairPriceCalculator(0.25, "micro", provider(110), {
+      enabled: true,
+      mode: "blend_with_local",
+      localWeight: 0.25,
+    }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
+
+    expect(fair.status).toBe("ok");
+    if (fair.status !== "ok") {
+      throw new Error("Expected fair price computation to be ok");
+    }
+    expect(fair.fairPrice).toBe(108);
+    expect(fair.priceSource).toBe("blended");
+  });
+
+  test("returns unavailable when external value is unavailable", () => {
+    const fair = new FairPriceCalculator(0.25, "micro", unavailableProvider(), {
+      enabled: true,
+      mode: "replace_local",
+    }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
+
+    expect(fair).toMatchObject({
+      status: "unavailable",
+      reason: "external_fair_unavailable",
+      localFairPrice: 102,
+    });
+  });
+
+  test("returns unavailable when external value is non-finite", () => {
+    const fair = new FairPriceCalculator(0.25, "micro", provider(Number.NaN), {
+      enabled: true,
+      mode: "blend_with_local",
+    }).computeWithDiagnostics(snapshot({ microPrice: 100, markPrice: 108 }), 1_700_000_000_050);
+
+    expect(fair).toMatchObject({
+      status: "unavailable",
+      reason: "external_fair_unavailable",
+      localFairPrice: 102,
+    });
+  });
 });
+
+function provider(fairMid: number): IFairValueProvider {
+  return {
+    getLatestFairValue(nowMs) {
+      return {
+        status: "ready",
+        computedAt: nowMs,
+        fairBid: fairMid - 1,
+        fairAsk: fairMid + 1,
+        fairMid,
+        minAgeMs: 50,
+        maxAgeMs: 50,
+        used: [],
+        excluded: [],
+      };
+    },
+  };
+}
+
+function unavailableProvider(): IFairValueProvider {
+  return {
+    getLatestFairValue(nowMs) {
+      return {
+        status: "unavailable",
+        computedAt: nowMs,
+        used: [],
+        excluded: [],
+      };
+    },
+  };
+}

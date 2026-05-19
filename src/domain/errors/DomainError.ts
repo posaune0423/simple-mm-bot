@@ -130,6 +130,23 @@ export class InvalidQuoteEngineInputError extends DomainError {
   }
 }
 
+export type QuoteUnavailableReason = "external_fair_unavailable";
+
+export class QuoteUnavailableError extends DomainError {
+  readonly code = "quote_engine.quote_unavailable";
+
+  constructor(
+    message: string,
+    readonly reasonTag: QuoteUnavailableReason,
+    options: DomainErrorOptions = {},
+  ) {
+    super(message, {
+      ...options,
+      context: { ...options.context, reason: reasonTag },
+    });
+  }
+}
+
 export class QuoteModelFailedError extends DomainError {
   readonly code = "quote_engine.quote_model_failed";
 

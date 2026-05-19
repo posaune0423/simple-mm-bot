@@ -10,6 +10,7 @@ import { logger } from "../../utils/logger.ts";
 export type MarketDataBufferedWriterConfig = {
   flushIntervalMs: number;
   maxBatchSize: number;
+  onError?: (error: unknown, context: MarketDataBufferedWriterErrorContext) => void | Promise<void>;
 };
 
 export type MarketDataFlushResult = {
@@ -17,6 +18,12 @@ export type MarketDataFlushResult = {
   insertedTradeCount: number;
   insertedTickerCount: number;
   insertFailureCount: number;
+};
+
+export type MarketDataBufferedWriterErrorContext = {
+  event: "flush_failed" | "insert_failed";
+  kind: "book" | "trade" | "ticker" | "flush";
+  rows: number;
 };
 
 type MarketDataCounters = {
@@ -55,11 +62,18 @@ export class MarketDataBufferedWriter {
       return;
     }
     this.timer = setInterval(() => {
-      void this.flush().then((result) => {
-        logger.info(
-          `[worker] market-data-recorder | FLUSH | receivedBookCount=${this.counters.receivedBookCount} receivedTradeCount=${this.counters.receivedTradeCount} receivedTickerCount=${this.counters.receivedTickerCount} insertedBookCount=${this.counters.insertedBookCount} insertedTradeCount=${this.counters.insertedTradeCount} insertedTickerCount=${this.counters.insertedTickerCount} insertFailureCount=${this.counters.insertFailureCount} lastInsertedBookCount=${result.insertedBookCount} lastInsertedTradeCount=${result.insertedTradeCount} lastInsertedTickerCount=${result.insertedTickerCount}`,
-        );
-      });
+      void this.flush()
+        .then((result) => {
+          logger.info(
+            `[worker] market-data-recorder | FLUSH | receivedBookCount=${this.counters.receivedBookCount} receivedTradeCount=${this.counters.receivedTradeCount} receivedTickerCount=${this.counters.receivedTickerCount} insertedBookCount=${this.counters.insertedBookCount} insertedTradeCount=${this.counters.insertedTradeCount} insertedTickerCount=${this.counters.insertedTickerCount} insertFailureCount=${this.counters.insertFailureCount} lastInsertedBookCount=${result.insertedBookCount} lastInsertedTradeCount=${result.insertedTradeCount} lastInsertedTickerCount=${result.insertedTickerCount}`,
+          );
+        })
+        .catch((error: unknown) => {
+          logger.error(
+            `[worker] market-data-recorder | FLUSH_FAILED | error=${stringifyError(error)}`,
+          );
+          this.notifyError(error, { event: "flush_failed", kind: "flush", rows: 0 });
+        });
     }, this.config.flushIntervalMs);
   }
 
@@ -181,7 +195,27 @@ export class MarketDataBufferedWriter {
       logger.error(
         `[worker] market-data-recorder | INSERT_FAILED | kind=${kind} rows=${rows.length} error=${stringifyError(error)}`,
       );
+      this.notifyError(error, { event: "insert_failed", kind, rows: rows.length });
       return false;
+    }
+  }
+
+  private notifyError(error: unknown, context: MarketDataBufferedWriterErrorContext): void {
+    const onError = this.config.onError;
+    if (onError === undefined) {
+      return;
+    }
+    try {
+      const maybePromise = onError(error, context);
+      void Promise.resolve(maybePromise).catch((notifyError: unknown) => {
+        logger.warn(
+          `[worker] market-data-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
+        );
+      });
+    } catch (notifyError) {
+      logger.warn(
+        `[worker] market-data-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
+      );
     }
   }
 }

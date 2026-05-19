@@ -60,6 +60,7 @@ function createFakeRuntime(): string {
   const fakeScripts = [
     "pull-images.sh",
     "start-infra.sh",
+    "migrate-db.sh",
     "start-workers.sh",
     "restart-worker.sh",
     "start-bot.sh",

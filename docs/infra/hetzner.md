@@ -16,14 +16,18 @@ These paths are excluded from rsync deletion.
 
 ## Planes
 
-| Plane   | Services                                   | Lifecycle              |
-| ------- | ------------------------------------------ | ---------------------- |
-| Data    | `timescaledb`, `market-data-recorder-bulk` | always on              |
-| Trading | `mmbot-main`, `mmbot-canary`               | independently operated |
-| Infra   | GitHub Actions, GHCR, `/opt/mmbot` mirror  | sync and dispatch      |
+| Plane   | Services                                                               | Lifecycle              |
+| ------- | ---------------------------------------------------------------------- | ---------------------- |
+| Data    | `timescaledb`, `market-data-recorder-bulk`, `external-market-recorder` | always on              |
+| Trading | `mmbot-main`, `mmbot-canary`                                           | independently operated |
+| Infra   | GitHub Actions, GHCR, `/opt/mmbot` mirror                              | sync and dispatch      |
 
 `restart-bot` recreates only `mmbot-main`. It must not stop TimescaleDB or the
-market data worker.
+recorder workers.
+
+`SLACK_WEBHOOK_URL` in `/opt/mmbot/.env` is shared by bot and worker containers.
+Workers send Slack notifications for fatal startup failures, recorder or
+subscription errors, DB insert failures, and shutdown cleanup errors.
 
 ## Actions
 
@@ -32,6 +36,7 @@ market data worker.
 
 - `pull-images`
 - `start-infra`
+- `migrate-db`
 - `start-workers`
 - `restart-worker`
 - `start-bot`

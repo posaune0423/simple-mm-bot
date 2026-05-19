@@ -22,11 +22,23 @@ describe("Hetzner compose files and scripts", () => {
       compose.services["market-data-recorder-bulk"],
       "market-data-recorder-bulk service",
     );
+    const externalWorker = required(
+      compose.services["external-market-recorder"],
+      "external-market-recorder service",
+    );
 
     expect(worker.platform).toBe("linux/amd64");
     expect(worker.restart).toBe("unless-stopped");
     expect(worker.environment.RECORDER_CONFIG_PATH).toBe("/app/configs/worker.bulk.btc.yml");
+    expect(worker.environment.SLACK_WEBHOOK_URL).toBe("${SLACK_WEBHOOK_URL:-}");
     expect(worker.command).toEqual(["bun", "run", "record:market-data"]);
+    expect(externalWorker.platform).toBe("linux/amd64");
+    expect(externalWorker.restart).toBe("unless-stopped");
+    expect(externalWorker.environment.EXTERNAL_MARKET_RECORDER_CONFIG_PATH).toBe(
+      "/app/configs/worker.external.btc.yml",
+    );
+    expect(externalWorker.environment.SLACK_WEBHOOK_URL).toBe("${SLACK_WEBHOOK_URL:-}");
+    expect(externalWorker.command).toEqual(["bun", "run", "record:external-market"]);
   });
 
   test("runs main and canary as separate containers with separate configs", () => {
@@ -57,6 +69,19 @@ describe("Hetzner compose files and scripts", () => {
     expect(source).toContain("mmbot-main");
     expect(source).not.toContain("timescaledb");
     expect(source).not.toContain("market-data-recorder-bulk");
+    expect(source).not.toContain("external-market-recorder");
+  });
+
+  test("worker operations cover target and external market recorders", () => {
+    const start = readFileSync("infra/hetzner/scripts/start-workers.sh", "utf8");
+    const restart = readFileSync("infra/hetzner/scripts/restart-worker.sh", "utf8");
+    const logs = readFileSync("infra/hetzner/scripts/logs.sh", "utf8");
+    const pull = readFileSync("infra/hetzner/scripts/pull-images.sh", "utf8");
+
+    for (const source of [start, restart, logs, pull]) {
+      expect(source).toContain("market-data-recorder-bulk");
+      expect(source).toContain("external-market-recorder");
+    }
   });
 
   test("hardens database backups against loose permissions and partial files", () => {

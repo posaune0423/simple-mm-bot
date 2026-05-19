@@ -54,6 +54,7 @@ export class SimplePmmStrategy implements Strategy {
       snapshot: input.snapshot,
       position: input.position,
       sideSpecs: this.buildSideSpecs(input.markoutFeedback),
+      nowMs: input.nowMs,
     };
 
     const quoteResult = this.quoteEngine.compute(quoteInput);

@@ -59,6 +59,47 @@ const markoutFeedbackGateSchema = v.optional(
     horizonsSec: [5, 30, 300],
   },
 );
+const externalVenueSchema = v.picklist(["binance_usdm", "okx_swap", "bybit_linear"]);
+const externalFairSourceSchema = v.object({
+  venue: externalVenueSchema,
+  symbol: nonEmptyStringSchema,
+  weight: positiveNumberSchema,
+  wsUrl: urlStringSchema,
+  channel: nonEmptyStringSchema,
+  reconnectDelayMs: v.optional(positiveIntegerSchema, 1_000),
+  apiKey: v.optional(v.string()),
+});
+const externalFairConfigSchema = v.pipe(
+  v.object({
+    enabled: v.optional(v.boolean(), false),
+    mode: v.optional(
+      v.picklist(["disabled", "replace_local", "blend_with_local"]),
+      "replace_local",
+    ),
+    maxAgeMs: v.optional(positiveIntegerSchema, 500),
+    minSourceCount: v.optional(positiveIntegerSchema, 2),
+    maxSpreadBps: v.optional(positiveNumberSchema, 10),
+    maxDeviationBps: v.optional(positiveNumberSchema, 20),
+    localWeight: v.optional(zeroToOneNumberSchema),
+    sources: v.optional(v.array(externalFairSourceSchema), []),
+  }),
+  v.check(
+    (config) =>
+      config.enabled !== true ||
+      config.mode === "disabled" ||
+      config.sources.length >= config.minSourceCount,
+    "externalFair requires at least minSourceCount sources when enabled",
+  ),
+);
+const externalFairSchema = v.optional(externalFairConfigSchema, {
+  enabled: false,
+  mode: "replace_local" as const,
+  maxAgeMs: 500,
+  minSourceCount: 2,
+  maxSpreadBps: 10,
+  maxDeviationBps: 20,
+  sources: [],
+});
 
 const avellanedaStoikovParamsSchema = v.object({
   gamma: v.pipe(v.number(), v.minValue(0), v.maxValue(0.5)),
@@ -143,6 +184,7 @@ const commonConfigEntries = {
     sizing: quoteSizingSchema,
     levels: v.optional(v.pipe(v.array(quoteLevelSchema), v.minLength(1))),
     qualityGate: markoutFeedbackGateSchema,
+    externalFair: externalFairSchema,
     strategy: strategySchema,
   }),
   risk: v.object({
@@ -279,6 +321,14 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
     .with({ venue: "bulk" }, (bulkConfig) => ({
       ...bulkConfig,
       mode: (envValue("MODE") as AppMode | undefined) ?? bulkConfig.mode,
+      quoteEngine: {
+        ...bulkConfig.quoteEngine,
+        externalFair: {
+          ...bulkConfig.quoteEngine.externalFair,
+          enabled:
+            parseBooleanEnv("EXTERNAL_FAIR_ENABLED") ?? bulkConfig.quoteEngine.externalFair.enabled,
+        },
+      },
       connections: {
         bulk: {
           ...bulkConfig.connections.bulk,
@@ -289,6 +339,15 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
     .with({ venue: "hyperliquid" }, (hyperliquidConfig) => ({
       ...hyperliquidConfig,
       mode: (envValue("MODE") as AppMode | undefined) ?? hyperliquidConfig.mode,
+      quoteEngine: {
+        ...hyperliquidConfig.quoteEngine,
+        externalFair: {
+          ...hyperliquidConfig.quoteEngine.externalFair,
+          enabled:
+            parseBooleanEnv("EXTERNAL_FAIR_ENABLED") ??
+            hyperliquidConfig.quoteEngine.externalFair.enabled,
+        },
+      },
       connections: {
         hyperliquid: {
           ...hyperliquidConfig.connections.hyperliquid,
@@ -305,7 +364,23 @@ function applyEnvOverrides(config: AppConfig): AppConfig {
     .exhaustive();
 }
 
+function parseBooleanEnv(name: string): boolean | undefined {
+  const value = envValue(name);
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false") {
+    return false;
+  }
+  return undefined;
+}
+
 function normalizeConfig(config: AppConfig): LoadedAppConfig {
+  assertExternalFairSourceAvailability(config.quoteEngine.externalFair);
   return {
     ...config,
     market:
@@ -313,6 +388,20 @@ function normalizeConfig(config: AppConfig): LoadedAppConfig {
         ? config.connections.bulk.market
         : config.connections.hyperliquid.market,
   };
+}
+
+function assertExternalFairSourceAvailability(
+  externalFair: AppConfig["quoteEngine"]["externalFair"],
+): void {
+  if (
+    externalFair.enabled === true &&
+    externalFair.mode !== "disabled" &&
+    externalFair.sources.length < externalFair.minSourceCount
+  ) {
+    throw new Error(
+      `externalFair requires at least minSourceCount sources when enabled: minSourceCount=${externalFair.minSourceCount} sources=${externalFair.sources.length}`,
+    );
+  }
 }
 
 function loadConfig(options: LoadConfigOptions = {}): ResultAsync<LoadedAppConfig, ConfigError> {

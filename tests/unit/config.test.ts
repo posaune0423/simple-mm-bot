@@ -126,6 +126,62 @@ describe("ConfigLoader", () => {
     }
   });
 
+  test("rejects enabled external fair config without enough sources", async () => {
+    const configFile = Bun.file("config/config.external-fair-invalid-test.yml");
+    await Bun.write(configFile, externalFairConfigYaml("enabled: true\n    minSourceCount: 2"));
+
+    try {
+      await ConfigLoader.load({
+        configPath: "config/config.external-fair-invalid-test.yml",
+      }).then(
+        () => {
+          throw new Error("Expected invalid external fair config to reject");
+        },
+        (error) => {
+          expect((error as Error).message).toContain("Config validation failed");
+          expect(String((error as Error).cause)).toContain(
+            "externalFair requires at least minSourceCount sources",
+          );
+        },
+      );
+    } finally {
+      await configFile.delete();
+    }
+  });
+
+  test("ignores malformed external fair boolean env overrides", async () => {
+    const configFile = Bun.file("config/config.external-fair-env-test.yml");
+    const previousExternalFairEnabled = Bun.env.EXTERNAL_FAIR_ENABLED;
+    Bun.env.EXTERNAL_FAIR_ENABLED = "ture";
+    await Bun.write(
+      configFile,
+      externalFairConfigYaml(`enabled: true
+    minSourceCount: 2
+    sources:
+      - venue: binance_usdm
+        symbol: BTCUSDT
+        weight: 0.6
+        wsUrl: wss://fstream.binance.com
+        channel: bookTicker
+      - venue: okx_swap
+        symbol: BTC-USDT-SWAP
+        weight: 0.4
+        wsUrl: wss://ws.okx.com:8443/ws/v5/public
+        channel: bbo-tbt`),
+    );
+
+    try {
+      const config = await ConfigLoader.load({
+        configPath: "config/config.external-fair-env-test.yml",
+      });
+
+      expect(config.quoteEngine.externalFair.enabled).toBe(true);
+    } finally {
+      restoreEnv("EXTERNAL_FAIR_ENABLED", previousExternalFairEnabled);
+      await configFile.delete();
+    }
+  });
+
   test("loads tight maker canary order lifecycle controls", async () => {
     const config = await ConfigLoader.load({
       configPath: "config/bulk/tight-near-touch-maker.yml",
@@ -486,4 +542,49 @@ function restoreEnv(key: string, value: string | undefined): void {
     return;
   }
   Bun.env[key] = value;
+}
+
+function externalFairConfigYaml(externalFair: string): string {
+  return `
+mode: paper
+venue: bulk
+
+connections:
+  bulk:
+    wsUrl: wss://api.bulk.trade/ws
+    httpUrl: https://api.bulk.trade
+    market: BTC-USD
+    environment: beta
+
+quoteEngine:
+  markWeight: 0.5
+  inventoryScale: 0.08
+  timeHorizonSec: 10
+  slideMarginThreshold: 0.06
+  defaultTimeInForce: GTC
+  sizing:
+    positionSize: 1
+  externalFair:
+    ${externalFair}
+  strategy:
+    type: avellaneda-stoikov
+    params:
+      gamma: 0.02
+      kappa: 1.5
+      kInv: 0.3
+
+risk:
+  imrBuffer: 0.06
+  mmrBuffer: 0.03
+  maxPositionQty: 0.85
+
+bot:
+  intervalMs: 1000
+
+backtest:
+  market: BTC-USD
+  timeframe: 1m
+  from: "2026-05-06"
+  to: "2026-05-07"
+`;
 }

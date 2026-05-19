@@ -5,6 +5,10 @@ import { stringifyError } from "../utils/errors.ts";
 import { logger } from "../utils/logger.ts";
 import { loadMarketDataRecorderConfig } from "./marketDataRecorderConfig.ts";
 import { buildRecorderClient } from "./marketDataRecorderFactory.ts";
+import { WorkerErrorNotifier } from "./WorkerErrorNotifier.ts";
+
+const WORKER_NAME = "market-data-recorder";
+const errorNotifier = new WorkerErrorNotifier(WORKER_NAME);
 
 async function main(): Promise<void> {
   const config = await loadMarketDataRecorderConfig();
@@ -22,6 +26,9 @@ async function main(): Promise<void> {
   const writer = new MarketDataBufferedWriter(repository, {
     flushIntervalMs: config.flushIntervalMs,
     maxBatchSize: config.maxBatchSize,
+    onError: (error, context) => {
+      errorNotifier.notifySoon(error, context);
+    },
   });
   const recorder = buildRecorderClient(config);
   let shuttingDown = false;
@@ -38,6 +45,7 @@ async function main(): Promise<void> {
       logger.error(
         `[worker] market-data-recorder | SHUTDOWN_DISCONNECT_FAILED | error=${stringifyError(error)}`,
       );
+      await errorNotifier.notify(error, { event: "shutdown_disconnect_failed" });
     }
     try {
       const result = await writer.shutdown();
@@ -48,6 +56,7 @@ async function main(): Promise<void> {
       logger.error(
         `[worker] market-data-recorder | SHUTDOWN_FLUSH_FAILED | error=${stringifyError(error)}`,
       );
+      await errorNotifier.notify(error, { event: "shutdown_flush_failed" });
     }
     try {
       await postgresClient.client.end();
@@ -55,6 +64,7 @@ async function main(): Promise<void> {
       logger.error(
         `[worker] market-data-recorder | SHUTDOWN_DB_CLOSE_FAILED | error=${stringifyError(error)}`,
       );
+      await errorNotifier.notify(error, { event: "shutdown_db_close_failed" });
     } finally {
       process.exit(0);
     }
@@ -74,6 +84,7 @@ async function main(): Promise<void> {
         logger.error(
           `[worker] market-data-recorder | BOOK_WRITE_FAILED | error=${stringifyError(error)}`,
         );
+        errorNotifier.notifySoon(error, { event: "book_write_failed", kind: "book" });
       });
     },
     onTrade: (row) => {
@@ -81,6 +92,7 @@ async function main(): Promise<void> {
         logger.error(
           `[worker] market-data-recorder | TRADE_WRITE_FAILED | error=${stringifyError(error)}`,
         );
+        errorNotifier.notifySoon(error, { event: "trade_write_failed", kind: "trade" });
       });
     },
     onTicker: (row) => {
@@ -88,10 +100,13 @@ async function main(): Promise<void> {
         logger.error(
           `[worker] market-data-recorder | TICKER_WRITE_FAILED | error=${stringifyError(error)}`,
         );
+        errorNotifier.notifySoon(error, { event: "ticker_write_failed", kind: "ticker" });
       });
     },
-    onError: (error) =>
-      logger.error(`[worker] market-data-recorder | ERROR | error=${stringifyError(error)}`),
+    onError: (error) => {
+      logger.error(`[worker] market-data-recorder | ERROR | error=${stringifyError(error)}`);
+      errorNotifier.notifySoon(error, { event: "recorder_error" });
+    },
   });
 }
 
@@ -108,5 +123,11 @@ function isPostgresUrl(value: string): boolean {
 }
 
 if (import.meta.main) {
-  await main();
+  try {
+    await main();
+  } catch (error) {
+    await errorNotifier.notify(error, { event: "fatal" });
+    logger.error(`[worker] market-data-recorder | FATAL | error=${stringifyError(error)}`);
+    process.exit(1);
+  }
 }

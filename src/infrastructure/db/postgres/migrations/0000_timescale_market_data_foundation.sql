@@ -12,9 +12,12 @@ DROP VIEW IF EXISTS v_fill_context;
 DROP VIEW IF EXISTS v_edge_quote_bucket_quality;
 DROP VIEW IF EXISTS v_runtime_health_summary;
 
-DROP TABLE IF EXISTS market_data_order_book_snapshots CASCADE;
-DROP TABLE IF EXISTS market_data_trades CASCADE;
-DROP TABLE IF EXISTS market_data_tickers CASCADE;
+DROP TABLE IF EXISTS target_market_order_books CASCADE;
+DROP TABLE IF EXISTS target_market_trades CASCADE;
+DROP TABLE IF EXISTS target_market_tickers CASCADE;
+DROP TABLE IF EXISTS external_market_top_of_book CASCADE;
+DROP TABLE IF EXISTS external_market_trades CASCADE;
+DROP TABLE IF EXISTS external_market_tickers CASCADE;
 DROP TABLE IF EXISTS bot_runs CASCADE;
 DROP TABLE IF EXISTS bot_market_observations CASCADE;
 DROP TABLE IF EXISTS bot_quote_decisions CASCADE;
@@ -30,7 +33,7 @@ DROP TABLE IF EXISTS quote_decisions CASCADE;
 DROP TABLE IF EXISTS order_lifecycle_events CASCADE;
 DROP TABLE IF EXISTS ohlcv CASCADE;
 
-CREATE TABLE market_data_order_book_snapshots (
+CREATE TABLE target_market_order_books (
   id TEXT NOT NULL,
   venue TEXT NOT NULL,
   symbol TEXT NOT NULL,
@@ -52,13 +55,13 @@ CREATE TABLE market_data_order_book_snapshots (
 );
 
 CREATE UNIQUE INDEX md_book_id_received_at_idx
-  ON market_data_order_book_snapshots (id, received_at);
+  ON target_market_order_books (id, received_at);
 CREATE INDEX md_book_venue_symbol_received_at_idx
-  ON market_data_order_book_snapshots (venue, symbol, received_at);
+  ON target_market_order_books (venue, symbol, received_at);
 CREATE INDEX md_book_symbol_received_at_idx
-  ON market_data_order_book_snapshots (symbol, received_at);
+  ON target_market_order_books (symbol, received_at);
 
-CREATE TABLE market_data_trades (
+CREATE TABLE target_market_trades (
   id TEXT NOT NULL,
   venue TEXT NOT NULL,
   symbol TEXT NOT NULL,
@@ -73,15 +76,15 @@ CREATE TABLE market_data_trades (
 );
 
 CREATE UNIQUE INDEX md_trades_id_received_at_idx
-  ON market_data_trades (id, received_at);
+  ON target_market_trades (id, received_at);
 CREATE INDEX md_trades_venue_symbol_received_at_idx
-  ON market_data_trades (venue, symbol, received_at);
+  ON target_market_trades (venue, symbol, received_at);
 CREATE INDEX md_trades_symbol_received_at_idx
-  ON market_data_trades (symbol, received_at);
+  ON target_market_trades (symbol, received_at);
 CREATE UNIQUE INDEX md_trades_venue_trade_id_received_at_idx
-  ON market_data_trades (venue, trade_id, received_at);
+  ON target_market_trades (venue, trade_id, received_at);
 
-CREATE TABLE market_data_tickers (
+CREATE TABLE target_market_tickers (
   id TEXT NOT NULL,
   venue TEXT NOT NULL,
   symbol TEXT NOT NULL,
@@ -96,11 +99,79 @@ CREATE TABLE market_data_tickers (
 );
 
 CREATE UNIQUE INDEX md_tickers_id_received_at_idx
-  ON market_data_tickers (id, received_at);
+  ON target_market_tickers (id, received_at);
 CREATE INDEX md_tickers_venue_symbol_received_at_idx
-  ON market_data_tickers (venue, symbol, received_at);
+  ON target_market_tickers (venue, symbol, received_at);
 CREATE INDEX md_tickers_symbol_received_at_idx
-  ON market_data_tickers (symbol, received_at);
+  ON target_market_tickers (symbol, received_at);
+
+CREATE TABLE external_market_top_of_book (
+  id TEXT NOT NULL,
+  venue TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  exchange_time BIGINT,
+  received_at BIGINT NOT NULL,
+  bid_price DOUBLE PRECISION NOT NULL,
+  bid_size DOUBLE PRECISION NOT NULL,
+  ask_price DOUBLE PRECISION NOT NULL,
+  ask_size DOUBLE PRECISION NOT NULL,
+  mid_price DOUBLE PRECISION NOT NULL,
+  micro_price DOUBLE PRECISION,
+  spread_bps DOUBLE PRECISION NOT NULL,
+  sequence TEXT,
+  raw_json TEXT
+);
+
+CREATE UNIQUE INDEX external_tob_id_received_at_idx
+  ON external_market_top_of_book (id, received_at);
+CREATE INDEX external_tob_venue_symbol_received_at_idx
+  ON external_market_top_of_book (venue, symbol, received_at);
+CREATE INDEX external_tob_symbol_received_at_idx
+  ON external_market_top_of_book (symbol, received_at);
+
+CREATE TABLE external_market_trades (
+  id TEXT NOT NULL,
+  venue TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  trade_id TEXT,
+  exchange_time BIGINT,
+  received_at BIGINT NOT NULL,
+  price DOUBLE PRECISION NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
+  side TEXT,
+  aggressor_side TEXT,
+  raw_json TEXT
+);
+
+CREATE UNIQUE INDEX external_trades_id_received_at_idx
+  ON external_market_trades (id, received_at);
+CREATE INDEX external_trades_venue_symbol_received_at_idx
+  ON external_market_trades (venue, symbol, received_at);
+CREATE INDEX external_trades_symbol_received_at_idx
+  ON external_market_trades (symbol, received_at);
+CREATE UNIQUE INDEX external_trades_venue_trade_id_received_at_idx
+  ON external_market_trades (venue, trade_id, received_at);
+
+CREATE TABLE external_market_tickers (
+  id TEXT NOT NULL,
+  venue TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  exchange_time BIGINT,
+  received_at BIGINT NOT NULL,
+  mark_price DOUBLE PRECISION,
+  index_price DOUBLE PRECISION,
+  last_price DOUBLE PRECISION,
+  funding_rate DOUBLE PRECISION,
+  open_interest DOUBLE PRECISION,
+  raw_json TEXT
+);
+
+CREATE UNIQUE INDEX external_tickers_id_received_at_idx
+  ON external_market_tickers (id, received_at);
+CREATE INDEX external_tickers_venue_symbol_received_at_idx
+  ON external_market_tickers (venue, symbol, received_at);
+CREATE INDEX external_tickers_symbol_received_at_idx
+  ON external_market_tickers (symbol, received_at);
 
 CREATE TABLE bot_runs (
   id TEXT PRIMARY KEY,
@@ -249,19 +320,37 @@ CREATE INDEX bot_fills_venue_fill_id_idx
   ON bot_fills (venue, venue_fill_id);
 
 SELECT create_hypertable(
-  'market_data_order_book_snapshots',
+  'target_market_order_books',
   'received_at',
   chunk_time_interval => 21600000,
   if_not_exists => TRUE
 );
 SELECT create_hypertable(
-  'market_data_trades',
+  'target_market_trades',
   'received_at',
   chunk_time_interval => 86400000,
   if_not_exists => TRUE
 );
 SELECT create_hypertable(
-  'market_data_tickers',
+  'target_market_tickers',
+  'received_at',
+  chunk_time_interval => 86400000,
+  if_not_exists => TRUE
+);
+SELECT create_hypertable(
+  'external_market_top_of_book',
+  'received_at',
+  chunk_time_interval => 21600000,
+  if_not_exists => TRUE
+);
+SELECT create_hypertable(
+  'external_market_trades',
+  'received_at',
+  chunk_time_interval => 86400000,
+  if_not_exists => TRUE
+);
+SELECT create_hypertable(
+  'external_market_tickers',
   'received_at',
   chunk_time_interval => 86400000,
   if_not_exists => TRUE
@@ -290,6 +379,36 @@ SELECT create_hypertable(
   chunk_time_interval => 86400000,
   if_not_exists => TRUE
 );
+
+CREATE OR REPLACE FUNCTION epoch_ms_now()
+RETURNS BIGINT
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT floor(extract(epoch from now()) * 1000)::BIGINT
+$$;
+
+SELECT set_integer_now_func('target_market_order_books', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('target_market_trades', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('target_market_tickers', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('external_market_top_of_book', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('external_market_trades', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('external_market_tickers', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('bot_market_observations', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('bot_quote_decisions', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('bot_orders', 'epoch_ms_now', replace_if_exists => TRUE);
+SELECT set_integer_now_func('bot_fills', 'epoch_ms_now', replace_if_exists => TRUE);
+
+SELECT add_retention_policy('external_market_top_of_book', drop_after => BIGINT '604800000', schedule_interval => INTERVAL '1 hour', if_not_exists => TRUE);
+SELECT add_retention_policy('external_market_trades', drop_after => BIGINT '2592000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('external_market_tickers', drop_after => BIGINT '2592000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('target_market_order_books', drop_after => BIGINT '1209600000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('target_market_trades', drop_after => BIGINT '2592000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('target_market_tickers', drop_after => BIGINT '2592000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('bot_market_observations', drop_after => BIGINT '7776000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('bot_quote_decisions', drop_after => BIGINT '7776000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('bot_orders', drop_after => BIGINT '7776000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT add_retention_policy('bot_fills', drop_after => BIGINT '7776000000', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);
 
 CREATE OR REPLACE VIEW analytics_quote_markouts AS
 SELECT
@@ -325,7 +444,7 @@ JOIN LATERAL (
   SELECT
     ob.received_at,
     ob.mid_price
-  FROM market_data_order_book_snapshots ob
+  FROM target_market_order_books ob
   WHERE ob.venue = q.venue
     AND ob.symbol = q.symbol
     AND ob.received_at >= q.decided_at + h.horizon_ms
@@ -362,7 +481,7 @@ JOIN LATERAL (
   SELECT
     ob.received_at,
     ob.mid_price
-  FROM market_data_order_book_snapshots ob
+  FROM target_market_order_books ob
   WHERE ob.venue = f.venue
     AND ob.symbol = f.symbol
     AND ob.received_at >= f.filled_at + h.horizon_ms

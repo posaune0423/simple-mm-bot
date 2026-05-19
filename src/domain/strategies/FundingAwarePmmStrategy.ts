@@ -43,6 +43,7 @@ export class FundingAwarePmmStrategy implements Strategy {
       snapshot: input.snapshot,
       position: input.position,
       sideSpecs: buildQualityGatedSideSpecs(input.markoutFeedback, this.config.markoutFeedbackGate),
+      nowMs: input.nowMs,
       modelSignals: this.buildModelSignals(input),
     };
 

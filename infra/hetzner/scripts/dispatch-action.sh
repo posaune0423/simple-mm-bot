@@ -13,6 +13,7 @@ fi
 case "$ACTION" in
   pull-images) bash "$SCRIPT_DIR/pull-images.sh" ;;
   start-infra) bash "$SCRIPT_DIR/start-infra.sh" ;;
+  migrate-db) bash "$SCRIPT_DIR/migrate-db.sh" ;;
   start-workers) bash "$SCRIPT_DIR/start-workers.sh" ;;
   restart-worker) bash "$SCRIPT_DIR/restart-worker.sh" ;;
   start-bot) bash "$SCRIPT_DIR/start-bot.sh" ;;

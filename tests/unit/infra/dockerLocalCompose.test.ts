@@ -23,21 +23,26 @@ describe("local Docker compose wrapper", () => {
       >;
     };
 
-    expect(Object.keys(compose.services)).toEqual([
-      "timescaledb",
+    expect(Object.keys(compose.services).sort()).toEqual([
+      "external-market-recorder",
       "market-data-recorder-bulk",
-      "mmbot-main",
       "mmbot-canary",
+      "mmbot-main",
+      "timescaledb",
     ]);
     const timescaledb = required(compose.services.timescaledb, "timescaledb service");
     const worker = required(
       compose.services["market-data-recorder-bulk"],
       "market-data-recorder-bulk service",
     );
+    const externalWorker = required(
+      compose.services["external-market-recorder"],
+      "external-market-recorder service",
+    );
     const main = required(compose.services["mmbot-main"], "mmbot-main service");
     const canary = required(compose.services["mmbot-canary"], "mmbot-canary service");
 
-    for (const service of [timescaledb, worker, main, canary]) {
+    for (const service of [timescaledb, worker, externalWorker, main, canary]) {
       expect(service.extends).toBeUndefined();
     }
 
@@ -45,7 +50,7 @@ describe("local Docker compose wrapper", () => {
     expect(timescaledb.restart).toBe("unless-stopped");
     expect(timescaledb.ports).toContain("127.0.0.1:5432:5432");
 
-    for (const service of [worker, main, canary]) {
+    for (const service of [worker, externalWorker, main, canary]) {
       expect(service.build).toEqual({
         context: ".",
         dockerfile: "Dockerfile",
@@ -54,6 +59,11 @@ describe("local Docker compose wrapper", () => {
     }
 
     expect(worker.environment?.RECORDER_CONFIG_PATH).toBe("/app/configs/worker.bulk.btc.yml");
+    expect(worker.environment?.SLACK_WEBHOOK_URL).toBe("${SLACK_WEBHOOK_URL:-}");
+    expect(externalWorker.environment?.EXTERNAL_MARKET_RECORDER_CONFIG_PATH).toBe(
+      "/app/configs/worker.external.btc.yml",
+    );
+    expect(externalWorker.environment?.SLACK_WEBHOOK_URL).toBe("${SLACK_WEBHOOK_URL:-}");
     expect(main.profiles).toContain("bot");
     expect(canary.profiles).toContain("canary");
   });

@@ -25,6 +25,7 @@ simple-mm-bot/
 │   │   │   └── QuotingCycleService.ts
 │   │   └── usecases/
 │   ├── domain/
+│   │   ├── external-market/
 │   │   ├── market-data/
 │   │   ├── ports/
 │   │   ├── quote-models/
@@ -34,6 +35,7 @@ simple-mm-bot/
 │   │   └── value-objects/
 │   ├── adapters/
 │   │   ├── bulk/
+│   │   ├── cex/
 │   │   ├── hyperliquid/
 │   │   └── paper/
 │   ├── infrastructure/
@@ -43,6 +45,7 @@ simple-mm-bot/
 │   │   │       ├── schema.ts
 │   │   │       ├── migrations/
 │   │   │       └── repository/
+│   │   ├── memory/
 │   │   └── GitMetadata.ts
 │   ├── lib/
 │   │   ├── hyperliquid/
@@ -50,6 +53,9 @@ simple-mm-bot/
 │   │   └── slack/
 │   ├── utils/
 │   └── workers/
+│       ├── externalMarketRecorder.ts
+│       ├── externalMarketRecorderConfig.ts
+│       ├── externalMarketRecorderFactory.ts
 │       ├── marketDataRecorder.ts
 │       ├── marketDataRecorderConfig.ts
 │       └── marketDataRecorderFactory.ts
@@ -59,7 +65,10 @@ simple-mm-bot/
 │   ├── createDesignIssues.ts
 │   ├── generateCoverageSummary.ts
 │   ├── generateMetricsReport.ts
+│   ├── probeExternalFairValue.ts
 │   ├── registerBulkAgentWallet.ts
+│   ├── verifyBotExternalStore.ts
+│   ├── verifyExternalMarketRecorder.ts
 │   ├── tuneBulkConfig.ts
 │   └── lib/
 ├── tests/
@@ -98,6 +107,7 @@ Pure market making and recorder contracts.
 - No database imports.
 - No environment reads.
 - Ports live here because inner layers define interfaces.
+- `external-market/` owns external CEX BBO and fair-value data types.
 
 ### `src/application`
 
@@ -106,6 +116,8 @@ Bot and worker orchestration.
 - `Bot.ts` owns runtime loop lifecycle.
 - `di.ts` is the bot composition root.
 - `MarketDataBufferedWriter.ts` batches recorder writes.
+- `ExternalMarketBufferedWriter.ts` batches external CEX recorder writes.
+- `ExternalMarketSubscriptionService.ts` starts/stops in-process external CEX subscriptions.
 - Use cases coordinate domain ports and adapters.
 
 ### `src/adapters`
@@ -113,6 +125,7 @@ Bot and worker orchestration.
 External venue and mode adapters.
 
 - `src/adapters/bulk` owns Bulk HTTP/WS/order/recorder normalization.
+- `src/adapters/cex` owns Binance/OKX/Bybit public BBO subscription and normalization.
 - `src/adapters/paper` owns simulated execution and historical feed helpers.
 - `src/adapters/hyperliquid` is compatibility-only.
 
@@ -123,6 +136,7 @@ External technical details.
 - PostgreSQL client and Drizzle schema.
 - TimescaleDB migration SQL.
 - PostgreSQL repositories implementing domain ports.
+- `memory/ExternalMarketTopOfBookStore.ts` holds fixed-slot hot-path external BBO state.
 - Git metadata and non-domain integrations.
 
 ### `src/workers`
@@ -132,6 +146,9 @@ Standalone process entry points.
 - `marketDataRecorder.ts` reads env, validates PostgreSQL URL, wires recorder dependencies, and handles shutdown.
 - `marketDataRecorderConfig.ts` loads recorder YAML when `RECORDER_CONFIG_PATH` is set and preserves env fallback.
 - `marketDataRecorderFactory.ts` maps recorder venue to recorder client.
+- `externalMarketRecorder.ts` subscribes to external CEX BBO feeds and writes `external_market_*` rows.
+- `externalMarketRecorderConfig.ts` reads external recorder YAML/env, including optional CEX API key envs.
+- `externalMarketRecorderFactory.ts` maps external recorder sources to CEX subscriptions.
 
 ### `infra/hetzner`
 
@@ -194,9 +211,11 @@ Recorder venues:
 | venue          | client                         | status      |
 | -------------- | ------------------------------ | ----------- |
 | `bulk`         | `BulkMarketDataRecorderClient` | implemented |
-| `binance_usdm` | none                           | fail fast   |
-| `okx_swap`     | none                           | fail fast   |
-| `bybit_linear` | none                           | fail fast   |
+| `binance_usdm` | `externalMarketRecorder`       | implemented |
+| `okx_swap`     | `externalMarketRecorder`       | implemented |
+| `bybit_linear` | `externalMarketRecorder`       | implemented |
+
+External recorder venues subscribe to CEX BBO feeds and write `external_market_*` rows.
 
 ## Tests
 

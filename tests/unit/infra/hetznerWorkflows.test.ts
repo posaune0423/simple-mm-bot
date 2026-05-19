@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 const requiredOpsActions = [
   "pull-images",
   "start-infra",
+  "migrate-db",
   "start-workers",
   "restart-worker",
   "start-bot",
@@ -89,6 +90,7 @@ describe("Hetzner infra files", () => {
       "infra/hetzner/configs/bot.canary.yml",
       "infra/hetzner/configs/worker.bulk.btc.yml",
       "infra/hetzner/scripts/dispatch-action.sh",
+      "infra/hetzner/scripts/migrate-db.sh",
       "infra/hetzner/scripts/restart-bot.sh",
       "infra/hetzner/scripts/start-canary.sh",
       "infra/hetzner/scripts/stop-canary.sh",

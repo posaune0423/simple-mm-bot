@@ -1,6 +1,7 @@
 import { err, ok, type Result } from "neverthrow";
 import {
   InvalidQuoteEngineInputError,
+  QuoteUnavailableError,
   QuoteModelFailedError,
   type QuoteEngineError,
 } from "../errors/DomainError.ts";
@@ -33,6 +34,7 @@ export type QuoteEngineInput = Readonly<{
   snapshot: MarketSnapshot;
   position: PositionSnapshot;
   sideSpecs: QuoteSideSpecs;
+  nowMs?: number;
   modelSignals?: QuoteModelSignals;
 }>;
 
@@ -76,7 +78,18 @@ export class QuoteEngine {
   ) {}
 
   compute(input: QuoteEngineInput): Result<Quote, QuoteEngineError> {
-    const fairPriceValue = this.fairCalc.compute(input.snapshot);
+    const fairComputation = this.fairCalc.computeWithDiagnostics(input.snapshot, input.nowMs);
+    if (fairComputation.status === "unavailable") {
+      return err(
+        new QuoteUnavailableError("external fair value unavailable", fairComputation.reason, {
+          context: {
+            localFairPrice: fairComputation.localFairPrice,
+          },
+        }),
+      );
+    }
+
+    const fairPriceValue = fairComputation.fairPrice;
     const fairPrice = Price.create(fairPriceValue, "fairPrice");
     if (fairPrice.isErr()) {
       return err(fairPrice.error);
@@ -191,6 +204,9 @@ export class QuoteEngine {
         basisBps: modelQuote.value.diagnostics.basisBps,
         targetInventoryQty: modelQuote.value.diagnostics.targetInventoryQty,
         inventoryErrorQty: modelQuote.value.diagnostics.inventoryErrorQty,
+        fairPriceSource: fairComputation.priceSource,
+        localFairPrice: fairComputation.localFairPrice,
+        externalFair: fairComputation.externalFair,
       },
     });
   }

@@ -3,4 +3,4 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-compose up -d market-data-recorder-bulk
+compose up -d market-data-recorder-bulk external-market-recorder

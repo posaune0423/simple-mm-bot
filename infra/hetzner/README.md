@@ -56,6 +56,8 @@ SLACK_WEBHOOK_URL=
 ```
 
 `BULK_CANARY_PRIVATE_KEY` may be omitted only if the canary is not used.
+`SLACK_WEBHOOK_URL` is optional. When set, both bot containers and recorder
+workers notify Slack on fatal errors and worker error events.
 
 ## Initial Setup
 
@@ -86,6 +88,8 @@ docker compose --env-file .env \
   -f compose.workers.yml \
   -f compose.bots.yml \
   run --rm --no-deps mmbot-main bun run db:migrate
+# Or:
+./scripts/migrate-db.sh
 ./scripts/start-workers.sh
 ```
 
@@ -101,6 +105,7 @@ GitHub Actions `ops-hetzner.yml` runs these actions with `confirm=yes`:
 
 - `pull-images`
 - `start-infra`
+- `migrate-db`
 - `start-workers`
 - `restart-worker`
 - `start-bot`
@@ -112,8 +117,11 @@ GitHub Actions `ops-hetzner.yml` runs these actions with `confirm=yes`:
 - `logs-bot`
 - `logs-worker`
 
+`start-workers`, `restart-worker`, and `logs-worker` cover both
+`market-data-recorder-bulk` and `external-market-recorder`.
+
 `restart-bot` only recreates `mmbot-main`. It does not restart TimescaleDB or
-`market-data-recorder-bulk`.
+recorder workers.
 
 Do not use `docker compose down` in production operations.
 
