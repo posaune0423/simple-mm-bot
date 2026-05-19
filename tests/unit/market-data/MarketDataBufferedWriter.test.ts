@@ -186,6 +186,31 @@ describe("MarketDataBufferedWriter", () => {
     });
     expect(repository.bookBatches).toEqual([[book("book-retry-1")]]);
   });
+
+  test("calls onError when a batch insert fails", async () => {
+    const repository = new RecordingMarketDataRepository();
+    repository.failNextBookInsert = true;
+    const errors: Array<{ error: unknown; event: string; kind: string; rows: number }> = [];
+    const writer = new MarketDataBufferedWriter(repository, {
+      flushIntervalMs: 60_000,
+      maxBatchSize: 100,
+      onError: (error, context) => {
+        errors.push({ error, ...context });
+      },
+    });
+    writers.push(writer);
+
+    await writer.addBookSnapshot(book("book-error-1"));
+    await writer.flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.error).toBeInstanceOf(Error);
+    expect(errors[0]).toMatchObject({
+      event: "insert_failed",
+      kind: "book",
+      rows: 1,
+    });
+  });
 });
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {

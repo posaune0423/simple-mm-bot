@@ -17,6 +17,10 @@ export type ExternalMarketBufferedWriterConfig = {
   flushIntervalMs: number;
   maxBatchSize: number;
   topOfBook?: ExternalMarketTopOfBookWriterConfig;
+  onError?: (
+    error: unknown,
+    context: ExternalMarketBufferedWriterErrorContext,
+  ) => void | Promise<void>;
 };
 
 export type ExternalMarketFlushResult = {
@@ -24,6 +28,12 @@ export type ExternalMarketFlushResult = {
   insertedTickerCount: number;
   insertedTradeCount: number;
   insertFailureCount: number;
+};
+
+export type ExternalMarketBufferedWriterErrorContext = {
+  event: "flush_failed" | "insert_failed";
+  kind: "top_of_book" | "ticker" | "trade" | "flush";
+  rows: number;
 };
 
 type ExternalMarketCounters = {
@@ -68,11 +78,18 @@ export class ExternalMarketBufferedWriter {
       return;
     }
     this.timer = setInterval(() => {
-      void this.flush().then((result) => {
-        logger.info(
-          `[worker] external-market-recorder | FLUSH | receivedTopOfBookCount=${this.counters.receivedTopOfBookCount} receivedTickerCount=${this.counters.receivedTickerCount} receivedTradeCount=${this.counters.receivedTradeCount} insertedTopOfBookCount=${this.counters.insertedTopOfBookCount} insertedTickerCount=${this.counters.insertedTickerCount} insertedTradeCount=${this.counters.insertedTradeCount} insertFailureCount=${this.counters.insertFailureCount} lastInsertedTopOfBookCount=${result.insertedTopOfBookCount} lastInsertedTickerCount=${result.insertedTickerCount} lastInsertedTradeCount=${result.insertedTradeCount}`,
-        );
-      });
+      void this.flush()
+        .then((result) => {
+          logger.info(
+            `[worker] external-market-recorder | FLUSH | receivedTopOfBookCount=${this.counters.receivedTopOfBookCount} receivedTickerCount=${this.counters.receivedTickerCount} receivedTradeCount=${this.counters.receivedTradeCount} insertedTopOfBookCount=${this.counters.insertedTopOfBookCount} insertedTickerCount=${this.counters.insertedTickerCount} insertedTradeCount=${this.counters.insertedTradeCount} insertFailureCount=${this.counters.insertFailureCount} lastInsertedTopOfBookCount=${result.insertedTopOfBookCount} lastInsertedTickerCount=${result.insertedTickerCount} lastInsertedTradeCount=${result.insertedTradeCount}`,
+          );
+        })
+        .catch((error: unknown) => {
+          logger.error(
+            `[worker] external-market-recorder | FLUSH_FAILED | error=${stringifyError(error)}`,
+          );
+          this.notifyError(error, { event: "flush_failed", kind: "flush", rows: 0 });
+        });
     }, this.config.flushIntervalMs);
   }
 
@@ -204,8 +221,21 @@ export class ExternalMarketBufferedWriter {
       logger.error(
         `[worker] external-market-recorder | INSERT_FAILED | kind=${kind} rows=${rows.length} error=${stringifyError(error)}`,
       );
+      this.notifyError(error, { event: "insert_failed", kind, rows: rows.length });
       return false;
     }
+  }
+
+  private notifyError(error: unknown, context: ExternalMarketBufferedWriterErrorContext): void {
+    const onError = this.config.onError;
+    if (onError === undefined) {
+      return;
+    }
+    void Promise.resolve(onError(error, context)).catch((notifyError: unknown) => {
+      logger.warn(
+        `[worker] external-market-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
+      );
+    });
   }
 
   private addSampledTopOfBook(row: ExternalMarketTopOfBookRecord): void {

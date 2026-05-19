@@ -9,7 +9,7 @@ follow="${FOLLOW:-0}"
 
 case "$target" in
   bot) services=(mmbot-main mmbot-canary) ;;
-  worker) services=(market-data-recorder-bulk) ;;
+  worker) services=(market-data-recorder-bulk external-market-recorder) ;;
   *)
     echo "usage: logs.sh [bot|worker]" >&2
     exit 1

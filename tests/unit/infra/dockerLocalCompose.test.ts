@@ -59,9 +59,11 @@ describe("local Docker compose wrapper", () => {
     }
 
     expect(worker.environment?.RECORDER_CONFIG_PATH).toBe("/app/configs/worker.bulk.btc.yml");
+    expect(worker.environment?.SLACK_WEBHOOK_URL).toBe("${SLACK_WEBHOOK_URL:-}");
     expect(externalWorker.environment?.EXTERNAL_MARKET_RECORDER_CONFIG_PATH).toBe(
       "/app/configs/worker.external.btc.yml",
     );
+    expect(externalWorker.environment?.SLACK_WEBHOOK_URL).toBe("${SLACK_WEBHOOK_URL:-}");
     expect(main.profiles).toContain("bot");
     expect(canary.profiles).toContain("canary");
   });

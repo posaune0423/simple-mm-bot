@@ -62,6 +62,29 @@ describe("ExternalMarketBufferedWriter", () => {
     expect(repository.topOfBookBatches).toEqual([["one"]]);
   });
 
+  test("calls onError when an insert fails", async () => {
+    const repository = new FakeExternalMarketRepository({ failTopOfBookOnce: true });
+    const errors: Array<{ error: unknown; event: string; kind: string; rows: number }> = [];
+    const writer = new ExternalMarketBufferedWriter(repository, {
+      flushIntervalMs: 10_000,
+      maxBatchSize: 10,
+      onError: (error, context) => {
+        errors.push({ error, ...context });
+      },
+    });
+
+    await writer.addTopOfBook(topOfBook("one"));
+    await writer.flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.error).toBeInstanceOf(Error);
+    expect(errors[0]).toMatchObject({
+      event: "insert_failed",
+      kind: "top_of_book",
+      rows: 1,
+    });
+  });
+
   test("stores only the latest top-of-book row per source in each sampling window", async () => {
     const repository = new FakeExternalMarketRepository();
     const writer = new ExternalMarketBufferedWriter(repository, {

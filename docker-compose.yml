@@ -38,6 +38,7 @@ services:
     environment:
       DATABASE_URL: postgresql://mm:${POSTGRES_PASSWORD:-mm}@timescaledb:5432/mm_bot
       RECORDER_CONFIG_PATH: /app/configs/worker.bulk.btc.yml
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: ["bun", "run", "record:market-data"]
 
@@ -64,6 +65,7 @@ services:
       BINANCE_API_KEY: ${BINANCE_API_KEY:-}
       OKX_API_KEY: ${OKX_API_KEY:-}
       BYBIT_API_KEY: ${BYBIT_API_KEY:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     command: ["bun", "run", "record:external-market"]
 

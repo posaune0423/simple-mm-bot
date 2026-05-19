@@ -12,6 +12,8 @@ bun run src/main.ts
 ```
 
 Compose files may override the command for worker-specific entrypoints.
+Set `SLACK_WEBHOOK_URL` when you want bot or worker container errors to be sent
+to Slack; leaving it unset keeps notification calls disabled.
 
 ## Local Compose
 
@@ -30,6 +32,12 @@ Start the Bulk market data recorder from the local working tree:
 
 ```bash
 docker compose up -d --build market-data-recorder-bulk
+```
+
+Start the external CEX market recorder from the local working tree:
+
+```bash
+docker compose up -d --build external-market-recorder
 ```
 
 Run the bot in local paper mode through Docker:

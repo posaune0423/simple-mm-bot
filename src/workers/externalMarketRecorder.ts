@@ -5,6 +5,10 @@ import { createPostgresClient } from "../infrastructure/db/postgres/client.ts";
 import { PostgresExternalMarketRepository } from "../infrastructure/db/postgres/repository/PostgresExternalMarketRepository.ts";
 import { stringifyError } from "../utils/errors.ts";
 import { logger } from "../utils/logger.ts";
+import { WorkerErrorNotifier } from "./WorkerErrorNotifier.ts";
+
+const WORKER_NAME = "external-market-recorder";
+const errorNotifier = new WorkerErrorNotifier(WORKER_NAME);
 
 async function main(): Promise<void> {
   const config = await loadExternalMarketRecorderConfig();
@@ -23,6 +27,9 @@ async function main(): Promise<void> {
     flushIntervalMs: config.flushIntervalMs,
     maxBatchSize: config.maxBatchSize,
     topOfBook: config.topOfBook,
+    onError: (error, context) => {
+      errorNotifier.notifySoon(error, context);
+    },
   });
   const subscriptions = buildExternalMarketRecorderSubscriptions(config);
   let shuttingDown = false;
@@ -40,6 +47,11 @@ async function main(): Promise<void> {
         logger.error(
           `[worker] external-market-recorder | SUBSCRIPTION_STOP_FAILED | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
         );
+        await errorNotifier.notify(error, {
+          event: "subscription_stop_failed",
+          venue: subscription.venue,
+          symbol: subscription.symbol,
+        });
       }
     }
     try {
@@ -51,6 +63,7 @@ async function main(): Promise<void> {
       logger.error(
         `[worker] external-market-recorder | SHUTDOWN_FLUSH_FAILED | error=${stringifyError(error)}`,
       );
+      await errorNotifier.notify(error, { event: "shutdown_flush_failed" });
     }
     try {
       await postgresClient.client.end();
@@ -58,6 +71,7 @@ async function main(): Promise<void> {
       logger.error(
         `[worker] external-market-recorder | SHUTDOWN_DB_CLOSE_FAILED | error=${stringifyError(error)}`,
       );
+      await errorNotifier.notify(error, { event: "shutdown_db_close_failed" });
     } finally {
       process.exit(0);
     }
@@ -79,12 +93,24 @@ async function main(): Promise<void> {
           logger.error(
             `[worker] external-market-recorder | TOP_OF_BOOK_WRITE_FAILED | error=${stringifyError(error)}`,
           );
+          errorNotifier.notifySoon(error, {
+            event: "top_of_book_write_failed",
+            kind: "top_of_book",
+            venue: record.venue,
+            symbol: record.symbol,
+          });
         });
       },
-      onError: (error) =>
+      onError: (error) => {
         logger.error(
           `[worker] external-market-recorder | SUBSCRIPTION_ERROR | venue=${subscription.venue} symbol=${subscription.symbol} error=${stringifyError(error)}`,
-        ),
+        );
+        errorNotifier.notifySoon(error, {
+          event: "subscription_error",
+          venue: subscription.venue,
+          symbol: subscription.symbol,
+        });
+      },
     });
   }
 }
@@ -102,5 +128,11 @@ function isPostgresUrl(value: string): boolean {
 }
 
 if (import.meta.main) {
-  await main();
+  try {
+    await main();
+  } catch (error) {
+    await errorNotifier.notify(error, { event: "fatal" });
+    logger.error(`[worker] external-market-recorder | FATAL | error=${stringifyError(error)}`);
+    process.exit(1);
+  }
 }

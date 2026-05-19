@@ -57,6 +57,35 @@ describe("notifyFatalErrorToSlack", () => {
     }
   });
 
+  test("does nothing when SLACK_WEBHOOK_URL is blank", async () => {
+    const previousUrl = Bun.env.SLACK_WEBHOOK_URL;
+    Bun.env.SLACK_WEBHOOK_URL = " ";
+
+    const calls: Array<Parameters<typeof fetch>> = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (...args: Parameters<typeof fetch>) => {
+        calls.push(args);
+        return new Response("ok", { status: 200 });
+      },
+      { preconnect() {} },
+    );
+
+    try {
+      const specifier: string = "../../../../src/lib/slack/notification.ts?test=blank_webhook";
+      const { notifyFatalErrorToSlack } = await import(specifier);
+      await notifyFatalErrorToSlack(new Error("boom"), { component: "worker", event: "fatal" });
+      expect(calls).toHaveLength(0);
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousUrl === undefined) {
+        delete Bun.env.SLACK_WEBHOOK_URL;
+      } else {
+        Bun.env.SLACK_WEBHOOK_URL = previousUrl;
+      }
+    }
+  });
+
   test("posts a message when SLACK_WEBHOOK_URL is set", async () => {
     const previousUrl = Bun.env.SLACK_WEBHOOK_URL;
     Bun.env.SLACK_WEBHOOK_URL = "https://example.com/webhook";
@@ -146,6 +175,46 @@ describe("notifyFatalErrorToSlack", () => {
       expect(body.attachments?.[0]?.text).not.toContain("mode:");
       expect(body.attachments?.[0]?.text).not.toContain("venue:");
       expect(body.attachments?.[0]?.text).not.toContain("market:");
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousUrl === undefined) {
+        delete Bun.env.SLACK_WEBHOOK_URL;
+      } else {
+        Bun.env.SLACK_WEBHOOK_URL = previousUrl;
+      }
+    }
+  });
+
+  test("posts worker context when provided", async () => {
+    const previousUrl = Bun.env.SLACK_WEBHOOK_URL;
+    Bun.env.SLACK_WEBHOOK_URL = "https://example.com/webhook";
+
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        calls.push({ url: fetchUrl(url), init });
+        return new Response("ok", { status: 200 });
+      },
+      { preconnect() {} },
+    );
+
+    try {
+      const specifier: string = "../../../../src/lib/slack/notification.ts?test=worker_context";
+      const { notifyFatalErrorToSlack } = await import(specifier);
+      await notifyFatalErrorToSlack(new Error("insert failed"), {
+        component: "worker",
+        worker: "external-market-recorder",
+        event: "insert_failed",
+        venue: "binance_usdm",
+        symbol: "BTCUSDT",
+      });
+
+      expect(calls).toHaveLength(1);
+      const body = parseSlackBody(calls[0]?.init?.body);
+      expect(body.attachments?.[0]?.text).toContain(
+        "*Runtime State:* `worker` `external-market-recorder` `insert_failed` `binance_usdm` `BTCUSDT`",
+      );
     } finally {
       globalThis.fetch = previousFetch;
       if (previousUrl === undefined) {
