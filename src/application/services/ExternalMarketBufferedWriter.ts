@@ -231,11 +231,18 @@ export class ExternalMarketBufferedWriter {
     if (onError === undefined) {
       return;
     }
-    void Promise.resolve(onError(error, context)).catch((notifyError: unknown) => {
+    try {
+      const maybePromise = onError(error, context);
+      void Promise.resolve(maybePromise).catch((notifyError: unknown) => {
+        logger.warn(
+          `[worker] external-market-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
+        );
+      });
+    } catch (notifyError) {
       logger.warn(
         `[worker] external-market-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
       );
-    });
+    }
   }
 
   private addSampledTopOfBook(row: ExternalMarketTopOfBookRecord): void {

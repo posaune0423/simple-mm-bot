@@ -211,6 +211,24 @@ describe("MarketDataBufferedWriter", () => {
       rows: 1,
     });
   });
+
+  test("does not reject flush when onError throws synchronously", async () => {
+    const repository = new RecordingMarketDataRepository();
+    repository.failNextBookInsert = true;
+    const writer = new MarketDataBufferedWriter(repository, {
+      flushIntervalMs: 60_000,
+      maxBatchSize: 100,
+      onError: () => {
+        throw new Error("notification failed");
+      },
+    });
+    writers.push(writer);
+
+    await writer.addBookSnapshot(book("book-error-2"));
+    const result = await writer.flush();
+
+    expect(result.insertFailureCount).toBe(1);
+  });
 });
 
 async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {

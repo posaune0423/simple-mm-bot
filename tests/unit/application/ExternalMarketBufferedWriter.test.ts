@@ -85,6 +85,22 @@ describe("ExternalMarketBufferedWriter", () => {
     });
   });
 
+  test("does not reject flush when onError throws synchronously", async () => {
+    const repository = new FakeExternalMarketRepository({ failTopOfBookOnce: true });
+    const writer = new ExternalMarketBufferedWriter(repository, {
+      flushIntervalMs: 10_000,
+      maxBatchSize: 10,
+      onError: () => {
+        throw new Error("notification failed");
+      },
+    });
+
+    await writer.addTopOfBook(topOfBook("one"));
+    const result = await writer.flush();
+
+    expect(result.insertFailureCount).toBe(1);
+  });
+
   test("stores only the latest top-of-book row per source in each sampling window", async () => {
     const repository = new FakeExternalMarketRepository();
     const writer = new ExternalMarketBufferedWriter(repository, {

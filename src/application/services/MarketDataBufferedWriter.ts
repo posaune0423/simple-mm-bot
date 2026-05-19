@@ -205,10 +205,17 @@ export class MarketDataBufferedWriter {
     if (onError === undefined) {
       return;
     }
-    void Promise.resolve(onError(error, context)).catch((notifyError: unknown) => {
+    try {
+      const maybePromise = onError(error, context);
+      void Promise.resolve(maybePromise).catch((notifyError: unknown) => {
+        logger.warn(
+          `[worker] market-data-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
+        );
+      });
+    } catch (notifyError) {
       logger.warn(
         `[worker] market-data-recorder | ERROR_HANDLER_FAILED | error=${stringifyError(notifyError)}`,
       );
-    });
+    }
   }
 }
