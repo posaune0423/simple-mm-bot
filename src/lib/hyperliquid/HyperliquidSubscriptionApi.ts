@@ -8,14 +8,16 @@ function parseBookLevels(levels: Array<{ px: string; sz: string }>): BookLevel[]
 }
 
 export class HyperliquidSubscriptionApi {
+  private readonly transport: WebSocketTransport;
   private readonly client: SubscriptionClient;
 
   constructor(params: { wsUrl: string; httpUrl: string }) {
+    this.transport = new WebSocketTransport({
+      url: params.wsUrl,
+      isTestnet: detectTestnet(params.httpUrl),
+    });
     this.client = new SubscriptionClient({
-      transport: new WebSocketTransport({
-        url: params.wsUrl,
-        isTestnet: detectTestnet(params.httpUrl),
-      }),
+      transport: this.transport,
     });
   }
 
@@ -44,5 +46,9 @@ export class HyperliquidSubscriptionApi {
       onUpdate(result);
     });
     return async () => sub.unsubscribe();
+  }
+
+  async close(): Promise<void> {
+    await this.transport.close();
   }
 }

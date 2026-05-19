@@ -64,6 +64,7 @@ export class HyperliquidMarketFeed implements IMarketFeed {
     await this.midsUnsub?.();
     this.bookUnsub = null;
     this.midsUnsub = null;
+    await this.subs.close();
     logger.info(`[adapter] HyperliquidMarketFeed | DISCONNECTED | market=${this.params.market}`);
   }
 

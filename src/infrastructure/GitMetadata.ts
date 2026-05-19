@@ -13,7 +13,12 @@ export function getGitMetadata(): GitMetadata {
 }
 
 function runGit(args: string[]): string {
-  const result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "ignore" });
+  let result: ReturnType<typeof Bun.spawnSync>;
+  try {
+    result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "ignore" });
+  } catch {
+    return "";
+  }
   if (!result.success) {
     return "";
   }

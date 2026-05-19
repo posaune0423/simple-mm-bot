@@ -37,6 +37,7 @@ describe("HyperliquidMarketFeed", () => {
       async subscribeAllMids() {
         return async () => {};
       },
+      async close() {},
     } as unknown as HyperliquidSubscriptionApi;
     const feed = new HyperliquidMarketFeed(info, subs, {
       market: "BTC",
@@ -80,6 +81,7 @@ describe("HyperliquidMarketFeed", () => {
       async subscribeAllMids() {
         return async () => {};
       },
+      async close() {},
     } as unknown as HyperliquidSubscriptionApi;
     const feed = new HyperliquidMarketFeed(info, subs, {
       market: "BTC",
@@ -96,6 +98,38 @@ describe("HyperliquidMarketFeed", () => {
     expect(polled.marginRatio).toBeNull();
     expect(polled.accountUpdatedAt).toBe(initial.accountUpdatedAt);
     expect(polled.positionUpdatedAt).toBe(initial.positionUpdatedAt);
+  });
+
+  test("closes the subscription transport when disconnected", async () => {
+    let closed = false;
+    const info = {
+      async getL2Book() {
+        return book(1_700_000_000_000);
+      },
+      async getAllMids() {
+        return { BTC: 100 };
+      },
+    } as unknown as HyperliquidInfoApi;
+    const subs = {
+      async subscribeL2Book() {
+        return async () => {};
+      },
+      async subscribeAllMids() {
+        return async () => {};
+      },
+      async close() {
+        closed = true;
+      },
+    } as unknown as HyperliquidSubscriptionApi;
+    const feed = new HyperliquidMarketFeed(info, subs, {
+      market: "BTC",
+      pollIntervalMs: 10_000,
+    });
+
+    await feed.connect();
+    await feed.disconnect();
+
+    expect(closed).toBe(true);
   });
 });
 
